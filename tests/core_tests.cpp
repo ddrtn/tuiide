@@ -1,0 +1,1359 @@
+#include "tuiide/document.hpp"
+#include "tuiide/document_labels.hpp"
+#include "tuiide/build_diagnostic.hpp"
+#include "tuiide/build_progress.hpp"
+#include "tuiide/cmake_model.hpp"
+#include "tuiide/cmake_presets.hpp"
+#include "tuiide/cmake_source_edit.hpp"
+#include "tuiide/clipboard.hpp"
+#include "tuiide/clang_format.hpp"
+#include "tuiide/compilation_database.hpp"
+#include "tuiide/command_state.hpp"
+#include "tuiide/debug_session.hpp"
+#include "tuiide/gdb_client.hpp"
+#include "tuiide/gdb_mi.hpp"
+#include "tuiide/lsp_client.hpp"
+#include "tuiide/launch_configuration.hpp"
+#include "tuiide/process.hpp"
+#include "tuiide/pseudo_terminal.hpp"
+#include "tuiide/project_template.hpp"
+#include "tuiide/project_creation.hpp"
+#include "tuiide/project_history.hpp"
+#include "tuiide/project_import.hpp"
+#include "tuiide/project_settings.hpp"
+#include "tuiide/project_tree.hpp"
+#include "tuiide/recovery.hpp"
+#include "tuiide/syntax.hpp"
+#include "tuiide/tab_bar_layout.hpp"
+#include "tuiide/text_display.hpp"
+#include "tuiide/text_search.hpp"
+#include "tuiide/terminal_buffer.hpp"
+#include "tuiide/workspace_edit.hpp"
+#include "tuiide/workspace_file_transaction.hpp"
+
+#include <chrono>
+#include <algorithm>
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <nlohmann/json.hpp>
+#include <thread>
+
+namespace {
+void expect(bool condition, const char* message) {
+  if (!condition) { std::cerr << "FAIL: " << message << '\n'; std::exit(1); }
+}
+}
+
+int main() {
+  expect(tuiide::base64Encode("").empty(), "empty clipboard text has empty base64");
+  expect(tuiide::base64Encode("f") == "Zg==" && tuiide::base64Encode("foo") == "Zm9v", "clipboard base64 padding is correct");
+  expect(tuiide::base64Encode("Привет") == "0J/RgNC40LLQtdGC", "clipboard base64 preserves UTF-8 bytes");
+  expect(tuiide::osc52CopySequence("foo") == "\033]52;c;Zm9v\a", "OSC 52 copy sequence is encoded");
+  expect(tuiide::osc52CopySequence("foo", true).starts_with("\033Ptmux;\033\033]52;c;"), "OSC 52 supports tmux passthrough");
+  ::setenv("TUIIDE_CLIPBOARD_NATIVE", "0", 1);
+  ::setenv("TUIIDE_OSC52", "0", 1);
+  tuiide::SystemClipboard clipboard;
+  clipboard.copy("internal UTF-8: текст");
+  expect(clipboard.paste() == "internal UTF-8: текст", "internal clipboard remains available as fallback");
+  const auto clipboard_tools = std::filesystem::temp_directory_path()
+      / ("tuiide-clipboard-tools-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(clipboard_tools);
+  const auto clipboard_capture = clipboard_tools / "copied.txt";
+  { std::ofstream script(clipboard_tools / "wl-copy"); script << "#!/bin/sh\ncat > \"$TUIIDE_CLIPBOARD_TEST_FILE\"\n"; }
+  { std::ofstream script(clipboard_tools / "wl-paste"); script << "#!/bin/sh\nprintf 'native paste: текст'\n"; }
+  std::filesystem::permissions(clipboard_tools / "wl-copy", std::filesystem::perms::owner_all);
+  std::filesystem::permissions(clipboard_tools / "wl-paste", std::filesystem::perms::owner_all);
+  const std::string original_path = std::getenv("PATH") ? std::getenv("PATH") : "";
+  ::setenv("PATH", (clipboard_tools.string() + ":" + original_path).c_str(), 1);
+  ::setenv("WAYLAND_DISPLAY", "tuiide-test", 1);
+  ::setenv("TUIIDE_CLIPBOARD_TEST_FILE", clipboard_capture.c_str(), 1);
+  ::unsetenv("TUIIDE_CLIPBOARD_NATIVE");
+  clipboard.copy("native copy: данные");
+  for (int attempt = 0; attempt < 40; ++attempt) {
+    std::error_code size_error;
+    if (std::filesystem::file_size(clipboard_capture, size_error) >= std::string("native copy: данные").size() && !size_error) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  std::ifstream captured(clipboard_capture);
+  const std::string captured_text((std::istreambuf_iterator<char>(captured)), std::istreambuf_iterator<char>());
+  expect(captured_text == "native copy: данные", "Wayland clipboard helper receives UTF-8 input");
+  expect(clipboard.paste() == "native paste: текст", "Wayland clipboard helper provides UTF-8 paste text");
+  ::setenv("PATH", original_path.c_str(), 1);
+  ::unsetenv("WAYLAND_DISPLAY");
+  ::unsetenv("TUIIDE_CLIPBOARD_TEST_FILE");
+  std::error_code clipboard_cleanup_error;
+  std::filesystem::remove_all(clipboard_tools, clipboard_cleanup_error);
+
+  const auto diagnostic = tuiide::parseCompilerDiagnostic("src/main.cpp:12:7: error: expected ';'", "/project");
+  expect(diagnostic.has_value(), "compiler diagnostic is parsed");
+  expect(diagnostic->path == "/project/src/main.cpp", "relative diagnostic path is resolved");
+  expect(diagnostic->line == 11 && diagnostic->column == 6, "diagnostic positions are zero-based");
+  expect(diagnostic->severity == tuiide::DiagnosticSeverity::Error, "error severity is parsed");
+  const auto warning = tuiide::parseCompilerDiagnostic("/tmp/a.cpp:2:1: warning: unused value", "/project");
+  expect(warning && warning->severity == tuiide::DiagnosticSeverity::Warning, "warning is parsed");
+  const auto line_only = tuiide::parseCompilerDiagnostic("src/a.cpp:9: fatal error: missing header", "/project");
+  expect(line_only && line_only->line == 8 && line_only->column == 0, "line-only fatal diagnostic is parsed");
+  const auto colored_note = tuiide::parseCompilerDiagnostic("\x1b[36msrc/a.cpp:4:2: note: declared here\x1b[0m", "/project");
+  expect(colored_note && colored_note->severity == tuiide::DiagnosticSeverity::Note, "ANSI-colored note is parsed");
+  expect(tuiide::parseBuildProgress("[12/48] Building CXX object") == 25,
+    "Ninja fractional build progress is parsed");
+  expect(tuiide::parseBuildProgress("[ 73%] Linking CXX executable") == 73,
+    "CMake percentage build progress is parsed");
+  expect(!tuiide::parseBuildProgress("Building target without progress"),
+    "ordinary build output does not invent progress");
+
+  tuiide::Document document;
+  document.insert("int main() {");
+  document.newline();
+  document.insert("return 0;");
+  expect(document.lines().size() == 2, "newline creates a line");
+  expect(document.text() == "int main() {\nreturn 0;", "text round trip");
+  expect(document.undo(), "undo is available");
+  expect(document.line(1).empty(), "undo removes insertion");
+  expect(document.redo(), "redo is available");
+  expect(document.canUndo() && !document.canRedo(), "document exposes undo and redo availability");
+
+  const auto dirty_path = std::filesystem::temp_directory_path()
+    / ("tuiide-dirty-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".cpp");
+  tuiide::Document dirty;
+  dirty.insert("alpha");
+  std::string dirty_error;
+  expect(dirty.saveAs(dirty_path, dirty_error) && !dirty.modified(),
+    "saving marks the current history state clean");
+  dirty.insert(" beta");
+  expect(dirty.modified() && dirty.undo() && dirty.text() == "alpha" && !dirty.modified(),
+    "undo to the saved history state clears dirty status");
+  expect(dirty.redo() && dirty.text() == "alpha beta" && dirty.modified(),
+    "redo away from the saved history state restores dirty status");
+  expect(dirty.undo() && !dirty.modified(), "a second undo returns exactly to the saved state");
+  dirty.insert(" gamma");
+  expect(dirty.modified() && !dirty.canRedo(), "editing after undo starts a branch and clears redo");
+  std::error_code dirty_cleanup_error;
+  std::filesystem::remove(dirty_path, dirty_cleanup_error);
+
+  const auto file_format_directory = std::filesystem::temp_directory_path()
+    / ("tuiide-file-format-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(file_format_directory);
+  const auto crlf_path = file_format_directory / "crlf.cpp";
+  { std::ofstream file(crlf_path, std::ios::binary); file << "\xef\xbb\xbf" "alpha\r\nbeta"; }
+  const auto preserved_permissions = std::filesystem::perms::owner_all
+    | std::filesystem::perms::group_read | std::filesystem::perms::others_read;
+  std::filesystem::permissions(crlf_path, preserved_permissions, std::filesystem::perm_options::replace);
+  tuiide::Document formatted_file;
+  expect(formatted_file.load(crlf_path, dirty_error)
+      && formatted_file.text() == "alpha\nbeta" && formatted_file.hasUtf8Bom()
+      && formatted_file.lineEnding() == tuiide::LineEnding::CrLf && !formatted_file.hasFinalNewline(),
+    "loading strips UTF-8 BOM, normalizes CRLF, and remembers the missing final newline");
+  formatted_file.setCursor({1, 4}); formatted_file.insert("!");
+  expect(formatted_file.save(dirty_error), "CRLF document is saved atomically");
+  std::ifstream crlf_input(crlf_path, std::ios::binary);
+  const std::string crlf_bytes((std::istreambuf_iterator<char>(crlf_input)), std::istreambuf_iterator<char>());
+  expect(crlf_bytes == "\xef\xbb\xbf" "alpha\r\nbeta!",
+    "saving restores BOM and CRLF without inventing a final newline");
+  expect((std::filesystem::status(crlf_path).permissions() & std::filesystem::perms::mask)
+      == preserved_permissions, "atomic replacement preserves existing file permissions");
+  expect(std::none_of(std::filesystem::directory_iterator(file_format_directory),
+      std::filesystem::directory_iterator{}, [](const auto& entry) {
+        return entry.path().filename().string().find(".tuiide-") != std::string::npos;
+      }), "atomic save leaves no temporary file behind");
+
+  const auto newline_path = file_format_directory / "newline.cpp";
+  { std::ofstream file(newline_path, std::ios::binary); file << "line\n"; }
+  tuiide::Document newline_file;
+  expect(newline_file.load(newline_path, dirty_error) && newline_file.hasFinalNewline()
+      && !newline_file.hasUtf8Bom() && newline_file.lineEnding() == tuiide::LineEnding::Lf,
+    "LF document remembers its final newline and absence of BOM");
+  newline_file.setCursor({0, 4}); newline_file.insert("!");
+  expect(newline_file.save(dirty_error), "LF document with final newline is saved");
+  std::ifstream newline_input(newline_path, std::ios::binary);
+  const std::string newline_bytes((std::istreambuf_iterator<char>(newline_input)), std::istreambuf_iterator<char>());
+  expect(newline_bytes == "line!\n", "saving preserves LF and the final newline");
+  const auto original_formatted_path = formatted_file.path();
+  expect(!formatted_file.saveAs(file_format_directory, dirty_error)
+      && formatted_file.path() == original_formatted_path,
+    "failed atomic Save As keeps the original document path");
+
+  { std::ofstream external(crlf_path, std::ios::binary | std::ios::trunc); external << "external\n"; }
+  expect(formatted_file.diskChange(dirty_error) == tuiide::DiskChange::Modified,
+    "content fingerprint detects an external modification even without relying on timestamps");
+  formatted_file.acknowledgeDiskState();
+  expect(formatted_file.diskChange(dirty_error) == tuiide::DiskChange::Unchanged,
+    "Keep acknowledges the current external version without changing editor contents");
+  std::filesystem::remove(crlf_path, dirty_cleanup_error);
+  expect(formatted_file.diskChange(dirty_error) == tuiide::DiskChange::Deleted,
+    "file watcher distinguishes an external deletion");
+  formatted_file.acknowledgeDiskState();
+  expect(formatted_file.diskChange(dirty_error) == tuiide::DiskChange::Unchanged,
+    "keeping a deleted file suppresses repeated notifications until it reappears");
+
+  const auto recovery_path = file_format_directory / "recovery/state.json";
+  const std::vector<tuiide::RecoveryDocument> recovery_documents{
+    {file_format_directory / "saved.cpp", "int recovered = 1;\n", {0, 8}},
+    {{}, "unsaved UTF-8: данные", {0, 21}}
+  };
+  expect(tuiide::saveRecovery(recovery_path, recovery_documents, dirty_error),
+    "modified documents are atomically written to a recovery file");
+  std::vector<tuiide::RecoveryDocument> loaded_recovery;
+  expect(tuiide::loadRecovery(recovery_path, loaded_recovery, dirty_error)
+      && loaded_recovery.size() == 2 && loaded_recovery[0].path == recovery_documents[0].path
+      && loaded_recovery[0].text == recovery_documents[0].text
+      && loaded_recovery[1].text == recovery_documents[1].text
+      && loaded_recovery[1].cursor == recovery_documents[1].cursor,
+    "crash recovery preserves saved and untitled UTF-8 documents with cursor positions");
+  tuiide::clearRecovery(recovery_path);
+  expect(!std::filesystem::exists(recovery_path), "accepted or discarded recovery data is removed");
+
+  tuiide::Document recovered_document;
+  recovered_document.restoreText("recovered");
+  expect(recovered_document.modified(), "restored autosave content remains explicitly unsaved");
+  std::filesystem::remove_all(file_format_directory, dirty_cleanup_error);
+
+  tuiide::Document grouped_typing;
+  const std::string large_prefix(200000, 'x');
+  grouped_typing.setText(large_prefix);
+  grouped_typing.moveEnd();
+  for (const char character : std::string(" grouped UTF-8: текст"))
+    grouped_typing.insert(std::string_view(&character, 1));
+  expect(grouped_typing.undoStorageBytes() < 1024,
+    "grouped typing history stores edits instead of full document snapshots");
+  expect(grouped_typing.undo() && grouped_typing.text() == large_prefix,
+    "sequential typing is reverted as one grouped undo operation");
+
+  tuiide::Document grouped_erase;
+  grouped_erase.insert("абв");
+  grouped_erase.backspace(); grouped_erase.backspace();
+  expect(grouped_erase.text() == "а" && grouped_erase.undo() && grouped_erase.text() == "абв",
+    "consecutive UTF-8 backspaces form one reversible operation");
+
+  tuiide::Document smart_editing;
+  smart_editing.setText("{}"); smart_editing.setCursor({0, 1});
+  smart_editing.smartNewline("  ");
+  expect(smart_editing.text() == "{\n  \n}" && smart_editing.cursor() == tuiide::Position{1, 2},
+    "smart newline indents inside a matching brace pair");
+  expect(smart_editing.undo() && smart_editing.text() == "{}"
+      && smart_editing.redo() && smart_editing.cursor() == tuiide::Position{1, 2},
+    "smart newline is one undoable edit and restores its inner cursor position");
+  smart_editing.setText(""); smart_editing.insertPair('(', ')');
+  expect(smart_editing.text() == "()" && smart_editing.cursor() == tuiide::Position{0, 1},
+    "paired delimiters place the cursor between both characters");
+  expect(smart_editing.undo() && smart_editing.redo()
+      && smart_editing.cursor() == tuiide::Position{0, 1},
+    "paired delimiter redo restores the cursor between the pair");
+
+  tuiide::Document line_edits;
+  line_edits.setText("  alpha\n  beta\ngamma"); line_edits.setCursor({1, 4});
+  line_edits.toggleLineComment(0, 1);
+  expect(line_edits.text() == "  // alpha\n  // beta\ngamma",
+    "toggle comment inserts markers after each line's indentation");
+  expect(line_edits.undo() && line_edits.text() == "  alpha\n  beta\ngamma"
+      && line_edits.redo() && line_edits.cursor() == tuiide::Position{1, 7},
+    "multi-line commenting is atomic and preserves an adjusted cursor");
+  line_edits.toggleLineComment(0, 1);
+  expect(line_edits.text() == "  alpha\n  beta\ngamma", "toggle comment removes markers and optional spaces");
+
+  tuiide::Document line_structure;
+  line_structure.setText("a\nb\nc"); line_structure.setCursor({1, 1});
+  line_structure.duplicateLines(1, 1);
+  expect(line_structure.text() == "a\nb\nb\nc" && line_structure.cursor() == tuiide::Position{2, 1},
+    "duplicate line inserts an undoable copy below the source");
+  expect(line_structure.undo() && line_structure.text() == "a\nb\nc", "duplicate line can be undone");
+  line_structure.moveLines(1, 1, true);
+  expect(line_structure.text() == "a\nc\nb" && line_structure.cursor() == tuiide::Position{2, 1},
+    "move line down swaps it with the following line");
+  expect(line_structure.undo() && line_structure.text() == "a\nb\nc", "move line can be undone atomically");
+  line_structure.deleteLines(1, 1);
+  expect(line_structure.text() == "a\nc" && line_structure.undo() && line_structure.text() == "a\nb\nc",
+    "delete line removes its newline and is reversible");
+
+  const std::string display_text = "a\t界🙂e\u0301";
+  expect(tuiide::displayWidth(display_text, 4) == 9,
+    "display width expands tabs and counts CJK, emoji, and combining marks");
+  expect(tuiide::displayColumn(display_text, 1, 4) == 1
+      && tuiide::displayColumn(display_text, 2, 4) == 4
+      && tuiide::displayColumn(display_text, 5, 4) == 6
+      && tuiide::displayColumn(display_text, display_text.size(), 4) == 9,
+    "UTF-8 byte offsets convert to deterministic screen columns");
+  expect(tuiide::displayColumn(display_text, 3, 4) == 4,
+    "screen-column conversion never counts a partial UTF-8 code point");
+  expect(tuiide::byteColumnAtDisplay(display_text, 5, 4) == 5
+      && tuiide::byteColumnAtDisplay(display_text, 7, 4) == 9,
+    "mouse columns inside wide characters snap to UTF-8 boundaries");
+  expect(tuiide::byteColumnAtDisplay(display_text, 2, 4) == 1
+      && tuiide::byteColumnAtDisplay(display_text, 3, 4) == 2,
+    "mouse columns inside a tab snap to the nearest text boundary");
+  for (std::size_t column = 0; column <= tuiide::displayWidth(display_text, 4); ++column) {
+    const auto byte = tuiide::byteColumnAtDisplay(display_text, column, 4);
+    expect(byte == display_text.size() || byte == 0
+        || (static_cast<unsigned char>(display_text[byte]) & 0xc0U) != 0x80U,
+      "screen-to-byte mapping never returns a UTF-8 continuation byte");
+  }
+
+  const auto document_labels = tuiide::distinguishDocumentLabels({
+    "/workspace/app/src/main.cpp", "/workspace/tests/main.cpp", "/workspace/app/src/widget.cpp",
+    {}, {}
+  });
+  expect(document_labels.size() == 5 && document_labels[0] == "src/main.cpp"
+      && document_labels[1] == "tests/main.cpp" && document_labels[2] == "widget.cpp",
+    "duplicate basenames receive the shortest distinguishing path suffix");
+  expect(document_labels[3] == "Untitled 1" && document_labels[4] == "Untitled 2",
+    "multiple unsaved documents receive distinct labels");
+
+  const std::vector<std::string> sidebar_titles{
+    "Open files", "Project", "Outline", "Debug", "Breakpoints"};
+  const std::vector<bool> all_sidebar_tabs(sidebar_titles.size(), true);
+  const auto first_sidebar_page = tuiide::layoutTabBar(
+    sidebar_titles, all_sidebar_tabs, 0, 0, 28);
+  expect(!first_sidebar_page.items.empty() && first_sidebar_page.items.front().index == 0
+      && first_sidebar_page.right_overflow,
+    "narrow sidebar keeps the active first tab visible and exposes forward scrolling");
+  const auto last_sidebar_page = tuiide::layoutTabBar(
+    sidebar_titles, all_sidebar_tabs, 4, 0, 28);
+  expect(last_sidebar_page.left_overflow
+      && std::any_of(last_sidebar_page.items.begin(), last_sidebar_page.items.end(),
+        [](const auto& item) { return item.index == 4; }),
+    "selecting an off-screen sidebar tab scrolls it into view");
+  auto selected_sidebar_tabs = all_sidebar_tabs;
+  selected_sidebar_tabs[1] = false;
+  selected_sidebar_tabs[2] = false;
+  const auto filtered_sidebar = tuiide::layoutTabBar(
+    sidebar_titles, selected_sidebar_tabs, 4, 0, 28);
+  expect(std::none_of(filtered_sidebar.items.begin(), filtered_sidebar.items.end(),
+      [](const auto& item) { return item.index == 1 || item.index == 2; })
+      && std::any_of(filtered_sidebar.items.begin(), filtered_sidebar.items.end(),
+        [](const auto& item) { return item.index == 4; }),
+    "hidden sidebar panels are omitted while the active visible panel remains reachable");
+
+  const auto empty_commands = tuiide::commandAvailability({});
+  expect(!empty_commands.save && !empty_commands.build && !empty_commands.completion,
+    "commands requiring context are disabled in an empty workspace");
+  tuiide::CommandContext project_context;
+  project_context.has_project = true;
+  const auto project_commands = tuiide::commandAvailability(project_context);
+  expect(project_commands.close_project && project_commands.project_file && project_commands.build
+      && !project_commands.cancel_build && project_commands.run && !project_commands.stop_run
+      && project_commands.cmake_configuration,
+    "project commands are enabled for an idle open project");
+  project_context.run_running = true;
+  const auto active_run_commands = tuiide::commandAvailability(project_context);
+  expect(!active_run_commands.run && active_run_commands.stop_run,
+    "active Run enables explicit program termination and prevents a duplicate launch");
+  project_context.run_running = false;
+  project_context.has_document = true;
+  project_context.has_saved_document = true;
+  project_context.source_document = true;
+  project_context.has_selection = true;
+  project_context.has_modified_documents = true;
+  project_context.has_closed_document = true;
+  project_context.can_undo = true;
+  project_context.lsp_ready = true;
+  project_context.document_count = 2;
+  const auto source_commands = tuiide::commandAvailability(project_context);
+  expect(source_commands.save && source_commands.save_all && source_commands.undo && source_commands.cut && source_commands.copy
+      && source_commands.definition && source_commands.references && source_commands.completion
+      && source_commands.signature_help && source_commands.hover && source_commands.rename && source_commands.code_actions
+      && source_commands.workspace_symbols && source_commands.hierarchy && source_commands.breakpoint
+      && source_commands.format_document && source_commands.format_selection
+      && source_commands.switch_document && source_commands.close_all && source_commands.close_others
+      && source_commands.reopen_closed,
+    "editor and clangd commands follow document capabilities");
+  project_context.build_running = true;
+  const auto building_commands = tuiide::commandAvailability(project_context);
+  expect(!building_commands.build && !building_commands.run && !building_commands.cmake_configuration
+      && !building_commands.debug_start && building_commands.cancel_build,
+    "conflicting project commands are disabled while a build is running");
+  project_context.build_running = false;
+  project_context.gdb_running = true;
+  project_context.gdb_active = true;
+  const auto running_debug_commands = tuiide::commandAvailability(project_context);
+  expect(running_debug_commands.debug_pause && !running_debug_commands.debug_step
+      && !running_debug_commands.debug_start && running_debug_commands.debug_stop
+      && running_debug_commands.debug_restart,
+    "running debugger enables pause but disables stepping and continue");
+  project_context.gdb_stopped = true;
+  const auto stopped_debug_commands = tuiide::commandAvailability(project_context);
+  expect(!stopped_debug_commands.debug_pause && stopped_debug_commands.debug_step
+      && stopped_debug_commands.debug_start && stopped_debug_commands.debug_stop
+      && stopped_debug_commands.debug_restart,
+    "stopped debugger enables stepping and continue");
+  project_context.gdb_active = false;
+  project_context.gdb_stopped = false;
+  const auto exited_debug_commands = tuiide::commandAvailability(project_context);
+  expect(exited_debug_commands.debug_start && exited_debug_commands.debug_stop
+      && exited_debug_commands.debug_restart && !exited_debug_commands.debug_pause
+      && !exited_debug_commands.debug_step,
+    "exited inferior can be started or restarted while stale stepping commands stay disabled");
+  expect(tuiide::lspLanguageId("source.c") == "c"
+      && tuiide::lspLanguageId("source.cpp") == "cpp"
+      && tuiide::lspLanguageId("header.hpp") == "cpp",
+    "clangd language id distinguishes C from C++ documents");
+  const auto unicode_lsp_path = std::filesystem::absolute("directory with spaces/файл.cpp");
+  const auto unicode_lsp_uri = tuiide::lspFileUri(unicode_lsp_path);
+  expect(unicode_lsp_uri.find(' ') == std::string::npos && unicode_lsp_uri.find("%D1%84") != std::string::npos,
+    "LSP file URI percent-encodes spaces and UTF-8 bytes");
+
+  const auto hierarchical_symbols = tuiide::parseDocumentSymbols(nlohmann::json::array({
+    {{"name", "Widget"}, {"detail", "class Widget"}, {"kind", 5},
+      {"selectionRange", {{"start", {{"line", 2}, {"character", 6}}},
+        {"end", {{"line", 2}, {"character", 12}}}}},
+      {"children", nlohmann::json::array({
+        {{"name", "draw"}, {"kind", 6}, {"selectionRange", {
+          {"start", {{"line", 5}, {"character", 7}}}, {"end", {{"line", 5}, {"character", 11}}}}}}
+      })}}
+  }), "/tmp/widget.cpp");
+  expect(hierarchical_symbols.size() == 2 && hierarchical_symbols[0].name == "Widget"
+      && hierarchical_symbols[0].depth == 0 && hierarchical_symbols[0].position == tuiide::Position{2, 6}
+      && hierarchical_symbols[1].name == "draw" && hierarchical_symbols[1].depth == 1,
+    "documentSymbol parser preserves hierarchical classes and methods with UTF-16 positions");
+  const auto flat_symbol_path = std::filesystem::absolute("flat.cpp");
+  const auto flat_symbols = tuiide::parseDocumentSymbols(nlohmann::json::array({
+    {{"name", "main"}, {"containerName", "global"}, {"kind", 12}, {"location", {
+      {"uri", tuiide::lspFileUri(flat_symbol_path)}, {"range", {
+        {"start", {{"line", 9}, {"character", 0}}}, {"end", {{"line", 9}, {"character", 4}}}}}}}},
+    {{"name", "foreign"}, {"kind", 12}, {"location", {
+      {"uri", tuiide::lspFileUri(flat_symbol_path.parent_path() / "other.cpp")}, {"range", {
+        {"start", {{"line", 1}, {"character", 0}}}, {"end", {{"line", 1}, {"character", 7}}}}}}}}
+  }), flat_symbol_path);
+  expect(flat_symbols.size() == 1 && flat_symbols[0].name == "main" && flat_symbols[0].detail == "global",
+    "documentSymbol parser supports flat SymbolInformation and filters foreign files");
+  expect(tuiide::lspPathFromFileUri(unicode_lsp_uri) == unicode_lsp_path.lexically_normal(),
+    "LSP file URI round-trips Unicode paths");
+
+  const auto compilation_root = std::filesystem::temp_directory_path()
+      / ("tuiide-cdb-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(compilation_root / "build");
+  std::filesystem::create_directories(compilation_root / "src");
+  { std::ofstream file(compilation_root / "src/main.cpp"); file << "int main() {}\n"; }
+  { std::ofstream file(compilation_root / "src/not-built.cpp"); file << "int unused;\n"; }
+  { std::ofstream database(compilation_root / "build/compile_commands.json"); database << R"([
+    {"directory":"../src","file":"main.cpp","command":"c++ -c main.cpp"},
+    {"directory":"../src","file":"main.cpp","arguments":["c++","-c","main.cpp"]}
+  ])"; }
+  tuiide::CompilationDatabase compilation_database;
+  std::string compilation_error;
+  expect(compilation_database.load(compilation_root / "build", compilation_error)
+      && compilation_database.available() && compilation_database.size() == 1
+      && compilation_database.contains(compilation_root / "src/main.cpp")
+      && !compilation_database.contains(compilation_root / "src/not-built.cpp"),
+    "compilation database resolves relative entries, deduplicates them, and reports missing sources");
+  { std::ofstream database(compilation_root / "build/compile_commands.json", std::ios::trunc); database << "{broken"; }
+  expect(!compilation_database.load(compilation_root / "build", compilation_error)
+      && !compilation_database.available() && !compilation_error.empty(),
+    "malformed compilation database is rejected without retaining stale entries");
+  std::error_code compilation_cleanup_error;
+  std::filesystem::remove_all(compilation_root, compilation_cleanup_error);
+
+  const auto workspace_root = std::filesystem::temp_directory_path()
+      / ("tuiide-workspace-edit-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(workspace_root / "old/subdirectory");
+  { std::ofstream file(workspace_root / "old.cpp"); file << "old\n"; }
+  { std::ofstream file(workspace_root / "old/subdirectory/data.txt"); file << "delete me\n"; }
+  const auto parsed_workspace = tuiide::parseWorkspaceEdit({{"documentChanges", nlohmann::json::array({
+    {{"textDocument", {{"uri", tuiide::lspFileUri(workspace_root / "old.cpp")}, {"version", 7}}},
+      {"edits", nlohmann::json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}},
+        {"end", {{"line", 0}, {"character", 3}}}}}, {"newText", "new"}}})}},
+    {{"kind", "create"}, {"uri", tuiide::lspFileUri(workspace_root / "created.hpp")}},
+    {{"kind", "rename"}, {"oldUri", tuiide::lspFileUri(workspace_root / "old.cpp")},
+      {"newUri", tuiide::lspFileUri(workspace_root / "renamed.cpp")}, {"options", {{"overwrite", true}}}},
+    {{"kind", "delete"}, {"uri", tuiide::lspFileUri(workspace_root / "old")},
+      {"options", {{"recursive", true}, {"ignoreIfNotExists", true}}}}
+  })}});
+  expect(parsed_workspace.files.size() == 1 && parsed_workspace.files[0].version == 7
+      && parsed_workspace.file_operations.size() == 3
+      && parsed_workspace.file_operations[1].kind == tuiide::WorkspaceFileOperationKind::Rename
+      && parsed_workspace.file_operations[1].overwrite
+      && parsed_workspace.file_operations[2].recursive
+      && parsed_workspace.file_operations[2].ignore_if_not_exists,
+    "workspace edit parser retains document versions and resource-operation options");
+  tuiide::WorkspaceFileTransaction workspace_transaction;
+  std::string workspace_error;
+  expect(workspace_transaction.prepare(workspace_root, parsed_workspace.file_operations, workspace_error)
+      && workspace_transaction.apply(workspace_error),
+    "workspace file transaction applies create, rename, and recursive delete operations");
+  expect(std::filesystem::exists(workspace_root / "created.hpp")
+      && std::filesystem::exists(workspace_root / "renamed.cpp")
+      && !std::filesystem::exists(workspace_root / "old.cpp")
+      && !std::filesystem::exists(workspace_root / "old"),
+    "workspace file operations produce the requested filesystem state");
+  expect(workspace_transaction.rollback(workspace_error)
+      && !std::filesystem::exists(workspace_root / "created.hpp")
+      && std::filesystem::exists(workspace_root / "old.cpp")
+      && std::filesystem::exists(workspace_root / "old/subdirectory/data.txt"),
+    "workspace file transaction restores every operation on rollback");
+  expect(workspace_transaction.apply(workspace_error) && workspace_transaction.commit(workspace_error)
+      && std::filesystem::exists(workspace_root / "created.hpp")
+      && std::filesystem::exists(workspace_root / "renamed.cpp")
+      && !std::filesystem::exists(workspace_root / "old"),
+    "committed workspace file transaction removes staged deletion backups");
+  std::error_code workspace_cleanup_error;
+  std::filesystem::remove_all(workspace_root, workspace_cleanup_error);
+
+  const auto path_test = std::filesystem::temp_directory_path()
+      / ("tuiide-path-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(path_test / "real");
+  { std::ofstream file(path_test / "real/source.cpp"); file << "int value;\n"; }
+  std::error_code symlink_error;
+  std::filesystem::create_directory_symlink(path_test / "real", path_test / "alias", symlink_error);
+  expect(!symlink_error, "path fixture symlink is created");
+  expect(tuiide::normalizePath(path_test / "real/../real/source.cpp")
+      == tuiide::normalizePath(path_test / "alias/source.cpp"), "document identity resolves dot segments and symlinks");
+  tuiide::Document normalized_document;
+  std::string document_error;
+  expect(normalized_document.load(path_test / "alias/source.cpp", document_error), "document loads through a symlink");
+  expect(normalized_document.path() == tuiide::normalizePath(path_test / "real/source.cpp"), "loaded document stores normalized identity");
+  std::filesystem::remove_all(path_test, symlink_error);
+
+  const auto history_test = std::filesystem::temp_directory_path()
+    / ("tuiide-history-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const auto first_project = history_test / "first";
+  const auto second_project = history_test / "second";
+  const auto history_file = history_test / "config" / "recent.json";
+  std::filesystem::create_directories(first_project);
+  std::filesystem::create_directories(second_project);
+  std::string history_error;
+  expect(!tuiide::validateProjectDirectory(first_project, history_error)
+    && history_error.find("CMakeLists.txt") != std::string::npos,
+    "project validation rejects arbitrary directories");
+  { std::ofstream file(first_project / "CMakeLists.txt"); file << "project(first)\n"; }
+  { std::ofstream file(second_project / "CMakeLists.txt"); file << "project(second)\n"; }
+  expect(tuiide::rememberRecentProject(history_file, first_project, history_error)
+    && tuiide::rememberRecentProject(history_file, second_project, history_error)
+    && tuiide::rememberRecentProject(history_file, first_project, history_error),
+    "recent projects are stored atomically");
+  auto recent_projects = tuiide::loadRecentProjects(history_file, history_error);
+  expect(history_error.empty() && recent_projects == std::vector<std::filesystem::path>{
+      tuiide::normalizePath(first_project), tuiide::normalizePath(second_project)},
+    "recent projects are normalized, deduplicated, and ordered by last use");
+  std::filesystem::remove(second_project / "CMakeLists.txt");
+  recent_projects = tuiide::loadRecentProjects(history_file, history_error);
+  expect(recent_projects == std::vector<std::filesystem::path>{tuiide::normalizePath(first_project)},
+    "recent project loading drops directories that are no longer CMake projects");
+  std::filesystem::remove_all(history_test, symlink_error);
+
+  const auto tree_project = std::filesystem::temp_directory_path()
+      / ("tuiide-tree-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const auto tree_build = tree_project / "build";
+  std::filesystem::create_directories(tree_project / "src/empty");
+  std::filesystem::create_directories(tree_project / ".git");
+  std::filesystem::create_directories(tree_build);
+  { std::ofstream file(tree_project / "README.md"); file << "readme\n"; }
+  { std::ofstream file(tree_project / "src/main.cpp"); file << "int main() {}\n"; }
+  { std::ofstream file(tree_project / "asset.dat"); file << "asset\n"; }
+  { std::ofstream file(tree_project / ".git/hidden.cpp"); file << "hidden\n"; }
+  { std::ofstream file(tree_build / "generated.cpp"); file << "generated\n"; }
+  for (int index = 0; index < 510; ++index) {
+    std::ofstream file(tree_project / ("item-" + std::to_string(index) + ".data")); file << index;
+  }
+  tuiide::ProjectTreeSnapshot tree_snapshot;
+  expect(tuiide::scanProjectTree(tree_project, tree_build, {}, tree_snapshot, history_error),
+    "project tree scans all project entries");
+  expect(tree_snapshot.scanned_files == 513 && tree_snapshot.entries.size() >= 515,
+    "project tree displays arbitrary files and does not silently truncate at the old 500-file limit");
+  expect(std::find(tree_snapshot.editable_files.begin(), tree_snapshot.editable_files.end(),
+      tuiide::normalizePath(tree_project / "src/main.cpp")) != tree_snapshot.editable_files.end()
+      && std::none_of(tree_snapshot.entries.begin(), tree_snapshot.entries.end(), [&](const auto& entry) {
+        return entry.path == tuiide::normalizePath(tree_project / ".git/hidden.cpp")
+          || entry.path == tuiide::normalizePath(tree_build / "generated.cpp");
+      }), "project tree keeps editable files while excluding VCS and selected build directories");
+  expect(tuiide::scanProjectTree(tree_project, tree_build, "MAIN", tree_snapshot, history_error)
+      && std::any_of(tree_snapshot.entries.begin(), tree_snapshot.entries.end(), [](const auto& entry) {
+        return entry.path.filename() == "main.cpp";
+      }) && std::none_of(tree_snapshot.entries.begin(), tree_snapshot.entries.end(), [](const auto& entry) {
+        return entry.path.filename() == "asset.dat";
+      }), "project tree filter is case-insensitive and matches relative paths");
+  expect(tuiide::createProjectDirectory(tree_project, tree_project / "generated/nested", history_error)
+      && std::filesystem::is_directory(tree_project / "generated/nested"),
+    "project tree creates nested directories inside the workspace");
+  expect(!tuiide::deleteEmptyProjectDirectory(tree_project, tree_project / "generated", history_error)
+      && tuiide::deleteEmptyProjectDirectory(tree_project, tree_project / "generated/nested", history_error),
+    "directory deletion refuses non-empty directories and removes an empty selected directory");
+  expect(tuiide::renameProjectEntry(tree_project, tree_project / "asset.dat",
+      tree_project / "src/renamed.asset", history_error)
+      && std::filesystem::exists(tree_project / "src/renamed.asset"),
+    "project entries can be renamed or moved inside the workspace");
+  expect(!tuiide::renameProjectEntry(tree_project, tree_project / "README.md",
+      tree_project.parent_path() / "escaped.md", history_error),
+    "project move cannot escape the workspace root");
+  std::filesystem::remove_all(tree_project, symlink_error);
+
+  tuiide::AsyncProcess process_tree;
+  expect(process_tree.start({"sh", "-c", "sleep 30 & wait"}), "process tree starts");
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  const auto stop_started = std::chrono::steady_clock::now();
+  process_tree.stop();
+  expect(std::chrono::steady_clock::now() - stop_started < std::chrono::seconds(2),
+    "stopping a process also terminates descendants holding output pipes");
+  tuiide::AsyncProcess environment_process;
+  expect(environment_process.start({"sh", "-c", "printf '%s' \"$TUIIDE_PROCESS_VALUE\""}, true, {},
+      {{"TUIIDE_PROCESS_VALUE", "UTF-8: данные"}}),
+    "process starts with project environment overrides");
+  for (int attempt = 0; attempt < 100 && environment_process.running(); ++attempt)
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  environment_process.stop();
+  std::string environment_output;
+  for (const auto& chunk : environment_process.drain()) environment_output += chunk;
+  expect(environment_output == "UTF-8: данные", "child process receives UTF-8 project environment");
+  tuiide::AsyncProcess stdin_process;
+  expect(stdin_process.start({"sh", "-c", "cat"}), "process accepting configured stdin starts");
+  expect(stdin_process.write("UTF-8 stdin: данные\n"), "process accepts UTF-8 stdin data");
+  stdin_process.closeInput();
+  for (int attempt = 0; attempt < 100 && stdin_process.running(); ++attempt)
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  stdin_process.stop();
+  std::string stdin_output;
+  for (const auto& chunk : stdin_process.drain()) stdin_output += chunk;
+  expect(stdin_output == "UTF-8 stdin: данные\n", "closing process stdin delivers EOF without losing data");
+
+  tuiide::PseudoTerminal pseudo_terminal;
+  expect(pseudo_terminal.start({"sh", "-c", "stty size; IFS= read -r line; printf 'received:%s\\n' \"$line\""},
+      {}, {}, 40, 10), "PTY process starts with a configured terminal size");
+  expect(pseudo_terminal.write("интерактивный ввод\n"), "PTY accepts interactive UTF-8 input");
+  for (int attempt = 0; attempt < 200 && pseudo_terminal.running(); ++attempt)
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  std::string terminal_output;
+  for (const auto& chunk : pseudo_terminal.drain()) terminal_output += chunk;
+  const auto terminal_exit = pseudo_terminal.exitCode();
+  pseudo_terminal.stop();
+  expect(terminal_exit && *terminal_exit == 0 && terminal_output.find("10 40") != std::string::npos
+      && terminal_output.find("received:интерактивный ввод") != std::string::npos,
+    "PTY exposes dimensions and transports terminal input and output");
+
+  tuiide::TerminalBuffer terminal_buffer;
+  terminal_buffer.append("progress 10%\rprogress 90%\x1b[K\n\x1b[31mошибка\x1b[0m\n");
+  expect(terminal_buffer.text() == "progress 90%\nошибка\n",
+    "terminal buffer applies carriage returns and removes ANSI styling without damaging UTF-8");
+
+  const auto formatter_tools = std::filesystem::temp_directory_path()
+      / ("tuiide-format-tools-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(formatter_tools);
+  const auto formatter_arguments = formatter_tools / "arguments.txt";
+  const auto formatter = formatter_tools / "clang-format-test";
+  { std::ofstream script(formatter); script << "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TUIIDE_FORMAT_ARGS\"\nsed 's/int  /int /g'\n"; }
+  std::filesystem::permissions(formatter, std::filesystem::perms::owner_all);
+  ::setenv("TUIIDE_FORMAT_ARGS", formatter_arguments.c_str(), 1);
+  const auto formatted = tuiide::clangFormat("int  main() {}\n", "/tmp/sample.cpp",
+    tuiide::FormatLineRange{2, 4}, formatter.string());
+  expect(formatted.success && formatted.text == "int main() {}\n",
+    "clang-format filter returns formatted UTF-8 source text");
+  std::ifstream formatter_arguments_input(formatter_arguments);
+  const std::string formatter_arguments_text((std::istreambuf_iterator<char>(formatter_arguments_input)),
+    std::istreambuf_iterator<char>());
+  expect(formatter_arguments_text.find("--assume-filename=/tmp/sample.cpp") != std::string::npos
+      && formatter_arguments_text.find("--lines=3:5") != std::string::npos,
+    "clang-format receives the assumed filename and one-based selected line range");
+  const auto missing_formatter = tuiide::clangFormat("int x;\n", "/tmp/sample.cpp", {},
+    (formatter_tools / "missing-clang-format").string());
+  expect(!missing_formatter.success && missing_formatter.error.find("not found") != std::string::npos,
+    "missing clang-format executable produces an actionable error without SIGPIPE");
+  ::unsetenv("TUIIDE_FORMAT_ARGS");
+  std::filesystem::remove_all(formatter_tools, clipboard_cleanup_error);
+
+  tuiide::Document formatted_document;
+  formatted_document.setText("int  main() {}\n"); formatted_document.setCursor({0, 4});
+  formatted_document.replaceTextPreservingCursor("int main() {}\n");
+  expect(formatted_document.text() == "int main() {}\n"
+      && formatted_document.cursor() == tuiide::Position{0, 4},
+    "formatted text is installed while preserving the cursor");
+  expect(formatted_document.undo() && formatted_document.text() == "int  main() {}\n"
+      && formatted_document.redo() && formatted_document.cursor() == tuiide::Position{0, 4},
+    "whole-document formatting is one reversible undo/redo operation");
+
+  tuiide::Document completion;
+  completion.insert("std::vec");
+  completion.replaceIdentifierBeforeCursor("vector");
+  expect(completion.text() == "std::vector", "completion replaces identifier prefix");
+  expect(completion.undo(), "completion replacement is undoable");
+  expect(completion.text() == "std::vec", "undo restores completion prefix");
+
+  tuiide::Document lsp_positions;
+  lsp_positions.insert("a😀б");
+  expect(lsp_positions.utf16Column(0, lsp_positions.text().size()) == 4, "UTF-16 counts surrogate pairs");
+  expect(lsp_positions.byteColumn(0, 3) == 5, "UTF-16 column converts to UTF-8 byte offset");
+  lsp_positions.applyReplacements({{{0, 1}, {0, 5}, "X"}});
+  expect(lsp_positions.text() == "aXб", "range replacement handles UTF-8 byte offsets");
+  expect(lsp_positions.undo(), "workspace replacement is one undo step");
+  expect(lsp_positions.text() == "a😀б", "undo restores workspace replacement");
+  expect(lsp_positions.redo() && lsp_positions.text() == "aXб"
+      && lsp_positions.undo() && lsp_positions.text() == "a😀б",
+    "workspace replacement redo and second undo preserve UTF-8 edit coordinates");
+
+  std::vector<tuiide::PreparedReplacement> prepared_rename;
+  std::string rename_error;
+  expect(tuiide::prepareWorkspaceReplacements(lsp_positions,
+    {{{0, 1}, {0, 3}, "icon"}}, prepared_rename, rename_error),
+    "rename preview validates UTF-16 ranges");
+  expect(prepared_rename.size() == 1 && prepared_rename[0].original == "😀"
+    && prepared_rename[0].replacement.start.column == 1
+    && prepared_rename[0].replacement.end.column == 5,
+    "rename preview preserves original UTF-8 text and converts columns");
+  expect(!tuiide::prepareWorkspaceReplacements(lsp_positions,
+    {{{0, 2}, {0, 3}, "bad"}}, prepared_rename, rename_error)
+    && rename_error == "invalid UTF-16 range" && prepared_rename.empty(),
+    "rename rejects a position inside a UTF-16 surrogate pair");
+  tuiide::Document overlap_document;
+  overlap_document.setText("value");
+  expect(!tuiide::prepareWorkspaceReplacements(overlap_document,
+    {{{0, 0}, {0, 3}, "a"}, {{0, 2}, {0, 5}, "b"}}, prepared_rename, rename_error)
+    && rename_error == "overlapping ranges", "rename rejects overlapping edits before applying any change");
+
+  tuiide::Document selection;
+  selection.setText("alpha\nbeta\ngamma");
+  expect(selection.extractRange({0, 2}, {1, 2}) == "pha\nbe", "multiline selection is extracted");
+  selection.replaceRange({0, 2}, {1, 2}, "X\nY");
+  expect(selection.text() == "alX\nYta\ngamma", "multiline selection is replaced");
+  expect(selection.cursor() == tuiide::Position{1, 1}, "cursor follows replacement text");
+  expect(selection.undo() && selection.text() == "alpha\nbeta\ngamma", "selection replacement is one undo step");
+
+  std::string search_error;
+  auto search_matches = tuiide::searchText("Value value valuable\nПривет value", "value", "item",
+    {.case_sensitive = false, .whole_word = true}, search_error);
+  expect(search_error.empty() && search_matches.size() == 3,
+    "case-insensitive whole-word search skips identifier prefixes");
+  expect(search_matches[2].start == tuiide::Position{1, 13},
+    "search reports UTF-8 byte columns on later lines");
+  search_matches = tuiide::searchText("item-12 item-34", R"(item-(\d+))", "value-$1",
+    {.case_sensitive = true, .regular_expression = true}, search_error);
+  expect(search_matches.size() == 2 && search_matches[1].replacement == "value-34",
+    "regular-expression search expands replacement capture groups");
+  tuiide::Document replace_all_document;
+  replace_all_document.setText("item-12 item-34");
+  std::vector<tuiide::TextReplacement> search_replacements;
+  for (const auto& match : search_matches)
+    search_replacements.push_back({match.start, match.end, match.replacement});
+  replace_all_document.applyReplacements(std::move(search_replacements));
+  expect(replace_all_document.text() == "value-12 value-34" && replace_all_document.undo(),
+    "replace all applies regex captures as one undoable document edit");
+  search_matches = tuiide::searchText("abc", "[", "", {.regular_expression = true}, search_error);
+  expect(search_matches.empty() && search_error.starts_with("Invalid regular expression"),
+    "invalid regular expressions return an actionable error");
+
+  tuiide::Document utf8;
+  utf8.insert("аб");
+  utf8.backspace();
+  expect(utf8.text() == "а", "backspace removes one UTF-8 code point");
+
+  bool comment = false;
+  auto tokens = tuiide::highlightCpp("const char* s = \"text\"; // note", comment);
+  expect(tokens.size() >= 4, "C++ tokens detected");
+  expect(tokens.back().kind == tuiide::TokenKind::Comment, "line comment detected");
+
+  int cmake_bracket{-1};
+  bool cmake_bracket_comment{};
+  auto cmake_tokens = tuiide::highlightCMake("target_link_libraries(app PRIVATE ${CORE_LIBRARY}) # note",
+    cmake_bracket, cmake_bracket_comment);
+  expect(std::any_of(cmake_tokens.begin(), cmake_tokens.end(), [](const auto& token) {
+    return token.kind == tuiide::TokenKind::Function;
+  }), "CMake command is highlighted as a function");
+  expect(std::any_of(cmake_tokens.begin(), cmake_tokens.end(), [](const auto& token) {
+    return token.kind == tuiide::TokenKind::Variable;
+  }), "CMake variable expansion is highlighted");
+  cmake_tokens = tuiide::highlightCMake("#[=[ bracket comment", cmake_bracket, cmake_bracket_comment);
+  expect(cmake_bracket == 1 && cmake_bracket_comment, "CMake bracket comment state crosses lines");
+  cmake_tokens = tuiide::highlightCMake("still comment ]=] set(VALUE ON)", cmake_bracket, cmake_bracket_comment);
+  expect(cmake_bracket == -1 && !cmake_bracket_comment && cmake_tokens.front().kind == tuiide::TokenKind::Comment,
+    "CMake bracket comment closes with its matching delimiter");
+  const auto cmake_completion = tuiide::completeCMake({"target_link_lib"}, 0, 15);
+  expect(std::find(cmake_completion.begin(), cmake_completion.end(), "target_link_libraries") != cmake_completion.end(),
+    "CMake completion filters standard commands by prefix");
+
+  std::vector<std::string> large_source;
+  large_source.reserve(50000);
+  for (std::size_t line = 0; line < 50000; ++line)
+    large_source.push_back("int value_" + std::to_string(line) + " = " + std::to_string(line) + ";");
+  tuiide::CppSyntaxCache syntax_cache;
+  expect(syntax_cache.update(large_source) == large_source.size(), "large syntax cache performs an initial full scan");
+  large_source[25000] = "constexpr int changed = 42;";
+  syntax_cache.invalidateFrom(25000);
+  expect(syntax_cache.update(large_source) == 1, "single-line edit only re-highlights one line");
+  large_source.insert(large_source.begin() + 100, "int inserted = 1;");
+  syntax_cache.invalidateFrom(100);
+  expect(syntax_cache.update(large_source) == 1, "inserted line reuses the shifted syntax-cache suffix");
+  large_source[30000] = "/* begin comment";
+  large_source[30010] = "end comment */";
+  syntax_cache.invalidateFrom(30000);
+  expect(syntax_cache.update(large_source) == 11, "block-comment edit re-highlights only until lexical state stabilizes");
+
+  const auto session_path = std::filesystem::temp_directory_path()
+      / ("tuiide-session-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".json");
+  tuiide::DebugSession saved_session{{{{"/tmp/source.cpp"}, 17, false, "counter > 3", 2, "counter reached"}}, {"counter", "items.size()"}, true,
+    "app", "Debug", "dev", "dev-build", 34, 9};
+  std::string session_error;
+  expect(tuiide::saveDebugSession(session_path, saved_session, session_error), "debug session is saved");
+  tuiide::DebugSession loaded_session;
+  expect(tuiide::loadDebugSession(session_path, loaded_session, session_error), "debug session is loaded");
+  expect(loaded_session.breakpoints.size() == 1 && loaded_session.breakpoints[0].line == 17
+      && !loaded_session.breakpoints[0].enabled && loaded_session.breakpoints[0].condition == "counter > 3"
+      && loaded_session.breakpoints[0].hit_count == 2 && loaded_session.breakpoints[0].log_message == "counter reached",
+    "advanced breakpoint settings round trip");
+  expect(loaded_session.watches == saved_session.watches && loaded_session.registers_enabled, "debug options round trip");
+  expect(loaded_session.cmake_target == "app" && loaded_session.cmake_configuration == "Debug", "CMake selection round trip");
+  expect(loaded_session.cmake_configure_preset == "dev", "CMake preset round trip");
+  expect(loaded_session.cmake_build_preset == "dev-build", "CMake build preset round trip");
+  expect(loaded_session.sidebar_width == 34 && loaded_session.lower_panel_height == 9,
+    "saved panel dimensions round trip");
+  { std::ofstream corrupted(session_path, std::ios::trunc); corrupted << "{broken"; }
+  expect(!tuiide::loadDebugSession(session_path, loaded_session, session_error), "corrupted debug session is rejected");
+  std::error_code cleanup_error;
+  std::filesystem::remove(session_path, cleanup_error);
+
+  tuiide::GdbClient debugger;
+  expect(!debugger.evaluate("1 + 1") && !debugger.assign("value", "2")
+      && !debugger.disassemble("$pc") && !debugger.readMemory("$sp", 32),
+    "GDB expression operations require a stopped debuggee");
+  expect(debugger.addBreakpoint("/tmp/source.cpp", 17), "breakpoint can be restored");
+  expect(!debugger.addBreakpoint("/tmp/source.cpp", 17), "restored breakpoint is deduplicated");
+  expect(debugger.breakpoints().size() == 1 && debugger.breakpoints()[0].line == 17, "breakpoint state can be exported");
+  auto configured_breakpoint = debugger.breakpoints()[0];
+  configured_breakpoint.enabled = false; configured_breakpoint.condition = "value == 42";
+  configured_breakpoint.hit_count = 3; configured_breakpoint.log_message = "hit value";
+  expect(debugger.updateBreakpoint(configured_breakpoint)
+      && !debugger.breakpoints()[0].enabled && debugger.breakpoints()[0].condition == "value == 42",
+    "breakpoint properties can be updated before GDB starts");
+  expect(debugger.removeBreakpoint("/tmp/source.cpp", 17) && debugger.breakpoints().empty(),
+    "breakpoint can be removed through the structured API");
+
+  const auto mi_stack = tuiide::parseMiRecord(
+    R"(27^done,stack=[frame={level="0",func="compute",fullname="/tmp/a,b.cpp",line="7"},frame={level="1",func="main",line="12"}])");
+  expect(mi_stack.valid() && mi_stack.token == 27 && mi_stack.prefix == '^' && mi_stack.klass == "done",
+    "GDB/MI parser retains token and result record class");
+  const auto* mi_frames = mi_stack.result("stack");
+  expect(mi_frames && mi_frames->values.size() == 2 && mi_frames->names[0] == "frame"
+      && mi_frames->values[0].string("fullname") == "/tmp/a,b.cpp"
+      && mi_frames->values[1].string("func") == "main",
+    "GDB/MI parser preserves nested result lists without splitting quoted commas");
+  const auto mi_children = tuiide::parseMiRecord(
+    R"(9^done,numchild="2",children=[child={name="var1.left",exp="left",numchild="0",value="42"},child={name="var1.text",exp="text",numchild="0",value="a\n\"b\""}])");
+  const auto* children = mi_children.result("children");
+  expect(mi_children.valid() && children && children->values.size() == 2
+      && children->values[1].string("value") == "a\n\"b\"",
+    "GDB/MI parser decodes escapes inside nested tuples");
+  const auto mi_stream = tuiide::parseMiRecord(R"(~"UTF-8: \320\237\321\200\320\270\320\262\320\265\321\202\n")");
+  expect(mi_stream.valid() && mi_stream.stream == "UTF-8: Привет\n",
+    "GDB/MI stream parser decodes octal UTF-8 and newlines");
+  const auto mi_error = tuiide::parseMiRecord(R"(31^error,msg="No symbol \"missing\"")");
+  expect(mi_error.valid() && mi_error.klass == "error" && mi_error.string("msg") == "No symbol \"missing\"",
+    "GDB/MI parser exposes structured command errors");
+  expect(!tuiide::parseMiRecord("4^done,broken={").valid(),
+    "GDB/MI parser rejects truncated aggregates deterministically");
+
+  const auto cmake_build = std::filesystem::temp_directory_path()
+      / ("tuiide-cmake-model-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  expect(tuiide::createCMakeFileApiQuery(cmake_build, session_error), "CMake File API query is created");
+  expect(std::filesystem::exists(cmake_build / ".cmake/api/v1/query/codemodel-v2"), "codemodel query file exists");
+  const auto reply = cmake_build / ".cmake/api/v1/reply";
+  std::filesystem::create_directories(reply);
+  { std::ofstream file(reply / "index-test.json"); file << R"({"reply":{"codemodel-v2":{"jsonFile":"model.json"}}})"; }
+  { std::ofstream file(reply / "model.json"); file << R"({"configurations":[{"name":"Debug","targets":[{"name":"app","jsonFile":"app.json"},{"name":"core","jsonFile":"core.json"}]}]})"; }
+  { std::ofstream file(reply / "app.json"); file << R"({"name":"app","type":"EXECUTABLE","artifacts":[{"path":"bin/app"}]})"; }
+  { std::ofstream file(reply / "core.json"); file << R"({"name":"core","type":"STATIC_LIBRARY","artifacts":[{"path":"libcore.a"}]})"; }
+  auto targets = tuiide::loadCMakeExecutableTargets(cmake_build, session_error);
+  expect(targets.size() == 1 && targets[0].name == "app" && targets[0].configuration == "Debug", "executable CMake target is parsed");
+  expect(targets[0].artifact == cmake_build / "bin/app", "target artifact is resolved against build directory");
+  std::filesystem::remove_all(cmake_build, cleanup_error);
+
+  const auto cmake_edit = std::filesystem::temp_directory_path()
+      / ("tuiide-cmake-edit-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(cmake_edit / "src");
+  { std::ofstream file(cmake_edit / "src/main.cpp"); file << "int main() {}\n"; }
+  { std::ofstream file(cmake_edit / "src/main.cpp.old"); file << "not a source\n"; }
+  { std::ofstream file(cmake_edit / "CMakeLists.txt"); file
+      << "add_executable(app src/main.cpp \"src/main.cpp\" src/main.cpp.old)\n"
+         "# src/main.cpp must remain in this comment\n"
+         "#[[\nsrc/main.cpp must remain in this bracket comment\n]]\n"
+         "set(documentation [=[src/main.cpp]=])\n"; }
+  tuiide::CMakeSourceRemoval source_removal;
+  expect(tuiide::removeCMakeSourceReferences(cmake_edit, cmake_edit / "src/main.cpp", source_removal, session_error),
+    "CMake source references are removed");
+  expect(source_removal.references_removed == 2 && source_removal.changed_files.size() == 1,
+    "all exact quoted and unquoted CMake references are reported");
+  std::ifstream edited_cmake(cmake_edit / "CMakeLists.txt");
+  const std::string edited_cmake_text((std::istreambuf_iterator<char>(edited_cmake)), std::istreambuf_iterator<char>());
+  expect(edited_cmake_text.find("src/main.cpp.old") != std::string::npos,
+    "CMake edit preserves paths with a common prefix");
+  expect(edited_cmake_text.find("# src/main.cpp must remain") != std::string::npos,
+    "CMake edit preserves comments");
+  expect(edited_cmake_text.find("src/main.cpp must remain in this bracket comment") != std::string::npos
+      && edited_cmake_text.find("[=[src/main.cpp]=]") != std::string::npos,
+    "CMake edit preserves bracket comments and arguments");
+  expect(!tuiide::removeCMakeSourceReferences(cmake_edit, cmake_edit.parent_path() / "outside.cpp", source_removal, session_error),
+    "CMake edit rejects files outside the project root");
+  std::filesystem::remove_all(cmake_edit, cleanup_error);
+
+  const auto cmake_rename = std::filesystem::temp_directory_path()
+      / ("tuiide-cmake-rename-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(cmake_rename / "src");
+  { std::ofstream file(cmake_rename / "src/main.cpp"); file << "int main() {}\n"; }
+  { std::ofstream file(cmake_rename / "src/lib.hpp"); file << "#pragma once\n"; }
+  { std::ofstream file(cmake_rename / "shared.cpp"); file << "int shared;\n"; }
+  { std::ofstream file(cmake_rename / "CMakeLists.txt"); file
+      << "add_subdirectory(src)\n"
+         "add_executable(app src/main.cpp \"src/lib.hpp\" src/main.cpp.old)\n"
+         "# src/main.cpp must remain in this comment\n"
+         "set(documentation [=[src/lib.hpp]=])\n"; }
+  { std::ofstream file(cmake_rename / "src/CMakeLists.txt"); file
+      << "target_sources(app PRIVATE main.cpp ../shared.cpp)\n"; }
+  tuiide::CMakeSourceRename source_rename;
+  expect(tuiide::moveProjectEntryWithCMake(cmake_rename, cmake_rename / "src",
+      cmake_rename / "code", source_rename, session_error),
+    "project directory move updates its CMake references");
+  expect(std::filesystem::exists(cmake_rename / "code/main.cpp")
+      && !std::filesystem::exists(cmake_rename / "src"),
+    "project directory is moved on disk");
+  std::ifstream renamed_root_cmake(cmake_rename / "CMakeLists.txt");
+  const std::string renamed_root_text((std::istreambuf_iterator<char>(renamed_root_cmake)),
+    std::istreambuf_iterator<char>());
+  expect(renamed_root_text.find("add_subdirectory(code)") != std::string::npos
+      && renamed_root_text.find("code/main.cpp") != std::string::npos
+      && renamed_root_text.find("\"code/lib.hpp\"") != std::string::npos,
+    "directory and descendant paths are replaced in parent CMake files");
+  expect(renamed_root_text.find("src/main.cpp.old") != std::string::npos
+      && renamed_root_text.find("# src/main.cpp must remain") != std::string::npos
+      && renamed_root_text.find("[=[src/lib.hpp]=]") != std::string::npos,
+    "CMake rename preserves prefix matches, comments, and bracket arguments");
+  std::ifstream renamed_nested_cmake(cmake_rename / "code/CMakeLists.txt");
+  const std::string renamed_nested_text((std::istreambuf_iterator<char>(renamed_nested_cmake)),
+    std::istreambuf_iterator<char>());
+  expect(renamed_nested_text.find("main.cpp ../shared.cpp") != std::string::npos,
+    "paths relative to a moved CMake file remain stable");
+  expect(source_rename.references_changed == 3 && source_rename.changed_files.size() == 1,
+    "CMake-aware move reports exact changed references and files");
+  std::filesystem::remove_all(cmake_rename, cleanup_error);
+
+  const auto cmake_rollback = std::filesystem::temp_directory_path()
+      / ("tuiide-cmake-rollback-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(cmake_rollback / "sub");
+  { std::ofstream file(cmake_rollback / "asset.dat"); file << "data\n"; }
+  { std::ofstream file(cmake_rollback / "CMakeLists.txt"); file << "set(asset asset.dat)\n"; }
+  { std::ofstream file(cmake_rollback / "sub/CMakeLists.txt"); file << "set(asset ../asset.dat)\n"; }
+  { std::ofstream file(cmake_rollback / "sub/CMakeLists.txt.tuiide.tmp"); file << "collision\n"; }
+  expect(!tuiide::moveProjectEntryWithCMake(cmake_rollback, cmake_rollback / "asset.dat",
+      cmake_rollback / "renamed.dat", source_rename, session_error),
+    "project move fails when a CMake transaction cannot be written");
+  expect(std::filesystem::exists(cmake_rollback / "asset.dat")
+      && !std::filesystem::exists(cmake_rollback / "renamed.dat"),
+    "failed CMake-aware move restores the filesystem entry");
+  std::ifstream rollback_root_cmake(cmake_rollback / "CMakeLists.txt");
+  std::ifstream rollback_nested_cmake(cmake_rollback / "sub/CMakeLists.txt");
+  const std::string rollback_root_text((std::istreambuf_iterator<char>(rollback_root_cmake)),
+    std::istreambuf_iterator<char>());
+  const std::string rollback_nested_text((std::istreambuf_iterator<char>(rollback_nested_cmake)),
+    std::istreambuf_iterator<char>());
+  expect(rollback_root_text.find("asset.dat") != std::string::npos
+      && rollback_root_text.find("renamed.dat") == std::string::npos
+      && rollback_nested_text.find("../asset.dat") != std::string::npos,
+    "failed CMake transaction leaves no partial reference edits");
+  expect(session_error.find("restored") != std::string::npos,
+    "failed CMake-aware move reports successful rollback");
+  std::filesystem::remove_all(cmake_rollback, cleanup_error);
+
+  const auto template_project = std::filesystem::temp_directory_path()
+      / ("tuiide-template-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(template_project);
+  std::filesystem::create_directories(template_project / "src");
+  { std::ofstream file(template_project / "existing.cpp"); file << "int existing;\n"; }
+  { std::ofstream file(template_project / "CMakeLists.txt"); file
+      << "cmake_minimum_required(VERSION 3.20)\nproject(template_test)\nadd_library(core existing.cpp)\n"; }
+  { std::ofstream file(template_project / "src/CMakeLists.txt"); file << "add_library(other INTERFACE)\n"; }
+  tuiide::ProjectTemplateResult template_result;
+  expect(tuiide::createProjectTemplate(template_project, tuiide::ProjectTemplate::CppClass,
+      "src/sample_widget", "core", template_result, session_error), "C++ class template is created");
+  expect(template_result.created_files.size() == 2
+      && std::filesystem::exists(template_project / "src/sample_widget.hpp")
+      && std::filesystem::exists(template_project / "src/sample_widget.cpp"),
+    "C++ class template creates header and implementation in a subdirectory");
+  std::ifstream generated_header(template_project / "src/sample_widget.hpp");
+  const std::string generated_header_text((std::istreambuf_iterator<char>(generated_header)), std::istreambuf_iterator<char>());
+  expect(generated_header_text.find("class SampleWidget") != std::string::npos,
+    "C++ class name is derived from the requested file name");
+  std::ifstream template_cmake(template_project / "CMakeLists.txt");
+  const std::string template_cmake_text((std::istreambuf_iterator<char>(template_cmake)), std::istreambuf_iterator<char>());
+  expect(template_cmake_text.find("src/sample_widget.hpp") != std::string::npos
+      && template_cmake_text.find("src/sample_widget.cpp") != std::string::npos,
+    "generated class files are added to the selected CMake target");
+  std::ifstream nested_template_cmake(template_project / "src/CMakeLists.txt");
+  const std::string nested_template_text((std::istreambuf_iterator<char>(nested_template_cmake)), std::istreambuf_iterator<char>());
+  expect(nested_template_text.find("sample_widget") == std::string::npos,
+    "preferred CMake target wins over an unrelated nearer target");
+  const std::vector<std::pair<tuiide::ProjectTemplate, std::filesystem::path>> individual_templates{
+    {tuiide::ProjectTemplate::CHeader, "include/c_api"},
+    {tuiide::ProjectTemplate::CppHeader, "include/cpp_api"},
+    {tuiide::ProjectTemplate::CSource, "src/c_module"},
+    {tuiide::ProjectTemplate::CppSource, "src/cpp_module"}
+  };
+  for (const auto& [type, path] : individual_templates)
+    expect(tuiide::createProjectTemplate(template_project, type, path, "core", template_result, session_error),
+      "individual C/C++ project template is created");
+  expect(std::filesystem::exists(template_project / "include/c_api.h")
+      && std::filesystem::exists(template_project / "include/cpp_api.hpp")
+      && std::filesystem::exists(template_project / "src/c_module.c")
+      && std::filesystem::exists(template_project / "src/cpp_module.cpp"),
+    "header and implementation templates apply their requested language extensions");
+  tuiide::CppClassOptions class_options;
+  class_options.class_name = "Model";
+  class_options.namespace_name = "demo::domain";
+  class_options.base_class = "Entity";
+  class_options.base_header = "domain/entity.hpp";
+  class_options.inheritance = tuiide::InheritanceAccess::Protected;
+  class_options.header_path = "include/model.hpp";
+  class_options.source_path = "src/model.cpp";
+  class_options.final_class = true;
+  class_options.generate_copy_operations = true;
+  class_options.generate_move_operations = true;
+  expect(tuiide::createCppClassTemplate(template_project, class_options, "core", template_result, session_error),
+    "configured C++ class template is created");
+  std::ifstream configured_header(template_project / "include/model.hpp");
+  const std::string configured_header_text((std::istreambuf_iterator<char>(configured_header)), std::istreambuf_iterator<char>());
+  expect(configured_header_text.find("namespace demo::domain") != std::string::npos
+      && configured_header_text.find("#include \"domain/entity.hpp\"") != std::string::npos
+      && configured_header_text.find("class Model final : protected Entity") != std::string::npos,
+    "class template applies namespace, final, base class, and inheritance access");
+  expect(configured_header_text.find("virtual ~Model()") != std::string::npos
+      && configured_header_text.find("Model(Model&&) noexcept") != std::string::npos,
+    "class template applies destructor and special-member settings");
+  std::ifstream configured_source(template_project / "src/model.cpp");
+  const std::string configured_source_text((std::istreambuf_iterator<char>(configured_source)), std::istreambuf_iterator<char>());
+  expect(configured_source_text.find("Model::Model() = default") != std::string::npos
+      && configured_source_text.find("Model::~Model() = default") != std::string::npos
+      && configured_source_text.find("#include \"../include/model.hpp\"") != std::string::npos,
+    "configured constructor and destructor definitions are generated");
+  class_options.class_name = "bad-name";
+  expect(!tuiide::validateCppClassSettings(class_options, session_error),
+    "class settings reject invalid C++ identifiers before choosing paths");
+  expect(!tuiide::createProjectTemplate(template_project, tuiide::ProjectTemplate::CppClass,
+      "src/sample_widget", "core", template_result, session_error), "templates never overwrite existing files");
+  expect(!tuiide::createProjectTemplate(template_project, tuiide::ProjectTemplate::CppSource,
+      "../outside", "core", template_result, session_error), "template paths cannot escape the project root");
+  std::filesystem::remove_all(template_project, cleanup_error);
+
+  const auto new_project_parent = std::filesystem::temp_directory_path()
+      / ("tuiide-new-project-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const auto new_project_path = new_project_parent / "sample";
+  const auto new_project_build = new_project_parent / "sample-build";
+  tuiide::NewProjectOptions new_project;
+  new_project.name = "sample_core";
+  new_project.project_directory = new_project_path;
+  new_project.build_directory = new_project_build;
+  new_project.language = tuiide::ProjectLanguage::Cpp;
+  new_project.target_type = tuiide::ProjectTargetType::StaticLibrary;
+  new_project.language_standard = "23";
+  new_project.cpp_header_extension = "h";
+  new_project.generator = "Ninja";
+  new_project.build_type = "Release";
+  new_project.install_layout = tuiide::ProjectInstallLayout::Gnu;
+  new_project.enable_testing = true;
+  expect(tuiide::createNewProject(new_project, session_error), "new C++ project is generated");
+  expect(std::filesystem::exists(new_project_path / "include/sample_core.h")
+      && std::filesystem::exists(new_project_path / "src/sample_core.cpp"),
+    "project wizard applies C++ header naming and library layout");
+  std::ifstream new_project_cmake(new_project_path / "CMakeLists.txt");
+  const std::string new_project_cmake_text((std::istreambuf_iterator<char>(new_project_cmake)), std::istreambuf_iterator<char>());
+  expect(new_project_cmake_text.find("LANGUAGES CXX") != std::string::npos
+      && new_project_cmake_text.find("CMAKE_CXX_STANDARD 23") != std::string::npos
+      && new_project_cmake_text.find("add_library(sample_core STATIC") != std::string::npos
+      && new_project_cmake_text.find("include(GNUInstallDirs)") != std::string::npos
+      && new_project_cmake_text.find("install(TARGETS sample_core") != std::string::npos
+      && new_project_cmake_text.find("install(DIRECTORY include/") != std::string::npos,
+    "project wizard applies language, standard, and target type");
+  expect(tuiide::loadProjectBuildDirectory(new_project_path) == std::filesystem::absolute(new_project_build),
+    "custom build directory is persisted for reopening");
+  tuiide::ProjectSettings generated_settings;
+  expect(tuiide::loadProjectSettings(new_project_path, generated_settings, session_error)
+      && generated_settings.generator == "Ninja"
+      && generated_settings.build_type == "Release"
+      && generated_settings.cpp_standard == "23",
+    "project wizard persists generator, build type, and selected language standard");
+  expect(!tuiide::createNewProject(new_project, session_error), "project wizard refuses a non-empty project directory");
+
+  tuiide::NewProjectOptions c_project;
+  c_project.name = "sample_c";
+  c_project.project_directory = new_project_parent / "sample-c";
+  c_project.build_directory = new_project_parent / "sample-c-build";
+  c_project.language = tuiide::ProjectLanguage::C;
+  c_project.target_type = tuiide::ProjectTargetType::Executable;
+  c_project.language_standard = "17";
+  expect(tuiide::createNewProject(c_project, session_error), "new C project is generated");
+  expect(std::filesystem::exists(c_project.project_directory / "src/main.c"),
+    "C project wizard generates a C source file");
+  std::ifstream c_project_cmake(c_project.project_directory / "CMakeLists.txt");
+  const std::string c_project_cmake_text((std::istreambuf_iterator<char>(c_project_cmake)), std::istreambuf_iterator<char>());
+  expect(c_project_cmake_text.find("LANGUAGES C") != std::string::npos
+      && c_project_cmake_text.find("CMAKE_C_STANDARD 17") != std::string::npos
+      && c_project_cmake_text.find("add_executable(sample_c") != std::string::npos,
+    "C project wizard applies the selected language, standard, and executable target");
+  auto invalid_project = c_project;
+  invalid_project.project_directory = new_project_parent / "invalid";
+  invalid_project.build_directory = new_project_parent / "invalid-build";
+  invalid_project.generator = "Unknown generator";
+  expect(!tuiide::createNewProject(invalid_project, session_error),
+    "project wizard rejects unsupported generator values");
+  std::filesystem::remove_all(new_project_parent, cleanup_error);
+
+  const auto settings_project = std::filesystem::temp_directory_path()
+      / ("tuiide-settings-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(settings_project / "cmake");
+  auto project_settings = tuiide::defaultProjectSettings(settings_project);
+  expect(project_settings.build_jobs == std::clamp(std::thread::hardware_concurrency(), 1U, 1024U),
+    "parallel jobs default to the host hardware thread count");
+  project_settings.build_directory = settings_project / "out/debug";
+  project_settings.generator = "Ninja";
+  project_settings.toolchain = settings_project / "cmake/toolchain.cmake";
+  project_settings.c_compiler = "/usr/bin/cc";
+  project_settings.cpp_compiler = "/usr/bin/c++";
+  project_settings.c_standard = "17";
+  project_settings.cpp_standard = "23";
+  project_settings.build_type = "RelWithDebInfo";
+  project_settings.build_jobs = 3;
+  project_settings.tab_width = 4;
+  project_settings.use_spaces = false;
+  project_settings.environment = {{"APP_MODE", "тест"}, {"TRACE", "1"}};
+  project_settings.clangd_arguments = {"--header-insertion=never", "--query-driver=/opt/tool chain/*"};
+  project_settings.shortcuts = {{"run.build", "Ctrl+B"}, {"search.find", "Alt+K"}};
+  project_settings.theme = "High contrast";
+  project_settings.colors = {{"diagnosticError", "LightRed"}, {"keyword", "Yellow"}};
+  project_settings.launch.executable = settings_project / "bin/custom app";
+  project_settings.launch.target = "cmake_app";
+  project_settings.launch.working_directory = settings_project / "run";
+  project_settings.launch.arguments = {"--mode", "тестовый режим"};
+  project_settings.launch.environment = {{"LAUNCH_MODE", "проверка"}};
+  project_settings.launch.stdin_file = settings_project / "input data.txt";
+  project_settings.launch.pre_launch_build = true;
+  project_settings.launch.external_terminal = true;
+  project_settings.launch.terminal = "test-terminal";
+  { std::ofstream gitignore(settings_project / ".gitignore"); gitignore << "*.user-cache\n"; }
+  expect(tuiide::saveProjectSettings(settings_project, project_settings, session_error),
+    "versioned project settings are saved atomically");
+  expect(tuiide::updateProjectGitignore(settings_project, project_settings, session_error),
+    "project settings add a managed gitignore block");
+  tuiide::ProjectSettings loaded_settings;
+  expect(tuiide::loadProjectSettings(settings_project, loaded_settings, session_error)
+      && loaded_settings.build_directory == tuiide::normalizePath(settings_project / "out/debug")
+      && loaded_settings.toolchain == tuiide::normalizePath(settings_project / "cmake/toolchain.cmake")
+      && loaded_settings.build_jobs == 3
+      && loaded_settings.tab_width == 4 && !loaded_settings.use_spaces
+      && loaded_settings.environment == project_settings.environment
+      && loaded_settings.clangd_arguments == project_settings.clangd_arguments
+      && loaded_settings.shortcuts == project_settings.shortcuts
+      && loaded_settings.theme == project_settings.theme
+      && loaded_settings.colors == project_settings.colors
+      && loaded_settings.launch.executable == tuiide::normalizePath(settings_project / "bin/custom app")
+      && loaded_settings.launch.target == "cmake_app"
+      && loaded_settings.launch.working_directory == tuiide::normalizePath(settings_project / "run")
+      && loaded_settings.launch.arguments == project_settings.launch.arguments
+      && loaded_settings.launch.environment == project_settings.launch.environment
+      && loaded_settings.launch.stdin_file == tuiide::normalizePath(settings_project / "input data.txt")
+      && loaded_settings.launch.pre_launch_build && loaded_settings.launch.external_terminal
+      && loaded_settings.launch.terminal == "test-terminal",
+    "project settings preserve shortcuts and all UTF-8 launch configuration fields");
+  std::ifstream settings_json(settings_project / ".tuiide-project.json");
+  const std::string settings_text((std::istreambuf_iterator<char>(settings_json)), std::istreambuf_iterator<char>());
+  expect(settings_text.find("\"version\": 1") != std::string::npos
+      && settings_text.find("\"buildDirectory\": \"out/debug\"") != std::string::npos,
+    "project settings file is versioned and keeps in-project paths portable");
+  std::ifstream managed_gitignore(settings_project / ".gitignore");
+  std::string managed_gitignore_text((std::istreambuf_iterator<char>(managed_gitignore)), std::istreambuf_iterator<char>());
+  expect(managed_gitignore_text.find("*.user-cache") != std::string::npos
+      && managed_gitignore_text.find("# BEGIN TUI IDE\n.tuiide-project.json\n/out/debug/\n# END TUI IDE") != std::string::npos,
+    "managed gitignore block preserves user rules and ignores an in-project build directory");
+  project_settings.build_directory = settings_project.parent_path() / "external-settings-build";
+  expect(tuiide::updateProjectGitignore(settings_project, project_settings, session_error),
+    "managed gitignore block is updated when the build directory changes");
+  std::ifstream updated_gitignore(settings_project / ".gitignore");
+  managed_gitignore_text.assign(std::istreambuf_iterator<char>(updated_gitignore), std::istreambuf_iterator<char>());
+  expect(managed_gitignore_text.find("*.user-cache") != std::string::npos
+      && managed_gitignore_text.find("/out/debug/") == std::string::npos
+      && managed_gitignore_text.find(".tuiide-project.json") != std::string::npos,
+    "external build directory removes the stale project-local ignore rule");
+  std::map<std::string, std::string> parsed_environment;
+  expect(tuiide::parseEnvironmentSettings("ONE=1; MESSAGE=hello world", parsed_environment, session_error)
+      && parsed_environment["MESSAGE"] == "hello world",
+    "project environment parser accepts semicolon-separated values");
+  expect(!tuiide::parseEnvironmentSettings("BAD-NAME=value", parsed_environment, session_error),
+    "project environment parser rejects invalid variable names");
+  std::vector<std::string> parsed_arguments;
+  expect(tuiide::parseArgumentList("--flag 'value with spaces' \"quoted\"", parsed_arguments, session_error)
+      && parsed_arguments == std::vector<std::string>{"--flag", "value with spaces", "quoted"},
+    "clangd argument parser handles shell-style quoting without invoking a shell");
+  expect(!tuiide::parseArgumentList("'unfinished", parsed_arguments, session_error),
+    "clangd argument parser rejects unterminated quotes");
+  std::filesystem::create_directories(settings_project / "bin");
+  std::filesystem::create_directories(settings_project / "run");
+  { std::ofstream stdin_file(settings_project / "input data.txt"); stdin_file << "input\n"; }
+  { std::ofstream executable_file(settings_project / "bin/custom app"); executable_file << "#!/bin/sh\nexit 0\n"; }
+  std::filesystem::permissions(settings_project / "bin/custom app", std::filesystem::perms::owner_all);
+  tuiide::CMakeTarget launch_target{"cmake_app", "Debug", settings_project / "bin/cmake-app"};
+  { std::ofstream executable_file(launch_target.artifact); executable_file << "#!/bin/sh\nexit 0\n"; }
+  std::filesystem::permissions(launch_target.artifact, std::filesystem::perms::owner_all);
+  tuiide::LaunchCommand launch_command;
+  expect(tuiide::resolveLaunchCommand(settings_project, loaded_settings.launch, &launch_target,
+      launch_command, session_error)
+      && launch_command.explicit_executable
+      && launch_command.executable == tuiide::normalizePath(settings_project / "bin/custom app")
+      && launch_command.working_directory == tuiide::normalizePath(settings_project / "run")
+      && launch_command.arguments == std::vector<std::string>{"--mode", "тестовый режим"}
+      && launch_command.environment == project_settings.launch.environment
+      && launch_command.stdin_file == tuiide::normalizePath(settings_project / "input data.txt")
+      && launch_command.pre_launch_build && launch_command.external_terminal,
+    "explicit launch executable and advanced settings override the CMake target");
+  const auto external_arguments = tuiide::launchProcessArguments(launch_command);
+  expect(external_arguments == std::vector<std::string>{"test-terminal", "-e", "sh", "-c",
+      "input=$1; shift; exec \"$@\" < \"$input\"", "tuiide-launch",
+      tuiide::normalizePath(settings_project / "input data.txt").string(),
+      tuiide::normalizePath(settings_project / "bin/custom app").string(), "--mode", "тестовый режим"},
+    "external terminal launch preserves executable arguments and safely redirects stdin");
+  const auto integrated_arguments = tuiide::integratedLaunchArguments(launch_command);
+  expect(integrated_arguments == std::vector<std::string>{"sh", "-c",
+      "input=$1; shift; exec \"$@\" < \"$input\"", "tuiide-launch",
+      tuiide::normalizePath(settings_project / "input data.txt").string(),
+      tuiide::normalizePath(settings_project / "bin/custom app").string(), "--mode", "тестовый режим"},
+    "integrated PTY launch redirects configured stdin without shell-interpolating paths or arguments");
+  tuiide::LaunchConfiguration target_launch;
+  target_launch.arguments = {"--from-target"};
+  expect(tuiide::resolveLaunchCommand(settings_project, target_launch, &launch_target,
+      launch_command, session_error)
+      && !launch_command.explicit_executable && launch_command.executable == launch_target.artifact
+      && launch_command.working_directory == tuiide::normalizePath(settings_project)
+      && tuiide::launchProcessArguments(launch_command)
+        == std::vector<std::string>{launch_target.artifact.string(), "--from-target"},
+    "selected CMake File API target is used when no explicit executable is configured");
+  expect(!tuiide::resolveLaunchCommand(settings_project, target_launch, nullptr,
+      launch_command, session_error)
+      && session_error.find("no CMake executable target") != std::string::npos,
+    "launch never falls back to scanning arbitrary executables in the build tree");
+  target_launch.executable = settings_project / "bin/missing";
+  expect(!tuiide::resolveLaunchCommand(settings_project, target_launch, &launch_target,
+      launch_command, session_error)
+      && session_error.find("does not exist") != std::string::npos,
+    "missing explicit executable reports an actionable launch error");
+  auto invalid_theme = project_settings;
+  invalid_theme.theme = "Invisible";
+  expect(!tuiide::validateProjectSettings(settings_project, invalid_theme, session_error),
+    "unknown editor themes are rejected");
+  invalid_theme = project_settings;
+  invalid_theme.colors["keyword"] = "Invisible";
+  expect(!tuiide::validateProjectSettings(settings_project, invalid_theme, session_error),
+    "unknown editor colors are rejected");
+  { std::ofstream corrupt(settings_project / ".tuiide-project.json"); corrupt << "{invalid"; }
+  expect(!tuiide::loadProjectSettings(settings_project, loaded_settings, session_error)
+      && session_error.find("Cannot parse") != std::string::npos,
+    "corrupt project settings produce an actionable error");
+  std::filesystem::remove_all(settings_project, cleanup_error);
+
+  const auto import_parent = std::filesystem::temp_directory_path()
+      / ("tuiide-import-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const auto import_project = import_parent / "legacy sources";
+  const auto import_build = import_parent / "legacy-build";
+  std::filesystem::create_directories(import_project / "src");
+  std::filesystem::create_directories(import_project / "include");
+  std::filesystem::create_directories(import_project / ".git");
+  { std::ofstream file(import_project / "src/main.cpp"); file << "int main() { return 0; }\n"; }
+  { std::ofstream file(import_project / "src/compat.c"); file << "int compat(void) { return 1; }\n"; }
+  { std::ofstream file(import_project / "include/demo.hpp"); file << "#pragma once\n"; }
+  { std::ofstream file(import_project / ".git/ignored.cpp"); file << "invalid\n"; }
+  tuiide::ProjectImportOptions import_options;
+  import_options.project_directory = import_project;
+  import_options.build_directory = import_build;
+  import_options.target_name = "legacy_app";
+  import_options.language_standard = "20";
+  tuiide::ProjectImportPlan import_plan;
+  expect(tuiide::planProjectImport(import_options, import_plan, session_error),
+    "existing C/C++ source directory can be planned for import");
+  expect(import_plan.c_sources == 1 && import_plan.cpp_sources == 1 && import_plan.headers == 1
+      && import_plan.files.size() == 3,
+    "import recursively discovers implementation and header files while ignoring VCS metadata");
+  expect(import_plan.cmake_text.find("LANGUAGES C CXX") != std::string::npos
+      && import_plan.cmake_text.find("\"src/main.cpp\"") != std::string::npos
+      && import_plan.cmake_text.find("target_include_directories(legacy_app PRIVATE include)") != std::string::npos,
+    "import preview generates a mixed-language CMake target with quoted source paths");
+  { std::ofstream file(import_project / "src/late.cpp"); file << "void late() {}\n"; }
+  expect(!tuiide::createImportedProject(import_options, import_plan, session_error)
+      && session_error.find("changed after") != std::string::npos,
+    "import refuses to apply when source contents changed after preview");
+  expect(tuiide::planProjectImport(import_options, import_plan, session_error)
+      && tuiide::createImportedProject(import_options, import_plan, session_error),
+    "confirmed import creates project files");
+  expect(std::filesystem::exists(import_project / "CMakeLists.txt")
+      && std::filesystem::exists(import_project / ".tuiide-project.json")
+      && tuiide::loadProjectBuildDirectory(import_project) == std::filesystem::absolute(import_build),
+    "import persists generated CMake and the selected build directory");
+  expect(!tuiide::createImportedProject(import_options, import_plan, session_error),
+    "import never overwrites an existing CMakeLists.txt");
+
+  const auto cpp_only_project = import_parent / "cpp-only";
+  std::filesystem::create_directories(cpp_only_project);
+  { std::ofstream file(cpp_only_project / "main.cpp"); file << "int main() { return 0; }\n"; }
+  tuiide::ProjectImportOptions c_import_options;
+  c_import_options.project_directory = cpp_only_project;
+  c_import_options.build_directory = import_parent / "cpp-only-build";
+  c_import_options.target_name = "c_only";
+  c_import_options.language = tuiide::ProjectLanguage::C;
+  c_import_options.language_standard = "17";
+  expect(!tuiide::planProjectImport(c_import_options, import_plan, session_error)
+      && session_error.find("No compatible") != std::string::npos,
+    "C import rejects a directory that contains only C++ implementations");
+  std::filesystem::remove_all(import_parent, cleanup_error);
+
+  const auto preset_source = std::filesystem::temp_directory_path()
+      / ("tuiide-cmake-presets-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(preset_source);
+  { std::ofstream file(preset_source / "base.json"); file << R"({
+    "version": 6,
+    "configurePresets": [{"name":"base","hidden":true,"generator":"Unix Makefiles","binaryDir":"${sourceDir}/out/${presetName}",
+      "condition":{"type":"equals","lhs":"${hostSystemName}","rhs":"Linux"}}],
+    "buildPresets": [{"name":"build-base","hidden":true,"cleanFirst":true}]
+  })"; }
+  { std::ofstream file(preset_source / "CMakePresets.json"); file << R"({
+    "version": 6,
+    "include": ["base.json"],
+    "configurePresets": [
+      {"name":"dev","displayName":"Development","inherits":"base"},
+      {"name":"disabled","inherits":"base","condition":{"type":"equals","lhs":"${hostSystemName}","rhs":"Windows"}}
+    ],
+    "buildPresets": [
+      {"name":"dev-build","displayName":"Build Development","inherits":"build-base","configurePreset":"dev",
+       "configuration":"Debug","targets":"${presetName}"},
+      {"name":"disabled-build","configurePreset":"dev","condition":false}
+    ]
+  })"; }
+  { std::ofstream file(preset_source / "CMakeUserPresets.json"); file << R"({
+    "version": 6,
+    "configurePresets": [{"name":"user","inherits":"dev","binaryDir":"relative-build"}],
+    "buildPresets": [{"name":"user-build","inherits":"dev-build","configurePreset":"user","targets":["app"],"verbose":true}]
+  })"; }
+  auto presets = tuiide::loadCMakeConfigurePresets(preset_source, session_error);
+  expect(session_error.empty() && presets.size() == 2, "visible configure presets are loaded across includes");
+  const auto dev_preset = std::find_if(presets.begin(), presets.end(), [](const auto& item) { return item.name == "dev"; });
+  expect(dev_preset != presets.end() && dev_preset->display_name == "Development", "preset display name is retained");
+  expect(dev_preset->generator == "Unix Makefiles", "preset generator is inherited");
+  expect(dev_preset->binary_directory == preset_source / "out/dev", "preset macros use the child preset name");
+  const auto user_preset = std::find_if(presets.begin(), presets.end(), [](const auto& item) { return item.name == "user"; });
+  expect(user_preset != presets.end() && user_preset->binary_directory == preset_source / "relative-build",
+    "relative preset binary directory is resolved against source");
+  auto build_presets = tuiide::loadCMakeBuildPresets(preset_source, session_error);
+  expect(session_error.empty() && build_presets.size() == 2, "visible build presets are loaded and conditioned");
+  const auto dev_build = std::find_if(build_presets.begin(), build_presets.end(), [](const auto& item) {
+    return item.name == "dev-build";
+  });
+  expect(dev_build != build_presets.end() && dev_build->configure_preset == "dev"
+    && dev_build->configuration == "Debug", "build preset configuration is parsed");
+  expect(dev_build->clean_first && dev_build->targets == std::vector<std::string>{"dev-build"},
+    "build preset fields and macros are inherited");
+  const auto user_build = std::find_if(build_presets.begin(), build_presets.end(), [](const auto& item) {
+    return item.name == "user-build";
+  });
+  expect(user_build != build_presets.end() && user_build->verbose && user_build->targets == std::vector<std::string>{"app"},
+    "user build preset overrides inherited fields");
+  std::filesystem::remove_all(preset_source, cleanup_error);
+
+  const std::vector<std::uint32_t> semantic_data{
+    0, 2, 3, 0, 1,
+    0, 5, 2, 1, 0,
+    2, 1, 4, 0, 0
+  };
+  const auto semantic = tuiide::decodeSemanticTokens("/tmp/source.cpp", semantic_data, {"function", "parameter"});
+  expect(semantic.size() == 3, "semantic token stream is decoded");
+  expect(semantic[0].line == 0 && semantic[0].column == 2 && semantic[0].type == "function", "first semantic token is absolute");
+  expect(semantic[1].line == 0 && semantic[1].column == 7 && semantic[1].type == "parameter", "same-line semantic delta is accumulated");
+  expect(semantic[2].line == 2 && semantic[2].column == 1, "new-line semantic delta resets the column");
+  std::cout << "All core tests passed\n";
+}

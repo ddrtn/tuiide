@@ -1,0 +1,3 @@
+[submodule "third_party/finalcut"]
+	path = third_party/finalcut
+	url = https://github.com/gansm/finalcut.git
