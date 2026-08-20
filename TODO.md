@@ -125,8 +125,50 @@
 
 ## P3 — архитектура, качество и поставка
 
-- [ ] Разделить крупный `IdeWindow` на controllers/services для документов,
+- [x] Разделить крупный `IdeWindow` на controllers/services для документов,
   проектов, build, LSP и debug; вынести диалоги из anonymous namespace.
+  - [x] Вынести владение открытыми документами, активное состояние, дедупликацию
+    путей и историю Reopen Closed в `DocumentSession`.
+  - [x] Вынести формирование команд CMake configure/build/clean, presets, targets,
+    configurations и parallel jobs в тестируемый `BuildCommandService`.
+  - [x] Вынести владение корнем проекта, настройками и производными путями
+    build/session/recovery в `ProjectSession`.
+  - [x] Вынести общий центрируемый диалог и универсальные Prompt, Selection,
+    Command Palette, Text и Confirm Text из `ide_window.cpp`.
+  - [x] Вынести wizard-диалоги создания и импорта проекта в
+    `project_dialogs.cpp`.
+  - [x] Вынести диалоги выбора проектного файла и каталога, включая создание
+    подкаталогов, в `project_dialogs.cpp`.
+  - [x] Вынести `ProjectSettingsDialog` с адаптивной раскладкой и валидацией
+    полей в PIMPL-реализацию `project_dialogs.cpp`.
+  - [x] Вынести `LaunchSettingsDialog` с target/executable/stdin/environment и
+    настройкой внешнего терминала в PIMPL-модуль `run_dialogs.cpp`.
+  - [x] Вынести свойства breakpoint/logpoint и проверку ignore-hit count в
+    PIMPL-модуль `debug_dialogs.cpp`.
+  - [x] Вынести `SearchAction`, `SearchRequest` и Find/Replace UI в
+    PIMPL-модуль `search_dialogs.cpp`.
+  - [x] Вынести последний `ClassOptionsDialog`; в `ide_window.cpp` больше нет
+    определений классов диалогов.
+  - [x] Вынести владение operation/stage и переходы Configure→Build,
+    Clean→Build в тестируемый `BuildWorkflow`.
+  - [x] Перенести continuation Run/Debug после pre-launch build в
+    `BuildWorkflow` и централизовать запуск этого сценария.
+  - [x] Удалить transitional aliases operation/stage: изменять build-state можно
+    только через API `BuildWorkflow`.
+  - [x] Перенести progress и время operation/stage из `IdeWindow` в
+    `BuildWorkflow`.
+  - [x] Вынести сборку разорванных строк build output, распознавание progress и
+    накопление compiler diagnostics в тестируемый `BuildOutputCollector`.
+  - [x] Вынести активный build-каталог, configure/build presets, executable
+    targets и восстановление их выбора в тестируемый `CMakeSession`.
+  - [x] Завершить вынос project/build orchestration: объединить process,
+    workflow, output collection, polling, completion и cancel в `BuildSession`.
+  - [x] Вынести координацию LSP-запросов, revisions и feedback из окна.
+    - [x] Вынести readiness/revisions, debounce и version guards Outline,
+      completion/code actions, а также labels feedback в `LspUiController`.
+    - [x] Централизовать сбор и маршрутизацию остальных LSP response payloads
+      через типизированный `LspEventBatch`.
+  - [x] Вынести синхронизацию debugger state и панелей в `DebugUiController`.
 - [ ] Ввести структурированный event/log API вместо прямого `appendOutput()` из
   всех сценариев и централизовать состояние фоновых процессов.
 - [ ] Покрыть unit-тестами историю undo/dirty, atomic save, URI, LSP errors,

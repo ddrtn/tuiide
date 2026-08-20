@@ -28,17 +28,24 @@ target_link_libraries(finalcut_vendor PUBLIC Threads::Threads ${GPM_LIBRARY} ${T
 set_target_properties(finalcut_vendor PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(tuiide_core
+  src/build_command.cpp
   src/build_diagnostic.cpp
+  src/build_output_collector.cpp
   src/build_progress.cpp
+  src/build_session.cpp
+  src/build_workflow.cpp
   src/command_state.cpp
   src/cmake_model.cpp
   src/cmake_presets.cpp
+  src/cmake_session.cpp
   src/cmake_source_edit.cpp
   src/clipboard.cpp
   src/clang_format.cpp
   src/compilation_database.cpp
   src/debug_session.cpp
+  src/debug_ui_controller.cpp
   src/document.cpp
+  src/document_session.cpp
   src/document_labels.cpp
   src/syntax.cpp
   src/tab_bar_layout.cpp
@@ -51,12 +58,14 @@ add_library(tuiide_core
   src/project_history.cpp
   src/project_import.cpp
   src/project_settings.cpp
+  src/project_session.cpp
   src/project_template.cpp
   src/project_tree.cpp
   src/recovery.cpp
   src/workspace_edit.cpp
   src/workspace_file_transaction.cpp
   src/lsp_client.cpp
+  src/lsp_ui_controller.cpp
   src/gdb_client.cpp
   src/gdb_mi.cpp
   src/launch_configuration.cpp
@@ -65,7 +74,8 @@ target_include_directories(tuiide_core PUBLIC include)
 target_link_libraries(tuiide_core PUBLIC Threads::Threads nlohmann_json::nlohmann_json ${UTIL_LIBRARY})
 target_compile_options(tuiide_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 
-add_executable(tuiide src/main.cpp src/ide_window.cpp src/code_editor.cpp src/console_widget.cpp src/sidebar_tabs.cpp)
+add_executable(tuiide src/main.cpp src/ide_window.cpp src/code_editor.cpp src/console_widget.cpp src/sidebar_tabs.cpp
+  src/debug_dialogs.cpp src/project_dialogs.cpp src/run_dialogs.cpp src/search_dialogs.cpp src/ui_dialogs.cpp)
 target_link_libraries(tuiide PRIVATE tuiide_core finalcut_vendor)
 target_compile_options(tuiide PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 

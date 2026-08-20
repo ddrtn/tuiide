@@ -1,7 +1,13 @@
 #include "tuiide/ide_window.hpp"
 
+#include "tuiide/build_command.hpp"
+#include "tuiide/debug_dialogs.hpp"
 #include "tuiide/document_labels.hpp"
+#include "tuiide/project_dialogs.hpp"
+#include "tuiide/run_dialogs.hpp"
+#include "tuiide/search_dialogs.hpp"
 #include "tuiide/text_display.hpp"
+#include "tuiide/ui_dialogs.hpp"
 #include "tuiide/workspace_file_transaction.hpp"
 
 #include <algorithm>
@@ -86,57 +92,6 @@ auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
   return found == keys.end() ? std::nullopt : std::optional<finalcut::FKey>{found->second};
 }
 
-class CenteredDialog : public finalcut::FDialog {
- protected:
-  using finalcut::FDialog::FDialog;
-
-  void setDialogSize(finalcut::FSize size) {
-    preferred_size_ = size;
-    centerDialog();
-  }
-
-  void setResponsiveLayout(std::function<void()> layout) {
-    responsive_layout_ = std::move(layout);
-    responsive_layout_();
-  }
-
-  void adjustSize() override {
-    auto* focused_widget = getWindowFocusWidget();
-    if (focused_widget == nullptr) focused_widget = getFocusWidget();
-    centerDialog();
-    finalcut::FDialog::adjustSize();
-    if (responsive_layout_) responsive_layout_();
-    if (isModal()) {
-      activateWindow();
-      raiseWindow();
-      setFocus();
-      if (focused_widget != nullptr) {
-        setWindowFocusWidget(focused_widget);
-        focused_widget->setFocus();
-      } else {
-        focusFirstChild();
-      }
-    }
-  }
-
- private:
-  void centerDialog() {
-    if (preferred_size_.getWidth() == 0 || preferred_size_.getHeight() == 0) return;
-    const auto desktop_width = getDesktopWidth();
-    const auto desktop_height = getDesktopHeight();
-    const auto available_width = desktop_width > 2 ? desktop_width - 2 : desktop_width;
-    const auto available_height = desktop_height > 2 ? desktop_height - 2 : desktop_height;
-    const auto width = std::min(preferred_size_.getWidth(), available_width);
-    const auto height = std::min(preferred_size_.getHeight(), available_height);
-    const auto x = 1 + static_cast<int>((desktop_width - width) / 2);
-    const auto y = 1 + static_cast<int>((desktop_height - height) / 2);
-    setGeometry({x, y}, {width, height}, false);
-  }
-
-  finalcut::FSize preferred_size_{};
-  std::function<void()> responsive_layout_;
-};
-
 auto completionKindName(int kind) -> std::string_view {
   switch (kind) {
     case 2: return "method";
@@ -159,884 +114,9 @@ auto completionKindName(int kind) -> std::string_view {
   }
 }
 
-class PromptDialog final : public CenteredDialog {
- public:
-  PromptDialog(const std::string& title, const std::string& label, finalcut::FWidget* parent)
-      : CenteredDialog(finalcut::FString(title), parent), label_(finalcut::FString(label), this), input_(this), ok_("&OK", this), cancel_("&Cancel", this) {
-    setDialogSize({62, 9});
-    setModal();
-    label_.setGeometry({2, 2}, {18, 1});
-    input_.setGeometry({20, 2}, {35, 1});
-    ok_.setGeometry({27, 4}, {12, 1});
-    cancel_.setGeometry({42, 4}, {14, 1});
-    ok_.addCallback("clicked", [this] { done(ResultCode::Accept); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    input_.addCallback("activate", [this] { done(ResultCode::Accept); });
-    input_.setFocus();
-  }
-  auto value() const -> std::string { return input_.getText().toString(); }
- private:
-  finalcut::FLabel label_;
-  finalcut::FLineEdit input_;
-  finalcut::FButton ok_;
-  finalcut::FButton cancel_;
-};
-
-class SelectionDialog final : public CenteredDialog {
- public:
-  SelectionDialog(const std::string& title, const std::vector<std::string>& items, finalcut::FWidget* parent)
-      : CenteredDialog(finalcut::FString(title), parent), list_(this), ok_("&OK", this), cancel_("&Cancel", this) {
-    constexpr std::size_t width = 58;
-    constexpr std::size_t height = 16;
-    setDialogSize({width, height});
-    setModal();
-    list_.setGeometry({2, 1}, {width - 3, height - 4});
-    ok_.setGeometry({static_cast<int>(width - 29), static_cast<int>(height - 2)}, {10, 1});
-    cancel_.setGeometry({static_cast<int>(width - 16), static_cast<int>(height - 2)}, {12, 1});
-    for (const auto& item : items) list_.insert(finalcut::FString(item));
-    list_.setFocus();
-    list_.setCommandHandler([this](finalcut::FKey key) {
-      if (key != finalcut::FKey::Return) return false;
-      done(ResultCode::Accept);
-      return true;
-    });
-    ok_.addCallback("clicked", [this] { done(ResultCode::Accept); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-  }
-  auto selected() const -> std::size_t { return list_.currentItem(); }
- private:
-  CommandListBox list_;
-  finalcut::FButton ok_;
-  finalcut::FButton cancel_;
-};
-
-class CommandPaletteDialog final : public CenteredDialog {
- public:
-  CommandPaletteDialog(std::vector<std::string> items, finalcut::FWidget* parent)
-      : CenteredDialog("Command palette", parent), items_(std::move(items)), filter_label_("Search:", this),
-        filter_(this), list_(this), run_("&Run", this), cancel_("&Cancel", this) {
-    setDialogSize({58, 16}); setModal();
-    filter_label_.setGeometry({2, 1}, {9, 1}); filter_.setGeometry({11, 1}, {44, 1});
-    list_.setGeometry({2, 3}, {53, 9});
-    run_.setGeometry({32, 13}, {10, 1}); cancel_.setGeometry({44, 13}, {11, 1});
-    filter_.addCallback("changed", [this] { refresh(); });
-    filter_.addCallback("activate", [this] { accept(); });
-    list_.setCommandHandler([this](finalcut::FKey key) {
-      if (key != finalcut::FKey::Return) return false;
-      accept(); return true;
-    });
-    run_.addCallback("clicked", [this] { accept(); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    refresh(); filter_.setFocus();
-  }
-
-  auto selected() const -> std::size_t { return selected_; }
-
- private:
-  void refresh() {
-    list_.clear(); visible_.clear();
-    auto query = filter_.getText().toString();
-    std::transform(query.begin(), query.end(), query.begin(), [](unsigned char character) {
-      return static_cast<char>(std::tolower(character));
-    });
-    for (std::size_t index = 0; index < items_.size(); ++index) {
-      auto searchable = items_[index];
-      std::transform(searchable.begin(), searchable.end(), searchable.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-      });
-      if (!query.empty() && searchable.find(query) == std::string::npos) continue;
-      visible_.push_back(index); list_.insert(finalcut::FString(items_[index]));
-    }
-    list_.redraw();
-  }
-
-  void accept() {
-    if (visible_.empty()) return;
-    const auto row = list_.currentItem();
-    selected_ = visible_[row == 0 ? 0 : std::min(row - 1, visible_.size() - 1)] + 1;
-    done(ResultCode::Accept);
-  }
-
-  std::vector<std::string> items_;
-  std::vector<std::size_t> visible_;
-  std::size_t selected_{};
-  finalcut::FLabel filter_label_;
-  finalcut::FLineEdit filter_;
-  CommandListBox list_;
-  finalcut::FButton run_, cancel_;
-};
-
-class TextDialog final : public CenteredDialog {
- public:
-  TextDialog(std::string title, std::string text, finalcut::FWidget* parent)
-      : CenteredDialog(finalcut::FString(std::move(title)), parent), text_(this), close_("&Close", this) {
-    constexpr std::size_t width = 58;
-    constexpr std::size_t height = 16;
-    setDialogSize({width, height}); setModal();
-    text_.setGeometry({2, 1}, {width - 3, height - 4});
-    text_.setText(finalcut::FString(std::move(text)));
-    close_.setGeometry({static_cast<int>(width - 15), static_cast<int>(height - 2)}, {12, 1});
-    close_.addCallback("clicked", [this] { done(ResultCode::Accept); });
-    text_.setFocus();
-  }
- private:
-  finalcut::FTextView text_;
-  finalcut::FButton close_;
-};
-
-class ConfirmTextDialog final : public CenteredDialog {
- public:
-  ConfirmTextDialog(std::string title, std::string text, finalcut::FWidget* parent)
-      : CenteredDialog(finalcut::FString(std::move(title)), parent), text_(this), apply_("&Apply", this), cancel_("&Cancel", this) {
-    constexpr std::size_t width = 58;
-    constexpr std::size_t height = 16;
-    setDialogSize({width, height});
-    setModal();
-    text_.setGeometry({2, 1}, {width - 3, height - 4});
-    text_.setText(finalcut::FString(std::move(text)));
-    apply_.setGeometry({static_cast<int>(width - 29), static_cast<int>(height - 2)}, {10, 1});
-    cancel_.setGeometry({static_cast<int>(width - 16), static_cast<int>(height - 2)}, {12, 1});
-    apply_.addCallback("clicked", [this] { done(ResultCode::Accept); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    text_.setFocus();
-  }
- private:
-  finalcut::FTextView text_;
-  finalcut::FButton apply_;
-  finalcut::FButton cancel_;
-};
-
-enum class SearchAction { None, Next, Previous, Replace, ReplaceAll, FindAll };
-
-struct SearchRequest {
-  SearchAction action{SearchAction::None};
-  std::string query;
-  std::string replacement;
-  SearchOptions options;
-  bool project{};
-};
-
-class SearchDialog final : public CenteredDialog {
- public:
-  SearchDialog(const SearchRequest& initial, bool has_project, finalcut::FWidget* parent)
-      : CenteredDialog("Find and replace", parent), find_label_("Find:", this), find_(this),
-        replace_label_("Replace:", this), replace_(this), case_("Case sensitive", this),
-        word_("Whole word", this), regex_("Regular expression", this), project_("Entire project", this),
-        next_("&Next", this), previous_("&Previous", this), replace_one_("&Replace", this),
-        replace_all_("Replace &all", this), find_all_("&Find all", this), cancel_("&Cancel", this) {
-    constexpr std::size_t width = 58;
-    setDialogSize({width, 16});
-    setModal();
-    find_label_.setGeometry({3, 2}, {11, 1}); find_.setGeometry({14, 2}, {width - 17, 1});
-    replace_label_.setGeometry({3, 4}, {11, 1}); replace_.setGeometry({14, 4}, {width - 17, 1});
-    case_.setGeometry({3, 6}, {20, 1}); word_.setGeometry({27, 6}, {18, 1});
-    regex_.setGeometry({3, 8}, {22, 1}); project_.setGeometry({27, 8}, {22, 1});
-    find_.setText(finalcut::FString(initial.query)); replace_.setText(finalcut::FString(initial.replacement));
-    if (initial.options.case_sensitive) case_.setChecked();
-    if (initial.options.whole_word) word_.setChecked();
-    if (initial.options.regular_expression) regex_.setChecked();
-    if (initial.project && has_project) project_.setChecked();
-    project_.setEnable(has_project);
-    next_.setGeometry({3, 11}, {10, 1}); previous_.setGeometry({16, 11}, {11, 1});
-    replace_one_.setGeometry({30, 11}, {11, 1}); replace_all_.setGeometry({3, 13}, {12, 1});
-    find_all_.setGeometry({18, 13}, {10, 1}); cancel_.setGeometry({31, 13}, {10, 1});
-    bind(next_, SearchAction::Next); bind(previous_, SearchAction::Previous);
-    bind(replace_one_, SearchAction::Replace); bind(replace_all_, SearchAction::ReplaceAll);
-    bind(find_all_, SearchAction::FindAll);
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    find_.addCallback("activate", [this] { action_ = SearchAction::Next; done(ResultCode::Accept); });
-    find_.setFocus();
-  }
-
-  auto request() const -> SearchRequest {
-    return {action_, find_.getText().toString(), replace_.getText().toString(),
-      {.case_sensitive = case_.isChecked(), .whole_word = word_.isChecked(),
-       .regular_expression = regex_.isChecked()}, project_.isChecked()};
-  }
- private:
-  void bind(finalcut::FButton& button, SearchAction action) {
-    button.addCallback("clicked", [this, action] { action_ = action; done(ResultCode::Accept); });
-  }
-  finalcut::FLabel find_label_;
-  finalcut::FLineEdit find_;
-  finalcut::FLabel replace_label_;
-  finalcut::FLineEdit replace_;
-  finalcut::FCheckBox case_, word_, regex_, project_;
-  finalcut::FButton next_, previous_, replace_one_, replace_all_, find_all_, cancel_;
-  SearchAction action_{SearchAction::None};
-};
-
-class ClassOptionsDialog final : public CenteredDialog {
- public:
-  explicit ClassOptionsDialog(finalcut::FWidget* parent)
-      : CenteredDialog("C++ class options", parent), class_label_("Class name:", this), class_name_(this),
-        namespace_label_("Namespace:", this), namespace_(this), base_label_("Base class:", this), base_class_(this),
-        base_header_label_("Base header:", this), base_header_(this), access_label_("Inheritance:", this), access_(this), constructor_("Generate constructor", this),
-        destructor_("Generate destructor", this), virtual_destructor_("Virtual destructor", this),
-        final_("Final class", this), copy_("Copy operations", this), move_("Move operations", this),
-        ok_("&Next", this), cancel_("&Cancel", this) {
-    setDialogSize({72, 20});
-    setModal();
-    class_label_.setGeometry({2, 1}, {13, 1}); class_name_.setGeometry({16, 1}, {39, 1});
-    namespace_label_.setGeometry({2, 3}, {13, 1}); namespace_.setGeometry({16, 3}, {39, 1});
-    base_label_.setGeometry({2, 5}, {13, 1}); base_class_.setGeometry({16, 5}, {18, 1});
-    base_header_label_.setGeometry({35, 5}, {12, 1}); base_header_.setGeometry({47, 5}, {8, 1});
-    access_label_.setGeometry({2, 7}, {13, 1}); access_.setGeometry({16, 7}, {18, 1});
-    access_.insert("public"); access_.insert("protected"); access_.insert("private");
-    access_.setCurrentItem(1); access_.unsetEditable();
-    constructor_.setGeometry({2, 9}, {25, 1}); destructor_.setGeometry({29, 9}, {25, 1});
-    virtual_destructor_.setGeometry({2, 10}, {25, 1}); final_.setGeometry({29, 10}, {20, 1});
-    copy_.setGeometry({2, 11}, {25, 1}); move_.setGeometry({29, 11}, {25, 1});
-    constructor_.setChecked(); destructor_.setChecked(); virtual_destructor_.setChecked();
-    ok_.setGeometry({31, 13}, {10, 1}); cancel_.setGeometry({44, 13}, {12, 1});
-    ok_.addCallback("clicked", [this] { done(ResultCode::Accept); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    class_name_.addCallback("activate", [this] { namespace_.setFocus(); });
-    class_name_.setFocus();
-  }
-
-  auto options() const -> CppClassOptions {
-    CppClassOptions result;
-    result.class_name = class_name_.getText().trim().toString();
-    result.namespace_name = namespace_.getText().trim().toString();
-    result.base_class = base_class_.getText().trim().toString();
-    result.base_header = base_header_.getText().trim().toString();
-    const auto access = access_.getText().toString();
-    result.inheritance = access == "protected" ? InheritanceAccess::Protected
-      : (access == "private" ? InheritanceAccess::Private : InheritanceAccess::Public);
-    result.final_class = final_.isChecked();
-    result.generate_constructor = constructor_.isChecked();
-    result.generate_destructor = destructor_.isChecked();
-    result.virtual_destructor = virtual_destructor_.isChecked() && result.generate_destructor;
-    result.generate_copy_operations = copy_.isChecked();
-    result.generate_move_operations = move_.isChecked();
-    return result;
-  }
-
- private:
-  finalcut::FLabel class_label_;
-  finalcut::FLineEdit class_name_;
-  finalcut::FLabel namespace_label_;
-  finalcut::FLineEdit namespace_;
-  finalcut::FLabel base_label_;
-  finalcut::FLineEdit base_class_;
-  finalcut::FLabel base_header_label_;
-  finalcut::FLineEdit base_header_;
-  finalcut::FLabel access_label_;
-  finalcut::FComboBox access_;
-  finalcut::FCheckBox constructor_;
-  finalcut::FCheckBox destructor_;
-  finalcut::FCheckBox virtual_destructor_;
-  finalcut::FCheckBox final_;
-  finalcut::FCheckBox copy_;
-  finalcut::FCheckBox move_;
-  finalcut::FButton ok_;
-  finalcut::FButton cancel_;
-};
-
-class ProjectPathDialog final : public CenteredDialog {
- public:
-  ProjectPathDialog(std::string title, std::filesystem::path root, std::filesystem::path start,
-                    std::string suggested_name, finalcut::FWidget* parent)
-      : CenteredDialog(finalcut::FString(std::move(title)), parent), root_(normalizePath(root)), current_(normalizePath(start)),
-        path_label_(this), entries_(this), name_label_("File name:", this), name_(this),
-        up_("&Up", this), new_directory_("New &directory", this), create_("&Create", this), cancel_("&Cancel", this) {
-    std::error_code relative_error;
-    const auto relative = std::filesystem::relative(current_, root_, relative_error);
-    if (relative_error || (!relative.empty() && *relative.begin() == "..")) current_ = root_;
-    setDialogSize({72, 20});
-    setModal();
-    path_label_.setGeometry({2, 1}, {53, 1});
-    entries_.setGeometry({2, 2}, {53, 7});
-    name_label_.setGeometry({2, 10}, {13, 1});
-    name_.setGeometry({16, 10}, {39, 1});
-    name_.setText(finalcut::FString(std::move(suggested_name)));
-    up_.setGeometry({2, 13}, {9, 1});
-    new_directory_.setGeometry({13, 13}, {17, 1});
-    create_.setGeometry({32, 13}, {10, 1});
-    cancel_.setGeometry({44, 13}, {11, 1});
-    up_.addCallback("clicked", [this] { goUp(); });
-    new_directory_.addCallback("clicked", [this] { createDirectory(); });
-    create_.addCallback("clicked", [this] { acceptPath(); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    name_.addCallback("activate", [this] { acceptPath(); });
-    entries_.addCallback("row-selected", [this] { activateEntry(); });
-    entries_.addCallback("clicked", [this] { activateEntry(); });
-    populate();
-    name_.setFocus();
-  }
-
-  auto selectedPath() const -> std::filesystem::path { return selected_path_; }
-
- private:
-  void populate() {
-    entries_.clear();
-    entry_paths_.clear();
-    std::error_code iterator_error;
-    for (std::filesystem::directory_iterator iterator(current_,
-           std::filesystem::directory_options::skip_permission_denied, iterator_error), end;
-         iterator != end; iterator.increment(iterator_error)) {
-      if (iterator_error) { iterator_error.clear(); continue; }
-      const auto status = iterator->symlink_status(iterator_error);
-      if (iterator_error || std::filesystem::is_symlink(status)) { iterator_error.clear(); continue; }
-      if (std::filesystem::is_directory(status) || std::filesystem::is_regular_file(status))
-        entry_paths_.push_back(iterator->path());
-    }
-    std::sort(entry_paths_.begin(), entry_paths_.end(), [](const auto& left, const auto& right) {
-      std::error_code left_error, right_error;
-      const bool left_dir = std::filesystem::is_directory(left, left_error);
-      const bool right_dir = std::filesystem::is_directory(right, right_error);
-      return left_dir != right_dir ? left_dir : left.filename().string() < right.filename().string();
-    });
-    for (const auto& path : entry_paths_) {
-      std::error_code type_error;
-      const auto directory = std::filesystem::is_directory(path, type_error);
-      entries_.insert(finalcut::FString((directory ? "[DIR] " : "      ") + path.filename().string()));
-    }
-    std::error_code relative_error;
-    const auto relative = std::filesystem::relative(current_, root_, relative_error);
-    path_label_.setText(finalcut::FString("Project / " + (relative_error || relative == "." ? std::string{} : relative.generic_string())));
-    path_label_.redraw();
-    entries_.redraw();
-  }
-
-  void activateEntry() {
-    const auto index = entries_.currentItem();
-    if (index == 0 || index > entry_paths_.size()) return;
-    std::error_code type_error;
-    if (std::filesystem::is_directory(entry_paths_[index - 1], type_error)) {
-      current_ = entry_paths_[index - 1];
-      populate();
-      return;
-    }
-    name_.setText(finalcut::FString(entry_paths_[index - 1].filename().string()));
-    name_.redraw();
-  }
-
-  void goUp() {
-    if (current_ == root_) return;
-    current_ = current_.parent_path();
-    populate();
-  }
-
-  void createDirectory() {
-    PromptDialog prompt("New directory", "Directory name:", this);
-    if (prompt.exec() != ResultCode::Accept) return;
-    const auto value = std::filesystem::path(prompt.value());
-    if (value.empty() || value.has_parent_path() || value == "." || value == "..") {
-      finalcut::FMessageBox::error(this, "Enter one valid directory name.");
-      return;
-    }
-    std::error_code create_error;
-    if (!std::filesystem::create_directory(current_ / value, create_error)) {
-      finalcut::FMessageBox::error(this, finalcut::FString(create_error
-        ? "Cannot create directory: " + create_error.message() : "Directory already exists."));
-      return;
-    }
-    current_ /= value;
-    populate();
-  }
-
-  void acceptPath() {
-    const auto value = std::filesystem::path(name_.getText().trim().toString());
-    if (value.empty() || value.has_parent_path() || value == "." || value == "..") {
-      finalcut::FMessageBox::error(this, "Enter one valid file name.");
-      return;
-    }
-    const auto candidate = current_ / value;
-    if (std::filesystem::exists(candidate)) {
-      finalcut::FMessageBox::error(this, "The selected file already exists.");
-      return;
-    }
-    selected_path_ = candidate;
-    done(ResultCode::Accept);
-  }
-
-  std::filesystem::path root_;
-  std::filesystem::path current_;
-  std::filesystem::path selected_path_;
-  std::vector<std::filesystem::path> entry_paths_;
-  finalcut::FLabel path_label_;
-  finalcut::FListBox entries_;
-  finalcut::FLabel name_label_;
-  finalcut::FLineEdit name_;
-  finalcut::FButton up_;
-  finalcut::FButton new_directory_;
-  finalcut::FButton create_;
-  finalcut::FButton cancel_;
-};
-
-class ProjectDirectoryDialog final : public CenteredDialog {
- public:
-  ProjectDirectoryDialog(std::string title, std::filesystem::path start, finalcut::FWidget* parent)
-      : CenteredDialog(finalcut::FString(std::move(title)), parent), current_(normalizePath(start)),
-        path_(this), entries_(this), up_("&Up", this), make_("New &directory", this),
-        select_("&Select", this), cancel_("&Cancel", this) {
-    setDialogSize({70, 18}); setModal();
-    path_.setGeometry({2, 1}, {53, 1}); entries_.setGeometry({2, 2}, {53, 9});
-    up_.setGeometry({2, 13}, {9, 1}); make_.setGeometry({13, 13}, {17, 1});
-    select_.setGeometry({32, 13}, {10, 1}); cancel_.setGeometry({44, 13}, {11, 1});
-    up_.addCallback("clicked", [this] { if (current_ != current_.root_path()) { current_ = current_.parent_path(); populate(); } });
-    make_.addCallback("clicked", [this] { createDirectory(); });
-    select_.addCallback("clicked", [this] { done(ResultCode::Accept); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    entries_.addCallback("row-selected", [this] { enterDirectory(); });
-    entries_.addCallback("clicked", [this] { enterDirectory(); });
-    populate(); entries_.setFocus();
-  }
-  auto selectedPath() const -> std::filesystem::path { return current_; }
- private:
-  void populate() {
-    entries_.clear(); directories_.clear();
-    std::error_code error;
-    for (std::filesystem::directory_iterator iterator(current_, std::filesystem::directory_options::skip_permission_denied, error), end;
-         iterator != end; iterator.increment(error)) {
-      if (error) { error.clear(); continue; }
-      const auto status = iterator->symlink_status(error);
-      if (!error && std::filesystem::is_directory(status) && !std::filesystem::is_symlink(status)) directories_.push_back(iterator->path());
-      error.clear();
-    }
-    std::sort(directories_.begin(), directories_.end());
-    for (const auto& directory : directories_) entries_.insert("[DIR] " + directory.filename().string());
-    path_.setText(finalcut::FString(current_.string())); path_.redraw(); entries_.redraw();
-  }
-  void enterDirectory() {
-    const auto index = entries_.currentItem();
-    if (index > 0 && index <= directories_.size()) { current_ = directories_[index - 1]; populate(); }
-  }
-  void createDirectory() {
-    PromptDialog prompt("New directory", "Directory name:", this);
-    if (prompt.exec() != ResultCode::Accept) return;
-    const std::filesystem::path name(prompt.value());
-    if (name.empty() || name.has_parent_path() || name == "." || name == "..") {
-      finalcut::FMessageBox::error(this, "Enter one valid directory name."); return;
-    }
-    std::error_code error;
-    if (!std::filesystem::create_directory(current_ / name, error)) {
-      finalcut::FMessageBox::error(this, finalcut::FString(error ? error.message() : "Directory already exists.")); return;
-    }
-    current_ /= name; populate();
-  }
-  std::filesystem::path current_;
-  std::vector<std::filesystem::path> directories_;
-  finalcut::FLabel path_; finalcut::FListBox entries_;
-  finalcut::FButton up_, make_, select_, cancel_;
-};
-
-class NewProjectDialog final : public CenteredDialog {
- public:
-  explicit NewProjectDialog(finalcut::FWidget* parent)
-      : CenteredDialog("New project settings", parent), name_label_("Project name:", this), name_(this),
-        language_label_("Language:", this), language_(this), target_label_("Target type:", this), target_(this),
-        standard_label_("Language standard:", this), standard_(this), header_label_("C++ headers:", this), header_(this),
-        generator_label_("Generator:", this), generator_(this), build_type_label_("Build type:", this), build_type_(this),
-        install_label_("Install layout:", this), install_(this),
-        warnings_("Enable compiler warnings", this), readme_("Create README.md", this),
-        gitignore_("Create .gitignore", this), testing_("Enable CTest", this), next_("&Next", this), cancel_("&Cancel", this) {
-    setDialogSize({74, 23}); setModal();
-    name_label_.setGeometry({2, 1}, {14, 1}); name_.setGeometry({17, 1}, {38, 1});
-    language_label_.setGeometry({2, 3}, {10, 1}); language_.setGeometry({12, 3}, {13, 1});
-    language_.insert("C++"); language_.insert("C"); language_.setCurrentItem(1); language_.unsetEditable();
-    target_label_.setGeometry({27, 3}, {12, 1}); target_.setGeometry({39, 3}, {16, 1});
-    target_.insert("Executable"); target_.insert("Static library"); target_.insert("Shared library"); target_.setCurrentItem(1); target_.unsetEditable();
-    standard_label_.setGeometry({2, 5}, {14, 1}); standard_.setGeometry({17, 5}, {8, 1});
-    header_label_.setGeometry({27, 5}, {13, 1}); header_.setGeometry({41, 5}, {14, 1});
-    header_.insert("hpp"); header_.insert("h"); header_.setCurrentItem(1); header_.unsetEditable();
-    generator_label_.setGeometry({2, 7}, {12, 1}); generator_.setGeometry({14, 7}, {18, 1});
-    generator_.insert("Default"); generator_.insert("Ninja"); generator_.insert("Unix Makefiles");
-    generator_.setCurrentItem(1); generator_.unsetEditable();
-    build_type_label_.setGeometry({33, 7}, {11, 1}); build_type_.setGeometry({44, 7}, {11, 1});
-    build_type_.insert("Debug"); build_type_.insert("Release"); build_type_.insert("RelWithDebInfo");
-    build_type_.insert("MinSizeRel"); build_type_.setCurrentItem(1); build_type_.unsetEditable();
-    install_label_.setGeometry({2, 9}, {14, 1}); install_.setGeometry({17, 9}, {18, 1});
-    install_.insert("None"); install_.insert("GNU standard"); install_.setCurrentItem(1); install_.unsetEditable();
-    warnings_.setGeometry({2, 10}, {27, 1}); readme_.setGeometry({30, 10}, {24, 1});
-    gitignore_.setGeometry({2, 11}, {27, 1}); testing_.setGeometry({30, 11}, {24, 1});
-    warnings_.setChecked(); readme_.setChecked(); gitignore_.setChecked();
-    next_.setGeometry({32, 13}, {10, 1}); cancel_.setGeometry({44, 13}, {11, 1});
-    language_.addCallback("row-changed", [this] { updateLanguageFields(); });
-    next_.addCallback("clicked", [this] { done(ResultCode::Accept); }); cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    updateLanguageFields();
-    name_.setFocus();
-  }
-  auto options() const -> NewProjectOptions {
-    NewProjectOptions result; result.name = name_.getText().trim().toString();
-    result.language = language_.getText() == "C" ? ProjectLanguage::C : ProjectLanguage::Cpp;
-    const auto target = target_.getText().toString();
-    result.target_type = target == "Static library" ? ProjectTargetType::StaticLibrary
-      : (target == "Shared library" ? ProjectTargetType::SharedLibrary : ProjectTargetType::Executable);
-    result.language_standard = standard_.getText().toString();
-    result.cpp_header_extension = header_.getText().toString();
-    const auto generator = generator_.getText().toString();
-    result.generator = generator == "Default" ? std::string{} : generator;
-    result.build_type = build_type_.getText().toString();
-    result.install_layout = install_.getText() == "GNU standard"
-      ? ProjectInstallLayout::Gnu : ProjectInstallLayout::None;
-    result.warnings = warnings_.isChecked(); result.create_readme = readme_.isChecked();
-    result.create_gitignore = gitignore_.isChecked(); result.enable_testing = testing_.isChecked(); return result;
-  }
- private:
-  void updateLanguageFields() {
-    const auto cpp = language_.getText() != "C";
-    standard_.clear();
-    for (const auto* value : cpp
-        ? std::vector<const char*>{"98", "11", "14", "17", "20", "23", "26"}
-        : std::vector<const char*>{"90", "99", "11", "17", "23"})
-      standard_.insert(value);
-    standard_.setCurrentItem(cpp ? 5 : 4);
-    standard_.unsetEditable();
-    header_.setEnable(cpp); header_label_.setEnable(cpp);
-    standard_.redraw(); header_.redraw(); header_label_.redraw();
-  }
-  finalcut::FLabel name_label_; finalcut::FLineEdit name_; finalcut::FLabel language_label_; finalcut::FComboBox language_;
-  finalcut::FLabel target_label_; finalcut::FComboBox target_; finalcut::FLabel standard_label_; finalcut::FComboBox standard_;
-  finalcut::FLabel header_label_; finalcut::FComboBox header_;
-  finalcut::FLabel generator_label_; finalcut::FComboBox generator_; finalcut::FLabel build_type_label_;
-  finalcut::FComboBox build_type_; finalcut::FLabel install_label_; finalcut::FComboBox install_;
-  finalcut::FCheckBox warnings_, readme_, gitignore_, testing_;
-  finalcut::FButton next_, cancel_;
-};
-
-class ImportProjectDialog final : public CenteredDialog {
- public:
-  ImportProjectDialog(std::string suggested_name, finalcut::FWidget* parent)
-      : CenteredDialog("Import source directory", parent), name_label_("Target name:", this), name_(this),
-        language_label_("Language:", this), language_(this), target_label_("Target type:", this), target_(this),
-        standard_label_("Language standard:", this), standard_(this), warnings_("Enable compiler warnings", this),
-        next_("&Preview", this), cancel_("&Cancel", this) {
-    setDialogSize({70, 16}); setModal();
-    name_label_.setGeometry({2, 1}, {14, 1}); name_.setGeometry({17, 1}, {38, 1});
-    name_.setText(finalcut::FString(std::move(suggested_name)));
-    language_label_.setGeometry({2, 3}, {10, 1}); language_.setGeometry({12, 3}, {13, 1});
-    language_.insert("C++"); language_.insert("C"); language_.setCurrentItem(1); language_.unsetEditable();
-    target_label_.setGeometry({27, 3}, {12, 1}); target_.setGeometry({39, 3}, {16, 1});
-    target_.insert("Executable"); target_.insert("Static library"); target_.insert("Shared library");
-    target_.setCurrentItem(1); target_.unsetEditable();
-    standard_label_.setGeometry({2, 5}, {18, 1}); standard_.setGeometry({21, 5}, {10, 1}); standard_.setText("20");
-    warnings_.setGeometry({2, 7}, {28, 1}); warnings_.setChecked();
-    next_.setGeometry({31, 11}, {11, 1}); cancel_.setGeometry({44, 11}, {11, 1});
-    next_.addCallback("clicked", [this] { done(ResultCode::Accept); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    name_.setFocus();
-  }
-  auto options() const -> ProjectImportOptions {
-    ProjectImportOptions result;
-    result.target_name = name_.getText().trim().toString();
-    result.language = language_.getText() == "C" ? ProjectLanguage::C : ProjectLanguage::Cpp;
-    const auto target = target_.getText().toString();
-    result.target_type = target == "Static library" ? ProjectTargetType::StaticLibrary
-      : (target == "Shared library" ? ProjectTargetType::SharedLibrary : ProjectTargetType::Executable);
-    result.language_standard = standard_.getText().trim().toString();
-    if (result.language == ProjectLanguage::C && result.language_standard == "20") result.language_standard = "17";
-    result.warnings = warnings_.isChecked();
-    return result;
-  }
- private:
-  finalcut::FLabel name_label_; finalcut::FLineEdit name_;
-  finalcut::FLabel language_label_; finalcut::FComboBox language_;
-  finalcut::FLabel target_label_; finalcut::FComboBox target_;
-  finalcut::FLabel standard_label_; finalcut::FLineEdit standard_;
-  finalcut::FCheckBox warnings_; finalcut::FButton next_, cancel_;
-};
-
-class ProjectSettingsDialog final : public CenteredDialog {
- public:
-  ProjectSettingsDialog(std::filesystem::path root, const ProjectSettings& settings,
-      finalcut::FWidget* parent)
-      : CenteredDialog("Project Settings", parent), root_(std::move(root)), original_(settings),
-        source_label_("Source directory:", this), source_(this), build_label_("Build directory:", this), build_(this),
-        browse_("&Browse...", this), generator_label_("Generator:", this), generator_(this),
-        toolchain_label_("Toolchain file:", this), toolchain_(this), c_compiler_label_("C compiler:", this),
-        c_compiler_(this), cpp_compiler_label_("C++ compiler:", this), cpp_compiler_(this),
-        c_standard_label_("C standard:", this), c_standard_(this), cpp_standard_label_("C++ standard:", this),
-        cpp_standard_(this), build_type_label_("Build type:", this), build_type_(this),
-        jobs_label_("Jobs:", this), jobs_(this), tab_width_label_("Tab width:", this), tab_width_(this),
-        use_spaces_("Insert spaces", this),
-        environment_label_("Environment:", this), environment_(this), clangd_label_("clangd arguments:", this),
-        clangd_(this), save_("&Save", this), cancel_("&Cancel", this) {
-    setDialogSize({78, 24}); setModal();
-    source_label_.setGeometry({2, 1}, {18, 1}); source_.setGeometry({20, 1}, {35, 1});
-    source_.setText(finalcut::FString(root_.string())); source_.setReadOnly();
-    build_label_.setGeometry({2, 2}, {18, 1}); build_.setGeometry({20, 2}, {24, 1});
-    build_.setText(finalcut::FString(settings.build_directory.string())); browse_.setGeometry({46, 2}, {9, 1});
-    generator_label_.setGeometry({2, 3}, {18, 1}); generator_.setGeometry({20, 3}, {18, 1});
-    generator_.setText(finalcut::FString(settings.generator));
-    jobs_label_.setGeometry({40, 3}, {6, 1}); jobs_.setGeometry({47, 3}, {8, 1});
-    jobs_.setText(finalcut::FString(std::to_string(settings.build_jobs)));
-    toolchain_label_.setGeometry({2, 4}, {18, 1}); toolchain_.setGeometry({20, 4}, {35, 1});
-    toolchain_.setText(finalcut::FString(settings.toolchain.string()));
-    c_compiler_label_.setGeometry({2, 5}, {18, 1}); c_compiler_.setGeometry({20, 5}, {35, 1});
-    c_compiler_.setText(finalcut::FString(settings.c_compiler.string()));
-    cpp_compiler_label_.setGeometry({2, 6}, {18, 1}); cpp_compiler_.setGeometry({20, 6}, {35, 1});
-    cpp_compiler_.setText(finalcut::FString(settings.cpp_compiler.string()));
-    setupCombo(c_standard_, {"Inherit", "90", "99", "11", "17", "23"}, settings.c_standard);
-    setupCombo(cpp_standard_, {"Inherit", "98", "11", "14", "17", "20", "23", "26"}, settings.cpp_standard);
-    setupCombo(build_type_, {"Inherit", "Debug", "Release", "RelWithDebInfo", "MinSizeRel"}, settings.build_type);
-    c_standard_label_.setGeometry({2, 7}, {11, 1}); c_standard_.setGeometry({13, 7}, {8, 1});
-    cpp_standard_label_.setGeometry({22, 7}, {13, 1}); cpp_standard_.setGeometry({35, 7}, {8, 1});
-    build_type_label_.setGeometry({2, 8}, {11, 1}); build_type_.setGeometry({13, 8}, {15, 1});
-    environment_label_.setGeometry({2, 9}, {18, 1}); environment_.setGeometry({20, 9}, {35, 1});
-    environment_.setText(finalcut::FString(formatEnvironmentSettings(settings.environment)));
-    clangd_label_.setGeometry({2, 10}, {18, 1}); clangd_.setGeometry({20, 10}, {35, 1});
-    clangd_.setText(finalcut::FString(formatArgumentList(settings.clangd_arguments)));
-    tab_width_label_.setGeometry({2, 11}, {12, 1}); tab_width_.setGeometry({14, 11}, {6, 1});
-    tab_width_.setText(finalcut::FString(std::to_string(settings.tab_width)));
-    use_spaces_.setGeometry({22, 11}, {18, 1});
-    if (settings.use_spaces) use_spaces_.setChecked(); else use_spaces_.unsetChecked();
-    environment_help_.setText("Use NAME=value; OTHER=value");
-    environment_help_.setGeometry({2, 12}, {32, 1});
-    save_.setGeometry({32, 13}, {10, 1}); cancel_.setGeometry({44, 13}, {11, 1});
-    browse_.addCallback("clicked", [this] {
-      const auto current = std::filesystem::path(build_.getText().trim().toString());
-      ProjectDirectoryDialog dialog("Select build directory", current.empty() ? root_.parent_path() : current, this);
-      if (dialog.exec() == ResultCode::Accept) build_.setText(finalcut::FString(dialog.selectedPath().string()));
-    });
-    save_.addCallback("clicked", [this] { done(ResultCode::Accept); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    setResponsiveLayout([this] { layoutControls(); });
-    build_.setFocus();
-  }
-
-  auto settings(ProjectSettings& result, std::string& error) const -> bool {
-    result = original_; result.version = 1;
-    const auto pathValue = [this](const finalcut::FLineEdit& field) {
-      const std::filesystem::path path(field.getText().trim().toString());
-      return path.empty() ? path : normalizePath(path.is_absolute() ? path : root_ / path);
-    };
-    result.build_directory = pathValue(build_); result.generator = generator_.getText().trim().toString();
-    result.toolchain = pathValue(toolchain_); result.c_compiler = pathValue(c_compiler_);
-    result.cpp_compiler = pathValue(cpp_compiler_);
-    result.c_standard = comboValue(c_standard_); result.cpp_standard = comboValue(cpp_standard_);
-    result.build_type = comboValue(build_type_);
-    try {
-      const auto jobs_text = jobs_.getText().trim().toString();
-      std::size_t parsed{};
-      const auto jobs = std::stoul(jobs_text, &parsed);
-      if (parsed != jobs_text.size() || jobs > 1024) throw std::out_of_range("jobs");
-      result.build_jobs = static_cast<unsigned>(jobs);
-    } catch (const std::exception&) { error = "Parallel jobs must be between 1 and 1024."; return false; }
-    try {
-      const auto width_text = tab_width_.getText().trim().toString();
-      std::size_t parsed{};
-      const auto width = std::stoul(width_text, &parsed);
-      if (parsed != width_text.size() || width == 0 || width > 16) throw std::out_of_range("tab width");
-      result.tab_width = static_cast<unsigned>(width);
-    } catch (const std::exception&) { error = "Tab width must be between 1 and 16."; return false; }
-    result.use_spaces = use_spaces_.isChecked();
-    if (!parseEnvironmentSettings(environment_.getText().trim().toString(), result.environment, error)) return false;
-    return parseArgumentList(clangd_.getText().trim().toString(), result.clangd_arguments, error)
-      && validateProjectSettings(root_, result, error);
-  }
-
- private:
-  void layoutControls() {
-    const bool compact = getWidth() < 70 || getHeight() < 20;
-    if (compact) {
-      source_label_.setGeometry({2, 1}, {18, 1}); source_.setGeometry({20, 1}, {35, 1});
-      build_label_.setGeometry({2, 2}, {18, 1}); build_.setGeometry({20, 2}, {24, 1}); browse_.setGeometry({46, 2}, {9, 1});
-      generator_label_.setGeometry({2, 3}, {18, 1}); generator_.setGeometry({20, 3}, {18, 1});
-      jobs_label_.setGeometry({40, 3}, {6, 1}); jobs_.setGeometry({47, 3}, {8, 1});
-      toolchain_label_.setGeometry({2, 4}, {18, 1}); toolchain_.setGeometry({20, 4}, {35, 1});
-      c_compiler_label_.setGeometry({2, 5}, {18, 1}); c_compiler_.setGeometry({20, 5}, {35, 1});
-      cpp_compiler_label_.setGeometry({2, 6}, {18, 1}); cpp_compiler_.setGeometry({20, 6}, {35, 1});
-      c_standard_label_.setGeometry({2, 7}, {11, 1}); c_standard_.setGeometry({13, 7}, {8, 1});
-      cpp_standard_label_.setGeometry({22, 7}, {13, 1}); cpp_standard_.setGeometry({35, 7}, {8, 1});
-      build_type_label_.setGeometry({2, 8}, {11, 1}); build_type_.setGeometry({13, 8}, {15, 1});
-      environment_label_.setGeometry({2, 9}, {18, 1}); environment_.setGeometry({20, 9}, {35, 1});
-      clangd_label_.setGeometry({2, 10}, {18, 1}); clangd_.setGeometry({20, 10}, {35, 1});
-      tab_width_label_.setGeometry({2, 11}, {12, 1}); tab_width_.setGeometry({14, 11}, {6, 1});
-      use_spaces_.setGeometry({22, 11}, {18, 1}); environment_help_.setGeometry({2, 12}, {32, 1});
-      save_.setGeometry({32, 13}, {10, 1}); cancel_.setGeometry({44, 13}, {11, 1});
-      return;
-    }
-    source_label_.setGeometry({2, 1}, {19, 1}); source_.setGeometry({22, 1}, {53, 1});
-    build_label_.setGeometry({2, 3}, {19, 1}); build_.setGeometry({22, 3}, {41, 1}); browse_.setGeometry({65, 3}, {10, 1});
-    generator_label_.setGeometry({2, 5}, {19, 1}); generator_.setGeometry({22, 5}, {24, 1});
-    jobs_label_.setGeometry({49, 5}, {7, 1}); jobs_.setGeometry({57, 5}, {8, 1});
-    toolchain_label_.setGeometry({2, 7}, {19, 1}); toolchain_.setGeometry({22, 7}, {53, 1});
-    c_compiler_label_.setGeometry({2, 9}, {19, 1}); c_compiler_.setGeometry({22, 9}, {22, 1});
-    cpp_compiler_label_.setGeometry({45, 9}, {15, 1}); cpp_compiler_.setGeometry({60, 9}, {15, 1});
-    c_standard_label_.setGeometry({2, 11}, {12, 1}); c_standard_.setGeometry({14, 11}, {12, 1});
-    cpp_standard_label_.setGeometry({28, 11}, {14, 1}); cpp_standard_.setGeometry({42, 11}, {12, 1});
-    build_type_label_.setGeometry({56, 11}, {11, 1}); build_type_.setGeometry({67, 11}, {9, 1});
-    environment_label_.setGeometry({2, 13}, {19, 1}); environment_.setGeometry({22, 13}, {53, 1});
-    clangd_label_.setGeometry({2, 15}, {19, 1}); clangd_.setGeometry({22, 15}, {53, 1});
-    tab_width_label_.setGeometry({2, 17}, {12, 1}); tab_width_.setGeometry({14, 17}, {6, 1});
-    use_spaces_.setGeometry({23, 17}, {18, 1}); environment_help_.setGeometry({43, 17}, {32, 1});
-    save_.setGeometry({52, 19}, {10, 1}); cancel_.setGeometry({65, 19}, {11, 1});
-  }
-
-  static void setupCombo(finalcut::FComboBox& combo, const std::vector<std::string>& values,
-      const std::string& selected) {
-    for (const auto& value : values) combo.insert(finalcut::FString(value));
-    combo.setText(finalcut::FString(selected.empty() ? "Inherit" : selected)); combo.unsetEditable();
-  }
-  static auto comboValue(const finalcut::FComboBox& combo) -> std::string {
-    const auto value = combo.getText().toString(); return value == "Inherit" ? std::string{} : value;
-  }
-
-  std::filesystem::path root_;
-  ProjectSettings original_;
-  finalcut::FLabel source_label_; finalcut::FLineEdit source_; finalcut::FLabel build_label_; finalcut::FLineEdit build_;
-  finalcut::FButton browse_; finalcut::FLabel generator_label_; finalcut::FLineEdit generator_;
-  finalcut::FLabel toolchain_label_; finalcut::FLineEdit toolchain_; finalcut::FLabel c_compiler_label_;
-  finalcut::FLineEdit c_compiler_; finalcut::FLabel cpp_compiler_label_; finalcut::FLineEdit cpp_compiler_;
-  finalcut::FLabel c_standard_label_; finalcut::FComboBox c_standard_; finalcut::FLabel cpp_standard_label_;
-  finalcut::FComboBox cpp_standard_; finalcut::FLabel build_type_label_; finalcut::FComboBox build_type_;
-  finalcut::FLabel jobs_label_; finalcut::FLineEdit jobs_;
-  finalcut::FLabel tab_width_label_; finalcut::FLineEdit tab_width_; finalcut::FCheckBox use_spaces_;
-  finalcut::FLabel environment_label_; finalcut::FLineEdit environment_; finalcut::FLabel clangd_label_;
-  finalcut::FLineEdit clangd_; finalcut::FLabel environment_help_{this}; finalcut::FButton save_; finalcut::FButton cancel_;
-};
-
-class LaunchSettingsDialog final : public CenteredDialog {
- public:
-  LaunchSettingsDialog(std::filesystem::path root, const LaunchConfiguration& configuration,
-      const std::vector<CMakeTarget>& targets,
-      finalcut::FWidget* parent)
-      : CenteredDialog("Launch configuration", parent), root_(std::move(root)), target_label_("CMake target:", this),
-        target_(this), executable_label_("Executable override:", this),
-        executable_(this), executable_browse_("&Browse...", this), working_label_("Working directory:", this),
-        working_(this), working_browse_("B&rowse...", this), arguments_label_("Arguments:", this), arguments_(this),
-        environment_label_("Environment:", this), environment_(this), stdin_label_("Stdin file:", this),
-        stdin_(this), stdin_browse_("Bro&wse...", this), pre_build_("Build before launch", this),
-        external_terminal_("External terminal (Run only)", this), terminal_label_("Terminal executable:", this), terminal_(this),
-        save_("&Save", this), cancel_("&Cancel", this) {
-    setDialogSize({78, 24}); setModal();
-    target_label_.setGeometry({2, 1}, {18, 1}); target_.setGeometry({20, 1}, {35, 1});
-    target_.insert("Use currently selected target");
-    for (const auto& item : targets) target_.insert(finalcut::FString(item.name));
-    target_.setText(finalcut::FString(configuration.target.empty() ? "Use currently selected target" : configuration.target));
-    target_.unsetEditable();
-    executable_label_.setGeometry({2, 2}, {18, 1}); executable_.setGeometry({20, 2}, {24, 1});
-    executable_.setText(finalcut::FString(configuration.executable.string()));
-    executable_browse_.setGeometry({46, 2}, {9, 1});
-    working_label_.setGeometry({2, 3}, {18, 1}); working_.setGeometry({20, 3}, {24, 1});
-    working_.setText(finalcut::FString(configuration.working_directory.string()));
-    working_browse_.setGeometry({46, 3}, {9, 1});
-    arguments_label_.setGeometry({2, 5}, {18, 1}); arguments_.setGeometry({20, 5}, {35, 1});
-    arguments_.setText(finalcut::FString(formatArgumentList(configuration.arguments)));
-    environment_label_.setGeometry({2, 6}, {18, 1}); environment_.setGeometry({20, 6}, {35, 1});
-    environment_.setText(finalcut::FString(formatEnvironmentSettings(configuration.environment)));
-    stdin_label_.setGeometry({2, 7}, {18, 1}); stdin_.setGeometry({20, 7}, {24, 1});
-    stdin_.setText(finalcut::FString(configuration.stdin_file.string())); stdin_browse_.setGeometry({46, 7}, {9, 1});
-    pre_build_.setGeometry({2, 9}, {24, 1}); external_terminal_.setGeometry({27, 9}, {28, 1});
-    if (configuration.pre_launch_build) pre_build_.setChecked();
-    if (configuration.external_terminal) external_terminal_.setChecked();
-    terminal_label_.setGeometry({2, 10}, {18, 1}); terminal_.setGeometry({20, 10}, {35, 1});
-    terminal_.setText(finalcut::FString(configuration.terminal));
-    terminal_help_.setText("Example: x-terminal-emulator"); terminal_help_.setGeometry({20, 11}, {35, 1});
-    save_.setGeometry({32, 13}, {10, 1}); cancel_.setGeometry({44, 13}, {11, 1});
-    executable_browse_.addCallback("clicked", [this] {
-      const auto selected = finalcut::FFileDialog::fileOpenChooser(this, finalcut::FString(root_.string()), "*");
-      if (!selected.isEmpty()) executable_.setText(selected);
-    });
-    working_browse_.addCallback("clicked", [this] {
-      const auto current = pathValue(working_);
-      ProjectDirectoryDialog dialog("Select launch working directory", current.empty() ? root_ : current, this);
-      if (dialog.exec() == ResultCode::Accept) working_.setText(finalcut::FString(dialog.selectedPath().string()));
-    });
-    stdin_browse_.addCallback("clicked", [this] {
-      const auto selected = finalcut::FFileDialog::fileOpenChooser(this, finalcut::FString(root_.string()), "*");
-      if (!selected.isEmpty()) stdin_.setText(selected);
-    });
-    save_.addCallback("clicked", [this] { done(ResultCode::Accept); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    executable_.setFocus();
-  }
-
-  auto configuration(LaunchConfiguration& result, std::string& error) const -> bool {
-    result.executable = pathValue(executable_); result.working_directory = pathValue(working_);
-    result.stdin_file = pathValue(stdin_);
-    const auto target = target_.getText().toString();
-    result.target = target == "Use currently selected target" ? std::string{} : target;
-    result.pre_launch_build = pre_build_.isChecked(); result.external_terminal = external_terminal_.isChecked();
-    result.terminal = terminal_.getText().trim().toString();
-    if (!parseArgumentList(arguments_.getText().trim().toString(), result.arguments, error)) return false;
-    if (!parseEnvironmentSettings(environment_.getText().trim().toString(), result.environment, error)) return false;
-    if (result.external_terminal && result.terminal.empty()) { error = "External terminal command is required."; return false; }
-    return true;
-  }
-
- private:
-  auto pathValue(const finalcut::FLineEdit& field) const -> std::filesystem::path {
-    const std::filesystem::path path(field.getText().trim().toString());
-    return path.empty() ? path : normalizePath(path.is_absolute() ? path : root_ / path);
-  }
-  std::filesystem::path root_;
-  finalcut::FLabel target_label_; finalcut::FComboBox target_;
-  finalcut::FLabel executable_label_; finalcut::FLineEdit executable_; finalcut::FButton executable_browse_;
-  finalcut::FLabel working_label_; finalcut::FLineEdit working_; finalcut::FButton working_browse_;
-  finalcut::FLabel arguments_label_; finalcut::FLineEdit arguments_;
-  finalcut::FLabel environment_label_; finalcut::FLineEdit environment_;
-  finalcut::FLabel stdin_label_; finalcut::FLineEdit stdin_; finalcut::FButton stdin_browse_;
-  finalcut::FCheckBox pre_build_; finalcut::FCheckBox external_terminal_;
-  finalcut::FLabel terminal_label_; finalcut::FLineEdit terminal_; finalcut::FLabel terminal_help_{this};
-  finalcut::FButton save_; finalcut::FButton cancel_;
-};
-
-class BreakpointSettingsDialog final : public CenteredDialog {
- public:
-  BreakpointSettingsDialog(const DebugBreakpoint& breakpoint, finalcut::FWidget* parent)
-      : CenteredDialog("Breakpoint properties", parent), location_(finalcut::FString(
-          breakpoint.file.string() + ":" + std::to_string(breakpoint.line)), this),
-        enabled_("Enabled", this), condition_label_("Condition:", this), condition_(this),
-        hits_label_("Ignore first hits:", this), hits_(this), log_label_("Log message:", this), log_(this),
-        help_("A logpoint prints its message and continues automatically.", this),
-        save_("&Save", this), cancel_("&Cancel", this) {
-    setDialogSize({70, 18}); setModal();
-    location_.setGeometry({2, 1}, {53, 1}); enabled_.setGeometry({2, 3}, {15, 1});
-    if (breakpoint.enabled) enabled_.setChecked();
-    condition_label_.setGeometry({2, 5}, {18, 1}); condition_.setGeometry({21, 5}, {34, 1});
-    condition_.setText(finalcut::FString(breakpoint.condition));
-    hits_label_.setGeometry({2, 7}, {18, 1}); hits_.setGeometry({21, 7}, {10, 1});
-    hits_.setText(finalcut::FString(std::to_string(breakpoint.hit_count)));
-    log_label_.setGeometry({2, 9}, {18, 1}); log_.setGeometry({21, 9}, {34, 1});
-    log_.setText(finalcut::FString(breakpoint.log_message)); help_.setGeometry({2, 11}, {53, 1});
-    save_.setGeometry({32, 13}, {10, 1}); cancel_.setGeometry({44, 13}, {11, 1});
-    save_.addCallback("clicked", [this] { done(ResultCode::Accept); });
-    cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-    condition_.setFocus();
-  }
-
-  auto apply(DebugBreakpoint& breakpoint, std::string& error) const -> bool {
-    breakpoint.enabled = enabled_.isChecked();
-    breakpoint.condition = condition_.getText().trim().toString();
-    breakpoint.log_message = log_.getText().toString();
-    const auto value = hits_.getText().trim().toString();
-    try {
-      std::size_t parsed{};
-      const auto count = std::stoul(value.empty() ? "0" : value, &parsed);
-      if (parsed != (value.empty() ? 1U : value.size()) || count > 1000000000UL) throw std::out_of_range("hits");
-      breakpoint.hit_count = static_cast<unsigned>(count);
-    } catch (...) { error = "Ignore hit count must be an integer from 0 to 1000000000."; return false; }
-    return true;
-  }
-
- private:
-  finalcut::FLabel location_; finalcut::FCheckBox enabled_;
-  finalcut::FLabel condition_label_; finalcut::FLineEdit condition_;
-  finalcut::FLabel hits_label_; finalcut::FLineEdit hits_;
-  finalcut::FLabel log_label_; finalcut::FLineEdit log_; finalcut::FLabel help_;
-  finalcut::FButton save_; finalcut::FButton cancel_;
-};
-
 auto isCppSource(const std::filesystem::path& path) -> bool {
   static const std::vector<std::string> extensions{".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp"};
   return std::find(extensions.begin(), extensions.end(), path.extension().string()) != extensions.end();
-}
-
-void appendCMakeSettings(std::vector<std::string>& arguments, const ProjectSettings& settings) {
-  if (!settings.generator.empty()) arguments.insert(arguments.end(), {"-G", settings.generator});
-  const auto definition = [&arguments](std::string name, const auto& value) {
-    if (!value.empty()) arguments.push_back("-D" + std::move(name) + "=" + value.string());
-  };
-  definition("CMAKE_TOOLCHAIN_FILE", settings.toolchain);
-  definition("CMAKE_C_COMPILER", settings.c_compiler);
-  definition("CMAKE_CXX_COMPILER", settings.cpp_compiler);
-  if (!settings.c_standard.empty()) arguments.push_back("-DCMAKE_C_STANDARD=" + settings.c_standard);
-  if (!settings.cpp_standard.empty()) arguments.push_back("-DCMAKE_CXX_STANDARD=" + settings.cpp_standard);
-  if (!settings.build_type.empty()) arguments.push_back("-DCMAKE_BUILD_TYPE=" + settings.build_type);
 }
 
 constexpr auto fileDialogFilter = "*";
@@ -1049,7 +129,11 @@ struct ProjectNode {
 }  // namespace
 
 IdeWindow::IdeWindow(std::filesystem::path initial_root, finalcut::FWidget* parent)
-    : FDialog(parent), project_history_file_(defaultProjectHistoryPath()) {
+    : FDialog(parent), root_(project_session_.root()), build_dir_(cmake_session_.buildDirectory()),
+      session_file_(project_session_.sessionFile()), recovery_file_(project_session_.recoveryFile()),
+      project_history_file_(defaultProjectHistoryPath()), project_settings_(project_session_.settings()),
+      documents_(document_session_.documents()), closed_documents_(document_session_.closedDocuments()),
+      document_(document_session_.activeDocument()), active_document_(document_session_.activeIndex()) {
   setText("TUI IDE — C/C++");
   unsetBorder();
   unsetTitleBarButtonVisibility();
@@ -1181,8 +265,7 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, finalcut::FWidget* pare
 
 IdeWindow::~IdeWindow() {
   if (debug_state_dirty_) saveDebugState();
-  lsp_.stop(); gdb_.stop(); build_process_.stop(); run_process_.stop(); terminal_.stop(); console_.setControlEnabled(false);
-  build_stage_ = BuildStage::Idle; build_operation_ = BuildOperation::None; build_progress_.reset();
+  lsp_.stop(); gdb_.stop(); build_session_.reset(); run_process_.stop(); terminal_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
 }
 
@@ -1756,11 +839,12 @@ void IdeWindow::showDebugContextMenu(finalcut::FPoint position, bool breakpoints
     debug_context_->clear_breakpoints.addCallback("clicked", [this] { deferred_command_ = [this] { clearBreakpoints(); }; });
   }
   const auto debug_index = debug_.currentItem();
-  const bool debug_selected = debug_index > 0 && debug_index <= debug_locations_.size();
-  const bool watch_selected = debug_index > 0 && debug_index <= debug_watch_indices_.size()
-    && debug_watch_indices_[debug_index - 1].has_value();
+  const auto* debug_row = debug_index > 0 ? debug_ui_.debugRow(debug_index - 1) : nullptr;
+  const bool debug_selected = debug_row != nullptr;
+  const bool watch_selected = debug_row && debug_row->watch_index.has_value();
   const auto breakpoint_index = breakpoints_.currentItem();
-  const bool breakpoint_selected = breakpoint_index > 0 && breakpoint_index <= breakpoint_rows_.size();
+  const bool breakpoint_selected = breakpoint_index > 0
+    && debug_ui_.breakpointRow(breakpoint_index - 1) != nullptr;
   debug_context_->open.setEnable(debug_selected);
   debug_context_->add_watch.setEnable(!root_.empty());
   debug_context_->remove_watch.setEnable(watch_selected);
@@ -1769,7 +853,7 @@ void IdeWindow::showDebugContextMenu(finalcut::FPoint position, bool breakpoints
   debug_context_->properties.setEnable(breakpoint_selected);
   debug_context_->toggle.setEnable(breakpoint_selected);
   debug_context_->remove_breakpoint.setEnable(breakpoint_selected);
-  debug_context_->clear_breakpoints.setEnable(!breakpoint_rows_.empty());
+  debug_context_->clear_breakpoints.setEnable(!debug_ui_.breakpointRows().empty());
   showContextMenu(breakpoints ? debug_context_->breakpoint_menu : debug_context_->debug_menu, position);
 }
 
@@ -2059,121 +1143,28 @@ void IdeWindow::refreshTabs() {
 }
 
 void IdeWindow::refreshDebugPanel() {
-  std::string signature = gdb_.exited() ? "exited" : (gdb_.stopped() ? "stopped" : (gdb_.running() ? "running" : "off"));
-  for (const auto& thread : gdb_.threads()) signature += "|" + thread.id + thread.name + thread.state + (thread.current ? "*" : "");
-  for (const auto& frame : gdb_.frames()) signature += "|" + std::to_string(frame.level) + frame.function + frame.file.string() + std::to_string(frame.line);
-  signature += "|frame:" + std::to_string(gdb_.selectedFrame());
-  for (const auto& variable : gdb_.variables()) signature += "|" + std::to_string(variable.depth)
-    + variable.name + variable.value + variable.type + variable.object
-    + (variable.expandable ? "+" : "-") + (variable.expanded ? "open" : "closed");
-  for (const auto& watch : gdb_.watches()) signature += "|watch:" + watch.expression + watch.value + watch.error;
-  signature += gdb_.registersEnabled() ? "|registers:on" : "|registers:off";
-  for (const auto& reg : gdb_.registers()) signature += "|reg:" + reg.name + reg.value;
-  if (signature == debug_signature_) return;
-  debug_signature_ = std::move(signature);
-  debug_.clear(); debug_locations_.clear(); debug_thread_ids_.clear(); debug_watch_indices_.clear();
-  debug_frame_levels_.clear(); debug_variable_indices_.clear();
-  if (gdb_.threads().empty() && gdb_.frames().empty() && gdb_.variables().empty()) {
-    debug_.insert(gdb_.exited() ? "Program exited" : (gdb_.running()
-      ? (gdb_.stopped() ? "Loading state..." : "Program running") : "Debugger not started"));
-    debug_locations_.push_back(std::nullopt);
-    debug_thread_ids_.push_back(std::nullopt);
-    debug_watch_indices_.push_back(std::nullopt);
-    debug_frame_levels_.push_back(std::nullopt);
-    debug_variable_indices_.push_back(std::nullopt);
-  }
-  for (std::size_t i = 0; i < gdb_.watches().size(); ++i) {
-    const auto& watch = gdb_.watches()[i];
-    debug_.insert("Watch " + watch.expression + " = " + (watch.error.empty() ? watch.value : "<" + watch.error + ">"));
-    debug_locations_.push_back(std::nullopt);
-    debug_thread_ids_.push_back(std::nullopt);
-    debug_watch_indices_.push_back(i);
-    debug_frame_levels_.push_back(std::nullopt);
-    debug_variable_indices_.push_back(std::nullopt);
-  }
-  if (gdb_.registersEnabled() && gdb_.registers().empty()) {
-    debug_.insert(gdb_.stopped() ? "Registers: loading..." : "Registers: debugger not stopped");
-    debug_locations_.push_back(std::nullopt);
-    debug_thread_ids_.push_back(std::nullopt);
-    debug_watch_indices_.push_back(std::nullopt);
-    debug_frame_levels_.push_back(std::nullopt);
-    debug_variable_indices_.push_back(std::nullopt);
-  }
-  for (const auto& reg : gdb_.registers()) {
-    debug_.insert("Reg " + reg.name + " = " + reg.value);
-    debug_locations_.push_back(std::nullopt);
-    debug_thread_ids_.push_back(std::nullopt);
-    debug_watch_indices_.push_back(std::nullopt);
-    debug_frame_levels_.push_back(std::nullopt);
-    debug_variable_indices_.push_back(std::nullopt);
-  }
-  for (const auto& thread : gdb_.threads()) {
-    auto label = std::string(thread.current ? "> Thread " : "  Thread ") + thread.id;
-    if (!thread.name.empty()) label += " " + thread.name;
-    if (!thread.state.empty()) label += " [" + thread.state + "]";
-    debug_.insert(label);
-    debug_locations_.push_back(std::nullopt);
-    debug_thread_ids_.push_back(thread.id);
-    debug_watch_indices_.push_back(std::nullopt);
-    debug_frame_levels_.push_back(std::nullopt);
-    debug_variable_indices_.push_back(std::nullopt);
-  }
-  for (const auto& frame : gdb_.frames()) {
-    const auto file = frame.file.empty() ? std::string{} : frame.file.filename().string() + ":" + std::to_string(frame.line);
-    debug_.insert(std::string(frame.level == gdb_.selectedFrame() ? "> #" : "  #")
-      + std::to_string(frame.level) + " " + frame.function + " " + file);
-    if (!frame.file.empty() && frame.line > 0) debug_locations_.push_back(SourceLocation{frame.file, {frame.line - 1, 0}});
-    else debug_locations_.push_back(std::nullopt);
-    debug_thread_ids_.push_back(std::nullopt);
-    debug_watch_indices_.push_back(std::nullopt);
-    debug_frame_levels_.push_back(frame.level);
-    debug_variable_indices_.push_back(std::nullopt);
-  }
-  for (std::size_t i = 0; i < gdb_.variables().size(); ++i) {
-    const auto& variable = gdb_.variables()[i];
-    auto label = std::string(variable.depth * 2, ' ');
-    label += variable.expandable ? (variable.expanded ? "[-] " : "[+] ") : "    ";
-    label += variable.name + " = " + variable.value;
-    if (!variable.type.empty()) label += " : " + variable.type;
-    debug_.insert(finalcut::FString(label));
-    debug_locations_.push_back(std::nullopt);
-    debug_thread_ids_.push_back(std::nullopt);
-    debug_watch_indices_.push_back(std::nullopt);
-    debug_frame_levels_.push_back(std::nullopt);
-    debug_variable_indices_.push_back(i);
-  }
+  if (!debug_ui_.updateDebug(DebugUiController::capture(gdb_))) return;
+  debug_.clear();
+  for (const auto& row : debug_ui_.debugRows()) debug_.insert(finalcut::FString(row.label));
   debug_.redraw();
 }
 
 void IdeWindow::refreshBreakpointsPanel() {
   const auto current = breakpoints_.currentItem();
-  auto rows = gdb_.breakpoints();
-  std::string signature{"breakpoints"};
-  for (const auto& item : rows) signature += item.file.string() + ':' + std::to_string(item.line)
-    + (item.enabled ? ":on:" : ":off:") + item.condition + ':' + std::to_string(item.hit_count)
-    + ':' + item.log_message + (item.verified ? ":verified:" : ":unverified:") + item.error;
-  if (signature == breakpoint_signature_) return;
-  breakpoint_signature_ = std::move(signature); breakpoint_rows_ = std::move(rows); breakpoints_.clear();
-  if (breakpoint_rows_.empty()) breakpoints_.insert("No breakpoints");
-  for (const auto& item : breakpoint_rows_) {
-    std::error_code relative_error;
-    auto path = root_.empty() ? item.file : std::filesystem::relative(item.file, root_, relative_error);
-    if (relative_error) path = item.file;
-    auto label = std::string(item.enabled ? "[x] " : "[ ] ") + path.generic_string() + ':' + std::to_string(item.line);
-    if (!item.condition.empty()) label += " if " + item.condition;
-    if (item.hit_count != 0) label += " after " + std::to_string(item.hit_count) + " hit(s)";
-    if (!item.log_message.empty()) label += " log: " + item.log_message;
-    label += item.verified ? " [verified]" : (gdb_.running() ? " [unresolved]" : " [not started]");
-    breakpoints_.insert(finalcut::FString(label));
-  }
-  if (!breakpoint_rows_.empty()) breakpoints_.setCurrentItem(std::clamp<std::size_t>(current, 1, breakpoint_rows_.size()));
+  if (!debug_ui_.updateBreakpoints(gdb_.breakpoints(), gdb_.running(), root_)) return;
+  breakpoints_.clear();
+  if (debug_ui_.breakpointRows().empty()) breakpoints_.insert("No breakpoints");
+  for (const auto& row : debug_ui_.breakpointRows()) breakpoints_.insert(finalcut::FString(row.label));
+  if (!debug_ui_.breakpointRows().empty())
+    breakpoints_.setCurrentItem(std::clamp<std::size_t>(current, 1, debug_ui_.breakpointRows().size()));
   breakpoints_.redraw();
 }
 
 void IdeWindow::openSelectedBreakpoint() {
   const auto index = breakpoints_.currentItem();
-  if (index == 0 || index > breakpoint_rows_.size()) return;
-  const auto breakpoint = breakpoint_rows_[index - 1];
+  const auto* row = index > 0 ? debug_ui_.breakpointRow(index - 1) : nullptr;
+  if (!row) return;
+  const auto breakpoint = row->breakpoint;
   openFile(breakpoint.file);
   if (document_ && document_->path() == normalizePath(breakpoint.file))
     editor_.reveal({breakpoint.line - 1, 0});
@@ -2181,37 +1172,40 @@ void IdeWindow::openSelectedBreakpoint() {
 
 void IdeWindow::editSelectedBreakpoint() {
   const auto index = breakpoints_.currentItem();
-  if (index == 0 || index > breakpoint_rows_.size()) {
+  const auto* row = index > 0 ? debug_ui_.breakpointRow(index - 1) : nullptr;
+  if (!row) {
     appendOutput("Breakpoint properties unavailable: select a breakpoint in the Breakpoints panel\n"); return;
   }
-  auto breakpoint = breakpoint_rows_[index - 1];
+  auto breakpoint = row->breakpoint;
   delTimer(timer_id_); BreakpointSettingsDialog dialog(breakpoint, this);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept; timer_id_ = addTimer(100);
   if (!accepted) return;
   std::string error;
   if (!dialog.apply(breakpoint, error)) { finalcut::FMessageBox::error(this, finalcut::FString(error)); return; }
   if (!gdb_.updateBreakpoint(breakpoint)) { appendOutput("Breakpoint update failed\n"); return; }
-  debug_state_dirty_ = true; saveDebugState(); breakpoint_signature_.clear(); refreshBreakpointsPanel(); editor_.redraw();
+  debug_state_dirty_ = true; saveDebugState(); debug_ui_.invalidateBreakpoints(); refreshBreakpointsPanel(); editor_.redraw();
 }
 
 void IdeWindow::toggleSelectedBreakpoint() {
   const auto index = breakpoints_.currentItem();
-  if (index == 0 || index > breakpoint_rows_.size()) {
+  const auto* row = index > 0 ? debug_ui_.breakpointRow(index - 1) : nullptr;
+  if (!row) {
     appendOutput("Enable breakpoint unavailable: select a breakpoint in the Breakpoints panel\n"); return;
   }
-  auto breakpoint = breakpoint_rows_[index - 1]; breakpoint.enabled = !breakpoint.enabled;
+  auto breakpoint = row->breakpoint; breakpoint.enabled = !breakpoint.enabled;
   if (!gdb_.updateBreakpoint(breakpoint)) return;
-  debug_state_dirty_ = true; saveDebugState(); breakpoint_signature_.clear(); refreshBreakpointsPanel(); editor_.redraw();
+  debug_state_dirty_ = true; saveDebugState(); debug_ui_.invalidateBreakpoints(); refreshBreakpointsPanel(); editor_.redraw();
 }
 
 void IdeWindow::removeSelectedBreakpoint() {
   const auto index = breakpoints_.currentItem();
-  if (index == 0 || index > breakpoint_rows_.size()) {
+  const auto* row = index > 0 ? debug_ui_.breakpointRow(index - 1) : nullptr;
+  if (!row) {
     appendOutput("Remove breakpoint unavailable: select a breakpoint in the Breakpoints panel\n"); return;
   }
-  const auto breakpoint = breakpoint_rows_[index - 1];
+  const auto breakpoint = row->breakpoint;
   if (!gdb_.removeBreakpoint(breakpoint.file, breakpoint.line)) return;
-  debug_state_dirty_ = true; saveDebugState(); breakpoint_signature_.clear(); refreshBreakpointsPanel(); editor_.redraw();
+  debug_state_dirty_ = true; saveDebugState(); debug_ui_.invalidateBreakpoints(); refreshBreakpointsPanel(); editor_.redraw();
 }
 
 void IdeWindow::clearBreakpoints() {
@@ -2221,14 +1215,16 @@ void IdeWindow::clearBreakpoints() {
     finalcut::FMessageBox::ButtonType::No, finalcut::FMessageBox::ButtonType::Reject);
   if (answer != finalcut::FMessageBox::ButtonType::Yes) return;
   gdb_.clearBreakpoints(); debug_state_dirty_ = true; saveDebugState();
-  breakpoint_signature_.clear(); refreshBreakpointsPanel(); editor_.redraw();
+  debug_ui_.invalidateBreakpoints(); refreshBreakpointsPanel(); editor_.redraw();
 }
 
-void IdeWindow::refreshOutline() {
-  if (auto response = lsp_.takeDocumentSymbols()) {
-    if (document_ && response->path == document_->path() && response->version == document_->version()) {
+void IdeWindow::refreshOutline(std::optional<LspDocumentSymbols> response) {
+  const auto active = document_ && isCppSource(document_->path())
+    ? std::optional<LspDocumentIdentity>{{document_->path(), document_->version()}}
+    : std::nullopt;
+  if (response) {
+    if (lsp_ui_.acceptOutline({response->path, response->version}, active)) {
       outline_.clear(); outline_positions_.clear();
-      outline_path_ = response->path; outline_version_ = response->version;
       const auto kindName = [](int kind) -> std::string_view {
         switch (kind) {
           case 2: return "module"; case 3: return "namespace"; case 5: return "class";
@@ -2246,34 +1242,24 @@ void IdeWindow::refreshOutline() {
       }
       if (outline_positions_.empty()) outline_.insert("No symbols in this document");
       outline_.redraw();
-    } else if (outline_requested_path_ == response->path && outline_requested_version_ == response->version) {
-      outline_requested_path_.clear(); outline_requested_version_ = -1;
     }
   }
-  if (!document_ || !isCppSource(document_->path())) {
-    if (!outline_path_.empty() || outline_positions_.size() != 0) {
-      outline_.clear(); outline_.insert("Open a C/C++ file for outline"); outline_.redraw();
-      outline_positions_.clear(); outline_path_.clear(); outline_version_ = -1;
-    }
-    outline_requested_path_.clear(); outline_requested_version_ = -1;
-    return;
+  const auto decision = lsp_ui_.updateOutline(active, lsp_.ready(), maintenance_ticks_);
+  if (decision == OutlineDecision::Clear) {
+    outline_.clear();
+    outline_.insert(active ? "Waiting for outline..." : "Open a C/C++ file for outline");
+    outline_positions_.clear();
+    outline_.redraw();
+  } else if (decision == OutlineDecision::Request && document_) {
+    outline_.clear(); outline_.insert("Loading outline..."); outline_positions_.clear(); outline_.redraw();
+    lsp_.requestDocumentSymbols(*document_);
   }
-  if (!lsp_.ready()) return;
-  if (outline_observed_path_ != document_->path() || outline_observed_version_ != document_->version()) {
-    outline_observed_path_ = document_->path(); outline_observed_version_ = document_->version();
-    outline_stable_tick_ = maintenance_ticks_;
-    return;
-  }
-  if (maintenance_ticks_ - outline_stable_tick_ < 5) return;
-  if (outline_requested_path_ == document_->path() && outline_requested_version_ == document_->version()) return;
-  outline_requested_path_ = document_->path(); outline_requested_version_ = document_->version();
-  outline_.clear(); outline_.insert("Loading outline..."); outline_positions_.clear(); outline_.redraw();
-  lsp_.requestDocumentSymbols(*document_);
 }
 
 void IdeWindow::openSelectedOutlineSymbol() {
   const auto selected = outline_.currentItem();
-  if (!document_ || document_->path() != outline_path_ || selected == 0 || selected > outline_positions_.size()) return;
+  if (!document_ || !lsp_ui_.renderedOutlineMatches({document_->path(), document_->version()})
+      || selected == 0 || selected > outline_positions_.size()) return;
   auto position = outline_positions_[selected - 1];
   position.column = document_->byteColumn(position.line, position.column);
   editor_.reveal(position); editor_.setFocus(); finalcut::FWidget::setFocusWidget(&editor_); updateStatus();
@@ -2285,7 +1271,7 @@ void IdeWindow::addWatch() {
   if (expression.empty()) return;
   if (!gdb_.addWatch(expression)) appendOutput("Watch already exists or is empty: " + expression + "\n");
   else { debug_state_dirty_ = true; saveDebugState(); }
-  debug_signature_.clear();
+  debug_ui_.invalidateDebug();
   refreshDebugPanel();
 }
 
@@ -2301,8 +1287,9 @@ void IdeWindow::editVariableValue() {
   if (!gdb_.stopped()) { appendOutput("Set variable unavailable: debugger is not stopped\n"); return; }
   std::string expression;
   const auto selected = debug_.currentItem();
-  if (selected > 0 && selected <= debug_variable_indices_.size() && debug_variable_indices_[selected - 1]) {
-    const auto variable = *debug_variable_indices_[selected - 1];
+  const auto* row = selected > 0 ? debug_ui_.debugRow(selected - 1) : nullptr;
+  if (row && row->variable_index) {
+    const auto variable = *row->variable_index;
     if (variable < gdb_.variables().size()) expression = gdb_.variables()[variable].expression;
   }
   if (expression.empty()) expression = prompt("Set variable value", "Expression:");
@@ -2342,13 +1329,14 @@ void IdeWindow::showMemory() {
 
 void IdeWindow::removeSelectedWatch() {
   const auto index = debug_.currentItem();
-  if (index == 0 || index > debug_watch_indices_.size() || !debug_watch_indices_[index - 1]) {
+  const auto* row = index > 0 ? debug_ui_.debugRow(index - 1) : nullptr;
+  if (!row || !row->watch_index) {
     appendOutput("Remove watch unavailable: select a watch row in the Debug panel\n");
     return;
   }
-  if (gdb_.removeWatch(*debug_watch_indices_[index - 1])) {
+  if (gdb_.removeWatch(*row->watch_index)) {
     debug_state_dirty_ = true; saveDebugState();
-    debug_signature_.clear();
+    debug_ui_.invalidateDebug();
     refreshDebugPanel();
   }
 }
@@ -2373,15 +1361,13 @@ void IdeWindow::loadDebugState() {
   }
   for (const auto& expression : session.watches) gdb_.addWatch(expression);
   gdb_.setRegistersEnabled(session.registers_enabled);
-  preferred_cmake_target_ = session.cmake_target;
-  preferred_cmake_configuration_ = session.cmake_configuration;
-  selected_cmake_preset_ = session.cmake_configure_preset;
-  selected_cmake_build_preset_ = session.cmake_build_preset;
+  cmake_session_.restoreSelection(session.cmake_target, session.cmake_configuration,
+    session.cmake_configure_preset, session.cmake_build_preset);
   sidebar_width_ = session.sidebar_width;
   lower_panel_height_ = session.lower_panel_height;
   layout();
   refreshCMakePresets(false);
-  debug_signature_.clear(); breakpoint_signature_.clear(); refreshBreakpointsPanel();
+  debug_ui_.invalidateDebug(); debug_ui_.invalidateBreakpoints(); refreshBreakpointsPanel();
 }
 
 void IdeWindow::saveDebugState() {
@@ -2394,10 +1380,10 @@ void IdeWindow::saveDebugState() {
     breakpoint.line, breakpoint.enabled, breakpoint.condition, breakpoint.hit_count, breakpoint.log_message});
   for (const auto& watch : gdb_.watches()) session.watches.push_back(watch.expression);
   session.registers_enabled = gdb_.registersEnabled();
-  session.cmake_target = preferred_cmake_target_;
-  session.cmake_configuration = preferred_cmake_configuration_;
-  session.cmake_configure_preset = selected_cmake_preset_;
-  session.cmake_build_preset = selected_cmake_build_preset_;
+  session.cmake_target = cmake_session_.preferredTarget();
+  session.cmake_configuration = cmake_session_.preferredConfiguration();
+  session.cmake_configure_preset = cmake_session_.configurePreset();
+  session.cmake_build_preset = cmake_session_.buildPreset();
   session.sidebar_width = sidebar_width_;
   session.lower_panel_height = lower_panel_height_;
   std::string error;
@@ -2410,31 +1396,29 @@ void IdeWindow::saveDebugState() {
 
 void IdeWindow::openSelectedFrame() {
   const auto index = debug_.currentItem();
-  if (index == 0 || index > debug_locations_.size()) return;
-  if (index <= debug_thread_ids_.size() && debug_thread_ids_[index - 1]) {
-    gdb_.selectThread(*debug_thread_ids_[index - 1]);
-    debug_signature_.clear();
+  const auto* row = index > 0 ? debug_ui_.debugRow(index - 1) : nullptr;
+  if (!row) return;
+  if (row->thread_id) {
+    gdb_.selectThread(*row->thread_id);
+    debug_ui_.invalidateDebug();
     return;
   }
-  if (index <= debug_variable_indices_.size() && debug_variable_indices_[index - 1]) {
-    if (gdb_.toggleVariable(*debug_variable_indices_[index - 1])) debug_signature_.clear();
+  if (row->variable_index) {
+    if (gdb_.toggleVariable(*row->variable_index)) debug_ui_.invalidateDebug();
     return;
   }
-  if (index <= debug_frame_levels_.size() && debug_frame_levels_[index - 1]) {
-    if (gdb_.selectFrame(*debug_frame_levels_[index - 1])) debug_signature_.clear();
+  if (row->frame_level) {
+    if (gdb_.selectFrame(*row->frame_level)) debug_ui_.invalidateDebug();
   }
-  if (!debug_locations_[index - 1]) return;
-  auto location = *debug_locations_[index - 1];
-  if (location.path.is_relative()) location.path = root_ / location.path;
-  location.path = std::filesystem::absolute(location.path).lexically_normal();
-  openFile(location.path);
-  if (document_ && document_->path() == location.path) editor_.reveal(location.position);
+  if (row->file.empty() || row->line == 0) return;
+  auto path = row->file.is_relative() ? root_ / row->file : row->file;
+  path = std::filesystem::absolute(path).lexically_normal();
+  openFile(path);
+  if (document_ && document_->path() == path) editor_.reveal({row->line - 1, 0});
 }
 
 void IdeWindow::activateDocument(std::size_t index) {
-  if (index >= documents_.size()) return;
-  active_document_ = index;
-  document_ = documents_[index].get();
+  if (!document_session_.activate(index)) return;
   editor_.setDocument(document_);
   lsp_.setActiveDocument(document_);
   editor_.setDiagnostics(&lsp_.diagnostics());
@@ -2451,8 +1435,8 @@ void IdeWindow::activateDocument(std::size_t index) {
 }
 
 void IdeWindow::newFile() {
-  documents_.push_back(std::make_unique<Document>());
-  activateDocument(documents_.size() - 1);
+  const auto created = document_session_.createUntitled();
+  activateDocument(created.index);
   refreshTabs();
 }
 
@@ -2469,46 +1453,39 @@ auto IdeWindow::closeAllDocuments() -> bool {
 void IdeWindow::unloadProject() {
   clearRecovery(recovery_file_);
   if (debug_state_dirty_ && !root_.empty()) saveDebugState();
-  lsp_.stop(); gdb_.stop(); build_process_.stop(); run_process_.stop(); terminal_.stop(); console_.setControlEnabled(false);
-  build_stage_ = BuildStage::Idle; build_operation_ = BuildOperation::None; build_progress_.reset();
+  lsp_.stop(); gdb_.stop(); build_session_.reset(); run_process_.stop(); terminal_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
-  root_.clear(); build_dir_.clear(); session_file_.clear(); recovery_file_.clear();
+  project_session_.close();
+  cmake_session_.reset();
   closed_documents_.clear();
   project_filter_.clear();
-  project_settings_ = {};
   applyShortcutAccelerators();
   editor_.setTheme("Dark", {});
-  cmake_targets_.clear(); cmake_presets_.clear(); cmake_build_presets_.clear(); selected_cmake_target_.reset();
-  selected_cmake_preset_.clear(); selected_cmake_build_preset_.clear(); preferred_cmake_target_.clear(); preferred_cmake_configuration_.clear();
-  build_diagnostics_.clear(); debug_signature_.clear(); debug_state_dirty_ = false; run_active_ = false;
+  debug_ui_.reset(); debug_state_dirty_ = false; run_active_ = false;
   compilation_database_.clear(); compilation_database_warnings_.clear();
-  lsp_ready_observed_ = false; debug_active_observed_ = false;
+  lsp_ui_.reset();
   refreshFiles(); refreshTabs(); refreshDebugPanel();
   setText("TUI IDE — No project"); updateStatus();
 }
 
 auto IdeWindow::loadProject(std::filesystem::path root, std::filesystem::path build_directory) -> bool {
-  std::string validation_error;
-  if (!validateProjectDirectory(root, validation_error)) {
-    appendOutput("Open Project error: " + validation_error + "\n");
+  ProjectSession next_project;
+  ProjectOpenResult open_result;
+  std::string open_error;
+  if (!next_project.open(std::move(root), std::move(build_directory), open_result, open_error)) {
+    appendOutput("Open Project error: " + open_error + "\n");
     return false;
   }
   unloadProject();
-  root_ = normalizePath(std::move(root));
-  std::string settings_error;
-  if (!loadProjectSettings(root_, project_settings_, settings_error)) {
-    appendOutput("Project settings: " + settings_error + "; defaults are used\n");
-    project_settings_ = defaultProjectSettings(root_);
-  }
+  project_session_ = std::move(next_project);
+  cmake_session_.reset(project_session_.buildDirectory());
+  if (open_result.used_default_settings)
+    appendOutput("Project settings: " + open_result.warning + "; defaults are used\n");
   applyShortcutAccelerators();
-  if (!build_directory.empty()) project_settings_.build_directory = normalizePath(build_directory);
   editor_.setIndentation(project_settings_.tab_width, project_settings_.use_spaces);
   editor_.setTheme(project_settings_.theme, project_settings_.colors);
-  build_dir_ = project_settings_.build_directory;
-  session_file_ = build_dir_ / ".tuiide-session.json";
-  recovery_file_ = build_dir_ / ".tuiide-recovery.json";
   setText("TUI IDE — C/C++ — " + root_.filename().string());
-  outline_requested_path_.clear(); outline_requested_version_ = -1;
+  lsp_ui_.reset();
   loadDebugState();
   refreshCompilationDatabase(true);
   restartLanguageServer();
@@ -2530,7 +1507,7 @@ void IdeWindow::closeProject() {
 
 void IdeWindow::projectSettings() {
   if (root_.empty()) { appendOutput("Project Settings unavailable: no project is open\n"); return; }
-  if (build_stage_ != BuildStage::Idle || run_process_.running() || terminal_.running() || gdb_.running()) {
+  if (build_session_.running() || run_process_.running() || terminal_.running() || gdb_.running()) {
     appendOutput("Project Settings unavailable while build, program, or debugger is running\n");
     return;
   }
@@ -2547,14 +1524,10 @@ void IdeWindow::projectSettings() {
     return;
   }
   if (debug_state_dirty_) saveDebugState();
-  project_settings_ = std::move(updated);
+  project_session_.applySettings(std::move(updated));
+  cmake_session_.reset(project_session_.buildDirectory());
   editor_.setIndentation(project_settings_.tab_width, project_settings_.use_spaces);
   editor_.setTheme(project_settings_.theme, project_settings_.colors);
-  build_dir_ = project_settings_.build_directory;
-  session_file_ = build_dir_ / ".tuiide-session.json";
-  recovery_file_ = build_dir_ / ".tuiide-recovery.json";
-  selected_cmake_preset_.clear(); selected_cmake_build_preset_.clear();
-  cmake_targets_.clear(); selected_cmake_target_.reset();
   refreshCompilationDatabase(true);
   restartLanguageServer();
   appendOutput("Project settings saved; build directory: " + build_dir_.string() + "\n");
@@ -2563,13 +1536,13 @@ void IdeWindow::projectSettings() {
 
 void IdeWindow::launchSettings() {
   if (root_.empty()) { appendOutput("Launch configuration unavailable: no project is open\n"); return; }
-  if (build_stage_ != BuildStage::Idle || run_process_.running() || terminal_.running() || gdb_.running()) {
+  if (build_session_.running() || run_process_.running() || terminal_.running() || gdb_.running()) {
     appendOutput("Launch configuration unavailable while build, program, or debugger is running\n");
     return;
   }
   refreshCMakeTargets();
   delTimer(timer_id_);
-  LaunchSettingsDialog dialog(root_, project_settings_.launch, cmake_targets_, this);
+  LaunchSettingsDialog dialog(root_, project_settings_.launch, cmake_session_.targets(), this);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted) return;
@@ -2752,8 +1725,7 @@ void IdeWindow::createProjectFile() {
     }
   }
   std::string preferred_target;
-  if (selected_cmake_target_ && *selected_cmake_target_ < cmake_targets_.size())
-    preferred_target = cmake_targets_[*selected_cmake_target_].name;
+  if (const auto* selected = cmake_session_.selectedTarget()) preferred_target = selected->name;
   ProjectTemplateResult result;
   std::string error;
   bool created{};
@@ -2898,7 +1870,7 @@ void IdeWindow::exitIde() {
   if (!close()) return;
   lsp_.stop();
   gdb_.stop();
-  build_process_.stop();
+  build_session_.reset();
   run_process_.stop();
   terminal_.stop();
   console_.setControlEnabled(false);
@@ -2916,16 +1888,10 @@ void IdeWindow::closeActiveDocument(bool remember) {
     }
   }
   if (isCppSource(document_->path())) lsp_.close(*document_);
-  if (remember && !document_->path().empty()) {
-    const auto path = document_->path();
-    std::erase_if(closed_documents_, [&path](const auto& closed) { return closed.path == path; });
-    closed_documents_.push_back({path, document_->cursor()});
-    if (closed_documents_.size() > 20) closed_documents_.erase(closed_documents_.begin());
-  }
-  documents_.erase(documents_.begin() + static_cast<std::ptrdiff_t>(active_document_));
+  document_session_.closeActive(remember);
   if (documents_.empty()) {
-    document_ = nullptr; active_document_ = 0; editor_.setDocument(nullptr); lsp_.setActiveDocument(nullptr);
-  } else activateDocument(std::min(active_document_, documents_.size() - 1));
+    editor_.setDocument(nullptr); lsp_.setActiveDocument(nullptr);
+  } else activateDocument(active_document_);
   refreshTabs(); updateStatus();
 }
 
@@ -2957,20 +1923,20 @@ void IdeWindow::closeOtherDocuments() {
 
 void IdeWindow::reopenClosedDocument() {
   if (closed_documents_.empty()) { appendOutput("Reopen Closed unavailable: history is empty\n"); return; }
-  const auto closed = closed_documents_.back();
-  closed_documents_.pop_back();
+  const auto closed = document_session_.takeLastClosed();
+  if (!closed) return;
   std::error_code error;
-  if (!std::filesystem::is_regular_file(closed.path, error)) {
-    appendOutput("Reopen Closed failed: file no longer exists: " + closed.path.string() + "\n");
+  if (!std::filesystem::is_regular_file(closed->path, error)) {
+    appendOutput("Reopen Closed failed: file no longer exists: " + closed->path.string() + "\n");
     updateStatus();
     return;
   }
-  openFile(closed.path);
-  if (document_ && document_->path() == closed.path) {
-    editor_.reveal(closed.cursor);
-    appendOutput("Reopened: " + closed.path.string() + "\n");
+  openFile(closed->path);
+  if (document_ && document_->path() == closed->path) {
+    editor_.reveal(closed->cursor);
+    appendOutput("Reopened: " + closed->path.string() + "\n");
   } else {
-    appendOutput("Reopen Closed failed: cannot open " + closed.path.string() + "\n");
+    appendOutput("Reopen Closed failed: cannot open " + closed->path.string() + "\n");
   }
 }
 
@@ -2985,27 +1951,12 @@ void IdeWindow::switchDocument(int direction) {
 }
 
 void IdeWindow::openFile(const std::filesystem::path& path) {
-  const auto absolute = normalizePath(path);
-  const auto forgetClosed = [this, &absolute] {
-    std::erase_if(closed_documents_, [&absolute](const auto& closed) { return closed.path == absolute; });
-  };
-  for (std::size_t i = 0; i < documents_.size(); ++i) {
-    if (documents_[i]->path() == absolute) { forgetClosed(); activateDocument(i); return; }
-  }
-  auto next = std::make_unique<Document>();
   std::string error;
-  if (!next->load(path, error)) { finalcut::FMessageBox::error(this, finalcut::FString(error)); return; }
-  forgetClosed();
-  document_ = next.get();
-  documents_.push_back(std::move(next));
-  active_document_ = documents_.size() - 1;
-  editor_.setDocument(document_);
-  if (isCppSource(document_->path())) lsp_.open(*document_);
-  lsp_.setActiveDocument(document_);
+  const auto opened = document_session_.open(path, error);
+  if (!opened) { finalcut::FMessageBox::error(this, finalcut::FString(error)); return; }
+  if (opened->newly_loaded && isCppSource(opened->document->path())) lsp_.open(*opened->document);
+  activateDocument(opened->index);
   refreshTabs();
-  editor_.setFocus();
-  finalcut::FWidget::setFocusWidget(&editor_);
-  updateStatus();
 }
 
 auto IdeWindow::save() -> bool {
@@ -3321,7 +2272,7 @@ void IdeWindow::showProblems() {
 
 void IdeWindow::refreshProblemsPanel() {
   std::string signature = problems_filter_;
-  for (const auto& diagnostic : build_diagnostics_) signature += diagnostic.path.string()
+  for (const auto& diagnostic : build_session_.diagnostics()) signature += diagnostic.path.string()
     + std::to_string(diagnostic.line) + std::to_string(diagnostic.column) + diagnostic.message;
   for (const auto& diagnostic : lsp_.diagnostics()) signature += diagnostic.path.string()
     + std::to_string(diagnostic.position.line) + std::to_string(diagnostic.position.column) + diagnostic.message;
@@ -3339,7 +2290,7 @@ void IdeWindow::refreshProblemsPanel() {
     std::ranges::transform(filter, filter.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return label.find(filter) != std::string::npos;
   };
-  for (const auto& diagnostic : build_diagnostics_) {
+  for (const auto& diagnostic : build_session_.diagnostics()) {
     const auto severity = diagnostic.severity == DiagnosticSeverity::Error ? "error" :
       (diagnostic.severity == DiagnosticSeverity::Warning ? "warning" : "note");
     auto label = std::string("[build ") + severity + "] " + relative_label(diagnostic.path) + ":"
@@ -3381,7 +2332,7 @@ void IdeWindow::clearLowerPanel() {
   switch (lower_tabs_.currentIndex()) {
     case 0: output_text_.clear(); output_.clear(); break;
     case 1:
-      build_diagnostics_.clear(); lsp_.clearDiagnostics(); problems_signature_.clear(); refreshProblemsPanel(); break;
+      build_session_.clearDiagnostics(); lsp_.clearDiagnostics(); problems_signature_.clear(); refreshProblemsPanel(); break;
     case 2: build_output_text_.clear(); build_output_.clear(); break;
     case 3: console_.clear(); break;
     default: break;
@@ -3530,38 +2481,38 @@ void IdeWindow::restoreRecovery() {
 
 void IdeWindow::build() {
   if (root_.empty()) { appendOutput("Build unavailable: no project is open\n"); return; }
-  if (build_stage_ != BuildStage::Idle) { appendOutput("Build unavailable: a CMake operation is already running\n"); return; }
+  if (build_session_.running()) { appendOutput("Build unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(true)) return;
-  build_operation_ = BuildOperation::Build;
-  if (std::filesystem::exists(build_dir_ / "CMakeCache.txt")) (void)startBuildStage(false);
+  build_session_.begin(BuildOperation::Build, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
+  if (build_session_.stage() == BuildStage::Build) (void)startBuildStage(false);
   else (void)startConfigureStage();
 }
 
 void IdeWindow::configure() {
   if (root_.empty()) { appendOutput("Configure unavailable: no project is open\n"); return; }
-  if (build_stage_ != BuildStage::Idle) { appendOutput("Configure unavailable: a CMake operation is already running\n"); return; }
+  if (build_session_.running()) { appendOutput("Configure unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(true)) return;
-  build_operation_ = BuildOperation::Configure;
+  build_session_.begin(BuildOperation::Configure, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
   (void)startConfigureStage();
 }
 
 void IdeWindow::rebuild() {
   if (root_.empty()) { appendOutput("Rebuild unavailable: no project is open\n"); return; }
-  if (build_stage_ != BuildStage::Idle) { appendOutput("Rebuild unavailable: a CMake operation is already running\n"); return; }
+  if (build_session_.running()) { appendOutput("Rebuild unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(true)) return;
-  build_operation_ = BuildOperation::Rebuild;
-  if (std::filesystem::exists(build_dir_ / "CMakeCache.txt")) (void)startBuildStage(true);
+  build_session_.begin(BuildOperation::Rebuild, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
+  if (build_session_.stage() == BuildStage::Clean) (void)startBuildStage(true);
   else (void)startConfigureStage();
 }
 
 void IdeWindow::clean() {
   if (root_.empty()) { appendOutput("Clean unavailable: no project is open\n"); return; }
-  if (build_stage_ != BuildStage::Idle) { appendOutput("Clean unavailable: a CMake operation is already running\n"); return; }
+  if (build_session_.running()) { appendOutput("Clean unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(false)) return;
-  build_operation_ = BuildOperation::Clean;
-  if (!std::filesystem::exists(build_dir_ / "CMakeCache.txt")) {
+  build_session_.begin(BuildOperation::Clean, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
+  if (!build_session_.running()) {
     appendOutput("Clean unavailable: configure the project first\n");
-    build_operation_ = BuildOperation::None;
+    build_session_.reset();
     return;
   }
   (void)startBuildStage(true);
@@ -3572,39 +2523,36 @@ auto IdeWindow::beginBuildOperation(bool save_documents) -> bool {
     appendOutput("CMake operation cancelled because not all documents were saved\n"); return false;
   }
   if (!refreshCMakePresets()) return false;
-  build_process_.stop();
-  build_output_text_.clear(); build_output_.clear(); build_partial_.clear(); build_diagnostics_.clear();
+  build_session_.prepare();
+  build_output_text_.clear(); build_output_.clear();
   problems_signature_.clear(); refreshProblemsPanel(); diagnostic_index_ = 0;
   lower_tabs_.setCurrentIndex(2);
-  build_started_ = std::chrono::steady_clock::now(); build_progress_.reset();
   return true;
+}
+
+auto IdeWindow::startPreLaunchBuild(BuildContinuation continuation) -> bool {
+  if (!beginBuildOperation(false)) return false;
+  build_session_.begin(BuildOperation::Build,
+    std::filesystem::exists(build_dir_ / "CMakeCache.txt"), continuation);
+  return build_session_.stage() == BuildStage::Build ? startBuildStage(false) : startConfigureStage();
 }
 
 auto IdeWindow::startConfigureStage() -> bool {
   std::string query_error;
   if (!createCMakeFileApiQuery(build_dir_, query_error)) appendOutput("CMake model: " + query_error + "\n");
-  build_stage_ = BuildStage::Configure;
+  build_session_.enterStage(BuildStage::Configure);
   showNotification("CMake configure started", NotificationKind::Information);
-  build_stage_started_ = std::chrono::steady_clock::now(); build_progress_.reset();
-  std::vector<std::string> arguments;
-  if (selected_cmake_preset_.empty()) {
-    appendBuildOutput("$ cmake -S " + root_.string() + " -B " + build_dir_.string() + " [project settings]\n");
-    arguments = {"cmake", "-S", root_.string(), "-B", build_dir_.string()};
-  } else {
-    const auto preset = std::find_if(cmake_presets_.begin(), cmake_presets_.end(), [this](const auto& item) {
-      return item.name == selected_cmake_preset_;
-    });
-    const auto explicit_binary = preset != cmake_presets_.end() && preset->binary_directory.empty();
-    appendBuildOutput("$ cmake --preset " + selected_cmake_preset_ + " -S " + root_.string()
-      + (explicit_binary ? " -B " + build_dir_.string() : std::string{}) + "\n");
-    arguments = {"cmake", "--preset", selected_cmake_preset_, "-S", root_.string()};
-    if (explicit_binary) arguments.insert(arguments.end(), {"-B", build_dir_.string()});
+  std::string command_error;
+  auto command = BuildCommandService::configure(root_, build_dir_, project_settings_,
+    cmake_session_.configurePreset(), cmake_session_.configurePresets(), command_error);
+  if (!command) {
+    appendOutput(command_error + "\n");
+    finishBuildOperation(2, "Configure");
+    return false;
   }
-  appendCMakeSettings(arguments, project_settings_);
-  arguments.push_back("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON");
-  if (selected_cmake_preset_.empty() && project_settings_.build_type.empty())
-    arguments.push_back("-DCMAKE_BUILD_TYPE=Debug");
-  if (!build_process_.start(std::move(arguments), true, {}, project_settings_.environment)) {
+  appendBuildOutput(command->display + "\n");
+  if (!build_session_.start(std::move(command->arguments),
+      command->working_directory, project_settings_.environment)) {
     appendOutput("Failed to start CMake\n");
     finishBuildOperation(127, "Configure");
     return false;
@@ -3614,41 +2562,20 @@ auto IdeWindow::startConfigureStage() -> bool {
 }
 
 auto IdeWindow::startBuildStage(bool clean_stage) -> bool {
-  build_stage_ = clean_stage ? BuildStage::Clean : BuildStage::Build;
+  build_session_.enterStage(clean_stage ? BuildStage::Clean : BuildStage::Build);
   showNotification(clean_stage ? "CMake clean started" : "Build started", NotificationKind::Information);
-  build_stage_started_ = std::chrono::steady_clock::now(); build_progress_.reset();
-  const auto jobs = std::to_string(project_settings_.build_jobs);
-  std::vector<std::string> arguments;
-  std::string command_text;
-  if (!selected_cmake_build_preset_.empty()) {
-    arguments = {"cmake", "--build", "--preset", selected_cmake_build_preset_, "--parallel", jobs};
-    command_text = "$ cmake --build --preset " + selected_cmake_build_preset_ + " --parallel " + jobs;
-  } else {
-    arguments = {"cmake", "--build", build_dir_.string(), "--parallel", jobs};
-    command_text = "$ cmake --build " + build_dir_.string() + " --parallel " + jobs;
-  }
+  const auto jobs = std::to_string(std::max(1U, project_settings_.build_jobs));
   const CMakeTarget* build_target{};
-  if (!clean_stage && pending_launch_ != PendingLaunch::None && !project_settings_.launch.target.empty()) {
-    const auto configured = std::find_if(cmake_targets_.begin(), cmake_targets_.end(), [this](const auto& item) {
-      return item.name == project_settings_.launch.target;
-    });
-    if (configured != cmake_targets_.end()) build_target = &*configured;
-  } else if (!clean_stage && selected_cmake_target_ && *selected_cmake_target_ < cmake_targets_.size()) {
-    build_target = &cmake_targets_[*selected_cmake_target_];
-  }
-  if (clean_stage) {
-    arguments.insert(arguments.end(), {"--target", "clean"}); command_text += " --target clean";
-  } else if (build_target) {
-    arguments.insert(arguments.end(), {"--target", build_target->name}); command_text += " --target " + build_target->name;
-    if (!build_target->configuration.empty()) {
-      arguments.insert(arguments.end(), {"--config", build_target->configuration});
-      command_text += " --config " + build_target->configuration;
-    }
-  }
+  if (!clean_stage && build_session_.continuation() != BuildContinuation::None
+      && !project_settings_.launch.target.empty())
+    build_target = cmake_session_.targetNamed(project_settings_.launch.target);
+  else if (!clean_stage) build_target = cmake_session_.selectedTarget();
+  auto command = BuildCommandService::build(root_, build_dir_, project_settings_.build_jobs,
+    cmake_session_.buildPreset(), build_target, clean_stage);
   appendBuildOutput(std::string(clean_stage ? "Clean" : "Build") + " stage: " + jobs + " parallel jobs\n");
-  appendBuildOutput(command_text + "\n");
-  if (!build_process_.start(std::move(arguments), true,
-      selected_cmake_build_preset_.empty() ? std::filesystem::path{} : root_, project_settings_.environment)) {
+  appendBuildOutput(command.display + "\n");
+  if (!build_session_.start(std::move(command.arguments),
+      command.working_directory, project_settings_.environment)) {
     appendOutput(std::string("Failed to start ") + (clean_stage ? "clean" : "build") + "\n");
     finishBuildOperation(127, clean_stage ? "Clean" : "Build");
     return false;
@@ -3658,28 +2585,19 @@ auto IdeWindow::startBuildStage(bool clean_stage) -> bool {
 }
 
 void IdeWindow::finishBuildOperation(int exit_code, std::string_view failed_stage) {
-  if (!build_partial_.empty()) {
-    if (auto diagnostic = parseCompilerDiagnostic(build_partial_, root_)) build_diagnostics_.push_back(std::move(*diagnostic));
-    build_partial_.clear();
-  }
-  const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_started_).count();
-  const auto operation = build_operation_ == BuildOperation::Configure ? "Configure"
-    : build_operation_ == BuildOperation::Build ? "Build"
-    : build_operation_ == BuildOperation::Rebuild ? "Rebuild"
-    : build_operation_ == BuildOperation::Clean ? "Clean" : "CMake operation";
+  const auto result = build_session_.finish(root_);
+  if (result.diagnostics_added != 0) problems_signature_.clear();
   if (exit_code != 0 && !failed_stage.empty()) appendOutput(std::string(failed_stage) + " failed\n");
   std::ostringstream summary;
   summary.setf(std::ios::fixed); summary.precision(1);
-  summary << operation << " finished with exit code " << exit_code << " after " << elapsed << " s\n";
+  summary << result.operation << " finished with exit code " << exit_code
+    << " after " << result.elapsed << " s\n";
   appendBuildOutput(summary.str()); appendOutput(summary.str());
-  showNotification(std::string(operation) + (exit_code == 0 ? " completed successfully" : " failed (exit "
+  showNotification(result.operation + (exit_code == 0 ? " completed successfully" : " failed (exit "
       + std::to_string(exit_code) + ")"), exit_code == 0 ? NotificationKind::Success : NotificationKind::Error,
       std::chrono::milliseconds{6000});
-  const auto pending = pending_launch_;
-  pending_launch_ = PendingLaunch::None;
-  build_stage_ = BuildStage::Idle; build_operation_ = BuildOperation::None; build_progress_.reset();
-  if (exit_code == 0 && pending != PendingLaunch::None) {
-    deferred_command_ = pending == PendingLaunch::Run
+  if (exit_code == 0 && result.continuation != BuildContinuation::None) {
+    deferred_command_ = result.continuation == BuildContinuation::Run
       ? std::function<void()>{[this] { startRun(); }}
       : std::function<void()>{[this] { startDebug(); }};
   }
@@ -3687,89 +2605,46 @@ void IdeWindow::finishBuildOperation(int exit_code, std::string_view failed_stag
 }
 
 void IdeWindow::cancelBuild() {
-  if (build_stage_ == BuildStage::Idle) { appendOutput("Cancel Build unavailable: no CMake operation is running\n"); return; }
-  const auto stage = build_stage_ == BuildStage::Configure ? "Configure"
-    : build_stage_ == BuildStage::Clean ? "Clean" : "Build";
-  build_process_.stop();
-  for (auto& chunk : build_process_.drain()) processBuildOutput(chunk);
-  const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_started_).count();
+  if (!build_session_.running()) { appendOutput("Cancel Build unavailable: no CMake operation is running\n"); return; }
+  const auto result = build_session_.cancel(root_);
+  for (const auto& chunk : result.output) appendBuildOutput(chunk);
+  if (result.diagnostics_added != 0) problems_signature_.clear();
   std::ostringstream message; message.setf(std::ios::fixed); message.precision(1);
-  message << "CMake operation cancelled during " << stage << " after " << elapsed << " s\n";
+  message << "CMake operation cancelled during " << result.stage
+    << " after " << result.elapsed << " s\n";
   appendBuildOutput(message.str()); appendOutput(message.str());
   showNotification("CMake operation cancelled", NotificationKind::Warning);
-  build_stage_ = BuildStage::Idle; build_operation_ = BuildOperation::None; build_progress_.reset();
-  pending_launch_ = PendingLaunch::None;
   updateStatus();
 }
 
 auto IdeWindow::refreshCMakePresets(bool report_error) -> bool {
-  std::string error;
-  cmake_presets_ = loadCMakeConfigurePresets(root_, error);
-  if (!error.empty() && report_error) appendOutput("CMake presets: " + error + "\n");
-  build_dir_ = session_file_.parent_path();
-  if (!error.empty()) return selected_cmake_preset_.empty();
-  std::string build_error;
-  cmake_build_presets_ = loadCMakeBuildPresets(root_, build_error);
-  if (!build_error.empty() && report_error) appendOutput("CMake build presets: " + build_error + "\n");
-  if (!build_error.empty() && !selected_cmake_build_preset_.empty()) return false;
-  if (selected_cmake_preset_.empty()) {
-    if (!selected_cmake_build_preset_.empty() && report_error)
-      appendOutput("A CMake build preset requires a configure preset\n");
-    return selected_cmake_build_preset_.empty();
-  }
-  const auto preset = std::find_if(cmake_presets_.begin(), cmake_presets_.end(), [this](const auto& item) {
-    return item.name == selected_cmake_preset_;
-  });
-  if (preset == cmake_presets_.end()) {
-    if (report_error) appendOutput("CMake preset no longer exists: " + selected_cmake_preset_ + "\n");
-    return false;
-  }
-  if (!preset->binary_directory.empty()) build_dir_ = preset->binary_directory;
-  if (!selected_cmake_build_preset_.empty()) {
-    const auto build_preset = std::find_if(cmake_build_presets_.begin(), cmake_build_presets_.end(), [this](const auto& item) {
-      return item.name == selected_cmake_build_preset_;
-    });
-    if (build_preset == cmake_build_presets_.end()) {
-      if (report_error) appendOutput("CMake build preset no longer exists: " + selected_cmake_build_preset_ + "\n");
-      return false;
-    }
-    if (build_preset->configure_preset != selected_cmake_preset_) {
-      if (report_error) appendOutput("Build preset " + build_preset->name + " requires configure preset "
-        + build_preset->configure_preset + "\n");
-      return false;
-    }
-  }
-  return true;
+  const auto result = cmake_session_.refreshPresets(root_, project_session_.buildDirectory());
+  if (report_error && !result.configure_error.empty())
+    appendOutput("CMake presets: " + result.configure_error + "\n");
+  if (report_error && !result.build_error.empty())
+    appendOutput("CMake build presets: " + result.build_error + "\n");
+  if (report_error && !result.validation_error.empty())
+    appendOutput(result.validation_error + "\n");
+  return result.valid;
 }
 
 void IdeWindow::selectCMakePreset() {
   if (!refreshCMakePresets()) return;
   std::vector<std::string> labels{"No preset -> " + session_file_.parent_path().string()};
-  for (const auto& preset : cmake_presets_) {
+  for (const auto& preset : cmake_session_.configurePresets()) {
     auto label = preset.display_name + " [" + preset.name + "]";
     if (!preset.binary_directory.empty()) label += " -> " + preset.binary_directory.string();
     labels.push_back(std::move(label));
   }
   const auto selection = choose("CMake configure preset", labels);
   if (selection == 0 || selection > labels.size()) return;
-  selected_cmake_preset_ = selection == 1 ? std::string{} : cmake_presets_[selection - 2].name;
-  if (selected_cmake_preset_.empty()) selected_cmake_build_preset_.clear();
-  else if (!selected_cmake_build_preset_.empty()) {
-    const auto build_preset = std::find_if(cmake_build_presets_.begin(), cmake_build_presets_.end(), [this](const auto& item) {
-      return item.name == selected_cmake_build_preset_;
-    });
-    if (build_preset == cmake_build_presets_.end() || build_preset->configure_preset != selected_cmake_preset_)
-      selected_cmake_build_preset_.clear();
-  }
-  build_dir_ = selection == 1 || cmake_presets_[selection - 2].binary_directory.empty()
-    ? session_file_.parent_path() : cmake_presets_[selection - 2].binary_directory;
-  cmake_targets_.clear();
-  selected_cmake_target_.reset();
-  preferred_cmake_target_.clear();
-  preferred_cmake_configuration_.clear();
+  const auto name = selection == 1 ? std::string{}
+    : cmake_session_.configurePresets()[selection - 2].name;
+  if (!cmake_session_.selectConfigurePreset(name, project_session_.buildDirectory())) return;
   debug_state_dirty_ = true;
   saveDebugState();
-  appendOutput("Selected configure preset: " + (selected_cmake_preset_.empty() ? std::string("none") : selected_cmake_preset_)
+  appendOutput("Selected configure preset: " + (cmake_session_.configurePreset().empty()
+      ? std::string("none") : cmake_session_.configurePreset())
     + " (build directory " + build_dir_.string() + ")\n");
   refreshCompilationDatabase(true);
   restartLanguageServer();
@@ -3781,11 +2656,10 @@ void IdeWindow::selectCMakeBuildPreset() {
   if (!refreshCMakePresets()) return;
   std::vector<const CMakeBuildPreset*> available;
   std::vector<std::string> labels{"No build preset"};
-  for (const auto& preset : cmake_build_presets_) {
-    const auto configure = std::find_if(cmake_presets_.begin(), cmake_presets_.end(), [&](const auto& item) {
-      return item.name == preset.configure_preset;
-    });
-    if (configure == cmake_presets_.end()) continue;
+  for (const auto& preset : cmake_session_.buildPresets()) {
+    const auto configure = std::ranges::find(cmake_session_.configurePresets(),
+      preset.configure_preset, &CMakeConfigurePreset::name);
+    if (configure == cmake_session_.configurePresets().end()) continue;
     available.push_back(&preset);
     auto label = preset.display_name + " [" + preset.name + "] / configure: " + preset.configure_preset;
     if (!preset.configuration.empty()) label += " / " + preset.configuration;
@@ -3797,21 +2671,13 @@ void IdeWindow::selectCMakeBuildPreset() {
   }
   const auto selection = choose("CMake build preset", labels);
   if (selection == 0 || selection > labels.size()) return;
-  if (selection == 1) selected_cmake_build_preset_.clear();
-  else {
-    const auto& preset = *available[selection - 2];
-    selected_cmake_build_preset_ = preset.name;
-    selected_cmake_preset_ = preset.configure_preset;
-    refreshCMakePresets();
-    cmake_targets_.clear();
-    selected_cmake_target_.reset();
-    preferred_cmake_target_.clear();
-    preferred_cmake_configuration_.clear();
-    refreshFiles();
-  }
+  const auto name = selection == 1 ? std::string{} : available[selection - 2]->name;
+  if (!cmake_session_.selectBuildPreset(name, project_session_.buildDirectory())) return;
+  if (selection != 1) refreshFiles();
   debug_state_dirty_ = true;
   saveDebugState();
-  appendOutput("Selected build preset: " + (selected_cmake_build_preset_.empty() ? std::string("none") : selected_cmake_build_preset_)
+  appendOutput("Selected build preset: " + (cmake_session_.buildPreset().empty()
+      ? std::string("none") : cmake_session_.buildPreset())
     + "\n");
   refreshCompilationDatabase(true);
   restartLanguageServer();
@@ -3819,71 +2685,35 @@ void IdeWindow::selectCMakeBuildPreset() {
 }
 
 void IdeWindow::refreshCMakeTargets() {
-  std::string previous_name;
-  std::string previous_configuration;
-  if (selected_cmake_target_ && *selected_cmake_target_ < cmake_targets_.size()) {
-    previous_name = cmake_targets_[*selected_cmake_target_].name;
-    previous_configuration = cmake_targets_[*selected_cmake_target_].configuration;
-  } else { previous_name = preferred_cmake_target_; previous_configuration = preferred_cmake_configuration_; }
   std::string error;
   auto targets = loadCMakeExecutableTargets(build_dir_, error);
-  if (targets.empty()) {
-    cmake_targets_.clear(); selected_cmake_target_.reset();
-    if (!error.empty()) appendOutput("CMake model: " + error + "\n");
-    return;
-  }
-  cmake_targets_ = std::move(targets);
-  selected_cmake_target_ = 0;
-  for (std::size_t i = 0; i < cmake_targets_.size(); ++i) {
-    if (cmake_targets_[i].name == previous_name && cmake_targets_[i].configuration == previous_configuration) {
-      selected_cmake_target_ = i;
-      break;
-    }
-  }
+  cmake_session_.replaceTargets(std::move(targets));
+  if (cmake_session_.targets().empty() && !error.empty()) appendOutput("CMake model: " + error + "\n");
 }
 
 void IdeWindow::selectCMakeTarget() {
   refreshCMakeTargets();
-  if (cmake_targets_.empty()) { appendOutput("No executable CMake targets; build the project first (F7)\n"); return; }
+  if (cmake_session_.targets().empty()) { appendOutput("No executable CMake targets; build the project first (F7)\n"); return; }
   std::vector<std::string> labels;
-  labels.reserve(cmake_targets_.size());
-  for (const auto& target : cmake_targets_) {
+  labels.reserve(cmake_session_.targets().size());
+  for (const auto& target : cmake_session_.targets()) {
     labels.push_back((target.configuration.empty() ? std::string{} : target.configuration + " / ")
       + target.name + " -> " + target.artifact.string());
   }
   const auto selection = choose("CMake executable target", labels);
-  if (selection == 0 || selection > cmake_targets_.size()) return;
-  selected_cmake_target_ = selection - 1;
-  preferred_cmake_target_ = cmake_targets_[*selected_cmake_target_].name;
-  preferred_cmake_configuration_ = cmake_targets_[*selected_cmake_target_].configuration;
+  if (selection == 0 || selection > cmake_session_.targets().size()) return;
+  if (!cmake_session_.selectTarget(selection - 1)) return;
   debug_state_dirty_ = true; saveDebugState();
-  appendOutput("Selected target: " + labels[*selected_cmake_target_] + "\n");
+  appendOutput("Selected target: " + labels[selection - 1] + "\n");
   updateStatus();
-}
-
-void IdeWindow::processBuildOutput(std::string_view chunk) {
-  appendBuildOutput(chunk);
-  build_partial_.append(chunk);
-  std::size_t newline{};
-  while ((newline = build_partial_.find('\n')) != std::string::npos) {
-    const auto line = build_partial_.substr(0, newline);
-    build_partial_.erase(0, newline + 1);
-    if (const auto progress = parseBuildProgress(line)) build_progress_ = progress;
-    if (auto diagnostic = parseCompilerDiagnostic(line, root_)) {
-      build_diagnostics_.push_back(std::move(*diagnostic)); problems_signature_.clear();
-    }
-  }
 }
 
 void IdeWindow::run() {
   if (root_.empty()) { appendOutput("Run unavailable: no project is open\n"); return; }
-  if (build_stage_ != BuildStage::Idle) { appendOutput("Run unavailable: a CMake operation is in progress\n"); return; }
+  if (build_session_.running()) { appendOutput("Run unavailable: a CMake operation is in progress\n"); return; }
   if (!saveAllDocuments()) { appendOutput("Run cancelled because not all documents were saved\n"); return; }
   if (project_settings_.launch.pre_launch_build) {
-    if (!beginBuildOperation(false)) return;
-    pending_launch_ = PendingLaunch::Run; build_operation_ = BuildOperation::Build;
-    if (std::filesystem::exists(build_dir_ / "CMakeCache.txt")) (void)startBuildStage(false);
-    else (void)startConfigureStage();
+    (void)startPreLaunchBuild(BuildContinuation::Run);
     return;
   }
   startRun();
@@ -3922,14 +2752,11 @@ void IdeWindow::stopRun() {
 
 void IdeWindow::debugRun() {
   if (root_.empty()) { appendOutput("Debug unavailable: no project is open\n"); return; }
-  if (build_stage_ != BuildStage::Idle) { appendOutput("Debug unavailable: a CMake operation is in progress\n"); return; }
+  if (build_session_.running()) { appendOutput("Debug unavailable: a CMake operation is in progress\n"); return; }
   if (!gdb_.running()) {
     if (!saveAllDocuments()) { appendOutput("Debug cancelled because not all documents were saved\n"); return; }
     if (project_settings_.launch.pre_launch_build) {
-      if (!beginBuildOperation(false)) return;
-      pending_launch_ = PendingLaunch::Debug; build_operation_ = BuildOperation::Build;
-      if (std::filesystem::exists(build_dir_ / "CMakeCache.txt")) (void)startBuildStage(false);
-      else (void)startConfigureStage();
+      (void)startPreLaunchBuild(BuildContinuation::Debug);
       return;
     }
     startDebug();
@@ -3939,10 +2766,7 @@ void IdeWindow::debugRun() {
       gdb_.stop();
       terminal_.stop();
       console_.setControlEnabled(false);
-      if (!beginBuildOperation(false)) return;
-      pending_launch_ = PendingLaunch::Debug; build_operation_ = BuildOperation::Build;
-      if (std::filesystem::exists(build_dir_ / "CMakeCache.txt")) (void)startBuildStage(false);
-      else (void)startConfigureStage();
+      (void)startPreLaunchBuild(BuildContinuation::Debug);
       return;
     }
     appendOutput("GDB: starting program again\n");
@@ -3979,7 +2803,7 @@ void IdeWindow::debugStop() {
   gdb_.stop();
   terminal_.stop();
   console_.setControlEnabled(false);
-  debug_signature_.clear();
+  debug_ui_.invalidateDebug();
   refreshDebugPanel(); updateStatus();
   appendOutput("Debug session stopped\n");
   showNotification("Debug session stopped", NotificationKind::Warning);
@@ -3987,15 +2811,12 @@ void IdeWindow::debugStop() {
 
 void IdeWindow::debugRestart() {
   if (root_.empty()) { appendOutput("Debug Restart unavailable: no project is open\n"); return; }
-  if (build_stage_ != BuildStage::Idle) { appendOutput("Debug Restart unavailable: a CMake operation is in progress\n"); return; }
+  if (build_session_.running()) { appendOutput("Debug Restart unavailable: a CMake operation is in progress\n"); return; }
   if (!gdb_.running()) { appendOutput("Debug Restart unavailable: debugger is not started\n"); return; }
   if (!saveAllDocuments()) { appendOutput("Debug Restart cancelled because not all documents were saved\n"); return; }
   if (project_settings_.launch.pre_launch_build) {
-    gdb_.stop(); terminal_.stop(); console_.setControlEnabled(false); debug_signature_.clear(); refreshDebugPanel();
-    if (!beginBuildOperation(false)) return;
-    pending_launch_ = PendingLaunch::Debug; build_operation_ = BuildOperation::Build;
-    if (std::filesystem::exists(build_dir_ / "CMakeCache.txt")) (void)startBuildStage(false);
-    else (void)startConfigureStage();
+    gdb_.stop(); terminal_.stop(); console_.setControlEnabled(false); debug_ui_.invalidateDebug(); refreshDebugPanel();
+    (void)startPreLaunchBuild(BuildContinuation::Debug);
     return;
   }
   LaunchCommand launch;
@@ -4003,7 +2824,7 @@ void IdeWindow::debugRestart() {
   if (!launchCommand(launch, error)) { appendOutput("Debug Restart unavailable: " + error + "\n"); return; }
   gdb_.stop();
   terminal_.stop(); console_.setControlEnabled(false);
-  debug_signature_.clear(); refreshDebugPanel();
+  debug_ui_.invalidateDebug(); refreshDebugPanel();
   auto environment = project_settings_.environment;
   for (const auto& [name, value] : launch.environment) environment[name] = value;
   if (!terminal_.openSession(console_.columns(), console_.rows())) {
@@ -4092,8 +2913,7 @@ void IdeWindow::refreshCompilationDatabase(bool report) {
 void IdeWindow::restartLanguageServer() {
   if (root_.empty()) return;
   lsp_.stop();
-  outline_requested_path_.clear(); outline_requested_version_ = -1;
-  lsp_ready_observed_ = false;
+  lsp_ui_.reset();
   if (!lsp_.start(root_, project_settings_.clangd_arguments, project_settings_.environment, build_dir_)) {
     appendOutput("clangd unavailable: failed to start clangd\n");
     return;
@@ -4120,7 +2940,7 @@ void IdeWindow::updateMenuState() {
     .can_undo = document_ && document_->canUndo(),
     .can_redo = document_ && document_->canRedo(),
     .lsp_ready = lsp_.ready(),
-    .build_running = build_stage_ != BuildStage::Idle,
+    .build_running = build_session_.running(),
     .run_running = run_active_,
     .gdb_running = gdb_.running(),
     .gdb_active = gdb_.active(),
@@ -4246,20 +3066,22 @@ void IdeWindow::updateStatus() {
            : (compilation_database_.contains(document_->path()) ? "entry" : "fallback")))
        << " | gdb: " << (gdb_.exited() ? "exited" : (gdb_.running() ? (gdb_.stopped() ? "stopped" : "running") : "off"))
        << " | cmake: ";
-  if (build_stage_ == BuildStage::Idle) text << "idle";
+  if (!build_session_.running()) text << "idle";
   else {
-    text << (build_stage_ == BuildStage::Configure ? "configure" : build_stage_ == BuildStage::Clean ? "clean" : "build");
-    if (build_progress_) text << ' ' << *build_progress_ << '%';
-    text << ' ' << std::chrono::duration_cast<std::chrono::seconds>(
-      std::chrono::steady_clock::now() - build_stage_started_).count() << 's';
+    text << (build_session_.stage() == BuildStage::Configure ? "configure"
+      : build_session_.stage() == BuildStage::Clean ? "clean" : "build");
+    if (const auto progress = build_session_.progress()) text << ' ' << *progress << '%';
+    text << ' ' << static_cast<unsigned>(build_session_.stageElapsed()) << 's';
   }
+  const auto* selected_target = cmake_session_.selectedTarget();
   text
-       << " | preset: " << (selected_cmake_preset_.empty() ? "none" : selected_cmake_preset_)
-       << "/" << (selected_cmake_build_preset_.empty() ? "default" : selected_cmake_build_preset_)
+       << " | preset: " << (cmake_session_.configurePreset().empty()
+         ? "none" : cmake_session_.configurePreset())
+       << "/" << (cmake_session_.buildPreset().empty()
+         ? "default" : cmake_session_.buildPreset())
        << " | target: " << (!project_settings_.launch.executable.empty()
          ? "launch:" + project_settings_.launch.executable.filename().string()
-         : (selected_cmake_target_ && *selected_cmake_target_ < cmake_targets_.size()
-           ? cmake_targets_[*selected_cmake_target_].name : "unselected"))
+         : (selected_target ? selected_target->name : "unselected"))
        << " | F7 Build  F6 Run  F5 Debug  F9 Break  Ctrl+Space Complete";
   status_.setText(finalcut::FString(text.str())); status_.redraw();
 }
@@ -4366,17 +3188,17 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       return true;
     case finalcut::FKey::Meta_p:
       if (root_.empty()) appendOutput("Configure preset unavailable: no project is open\n");
-      else if (build_stage_ != BuildStage::Idle) appendOutput("Configure preset unavailable: a build is in progress\n");
+      else if (build_session_.running()) appendOutput("Configure preset unavailable: a build is in progress\n");
       else deferred_command_ = [this] { selectCMakePreset(); };
       return true;
     case finalcut::FKey::Meta_b:
       if (root_.empty()) appendOutput("Build preset unavailable: no project is open\n");
-      else if (build_stage_ != BuildStage::Idle) appendOutput("Build preset unavailable: a build is in progress\n");
+      else if (build_session_.running()) appendOutput("Build preset unavailable: a build is in progress\n");
       else deferred_command_ = [this] { selectCMakeBuildPreset(); };
       return true;
     case finalcut::FKey::Meta_t:
       if (root_.empty()) appendOutput("Target selection unavailable: no project is open\n");
-      else if (build_stage_ != BuildStage::Idle) appendOutput("Target selection unavailable: a build is in progress\n");
+      else if (build_session_.running()) appendOutput("Target selection unavailable: a build is in progress\n");
       else deferred_command_ = [this] { selectCMakeTarget(); };
       return true;
     case finalcut::FKey::Meta_e:
@@ -4388,7 +3210,7 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       gdb_.setRegistersEnabled(!gdb_.registersEnabled());
       debug_state_dirty_ = true; saveDebugState();
       appendOutput(std::string("Register view ") + (gdb_.registersEnabled() ? "enabled\n" : "disabled\n"));
-      debug_signature_.clear(); refreshDebugPanel();
+      debug_ui_.invalidateDebug(); refreshDebugPanel();
       return true;
     case finalcut::FKey::Del_char:
       if (breakpoints_.hasFocus()) { removeSelectedBreakpoint(); return true; }
@@ -4416,16 +3238,16 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
     case finalcut::FKey::F7: build(); return true;
     case finalcut::FKey::F8: {
       const auto& diagnostics = lsp_.diagnostics();
-      const auto count = build_diagnostics_.size() + diagnostics.size();
+      const auto count = build_session_.diagnostics().size() + diagnostics.size();
       if (count == 0) { appendOutput("No build or clangd diagnostics\n"); return true; }
       diagnostic_index_ %= count;
-      if (diagnostic_index_ < build_diagnostics_.size()) {
-        const auto& diagnostic = build_diagnostics_[diagnostic_index_];
+      if (diagnostic_index_ < build_session_.diagnostics().size()) {
+        const auto& diagnostic = build_session_.diagnostics()[diagnostic_index_];
         openFile(diagnostic.path);
         if (document_ && document_->path() == diagnostic.path) editor_.reveal({diagnostic.line, diagnostic.column});
         appendOutput("Build diagnostic: " + diagnostic.message + "\n");
       } else {
-        const auto& diagnostic = diagnostics[diagnostic_index_ - build_diagnostics_.size()];
+        const auto& diagnostic = diagnostics[diagnostic_index_ - build_session_.diagnostics().size()];
         if (!document_ || diagnostic.path != document_->path()) openFile(diagnostic.path);
         if (document_ && document_->path() == diagnostic.path) {
           auto position = diagnostic.position;
@@ -4446,7 +3268,7 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
         debug_state_dirty_ = true; saveDebugState();
         appendOutput(std::string(enabled ? "Breakpoint set: " : "Breakpoint removed: ")
           + document_->path().string() + ":" + std::to_string(document_->cursor().line + 1) + "\n");
-        breakpoint_signature_.clear(); refreshBreakpointsPanel(); editor_.redraw();
+        debug_ui_.invalidateBreakpoints(); refreshBreakpointsPanel(); editor_.redraw();
       }
       return true;
     case finalcut::FKey::F17:
@@ -4482,19 +3304,25 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
   if (maintenance_ticks_ % 20 == 0) checkExternalChanges();
   if (maintenance_ticks_ % 50 == 0) autosaveRecovery();
   lsp_.poll();
-  if (!lsp_ready_observed_ && lsp_.ready())
+  const auto lsp_changes = lsp_ui_.observe(lsp_.ready(), lsp_.diagnosticsRevision(),
+    lsp_.semanticTokensRevision());
+  if (lsp_changes.became_ready)
     showNotification("clangd indexing is ready", NotificationKind::Success);
-  lsp_ready_observed_ = lsp_.ready();
-  refreshOutline();
-  if (diagnostics_revision_ != lsp_.diagnosticsRevision()) {
-    diagnostics_revision_ = lsp_.diagnosticsRevision();
+  const auto active_lsp_document = document_ ? std::optional<LspDocumentIdentity>{
+    {document_->path(), document_->version()}} : std::nullopt;
+  auto lsp_events = LspUiController::route(lsp_ui_.collect(lsp_), active_lsp_document);
+  refreshOutline(std::move(lsp_events.document_symbols));
+  if (lsp_changes.diagnostics_changed) {
     editor_.setDiagnostics(&lsp_.diagnostics());
   }
-  if (semantic_tokens_revision_ != lsp_.semanticTokensRevision()) {
-    semantic_tokens_revision_ = lsp_.semanticTokensRevision();
+  if (lsp_changes.semantic_tokens_changed) {
     editor_.setSemanticTokens(&lsp_.semanticTokens());
   }
-  auto completions = lsp_.takeCompletions();
+  if (lsp_events.discarded_completions != 0)
+    appendOutput("Completion discarded: the source document changed while clangd was responding\n");
+  if (lsp_events.discarded_code_actions != 0)
+    appendOutput("Code Action discarded: the source document changed while clangd was responding\n");
+  auto completions = std::move(lsp_events.completions);
   if (!completions.empty()) {
     std::vector<LspCompletionItem> unique;
     std::vector<std::string> labels;
@@ -4511,24 +3339,20 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
       const auto selection = choose("clangd completion", labels);
       if (selection > 0 && selection <= unique.size() && document_) {
         const auto& completion = unique[selection - 1];
-        if (document_->path() != completion.source_path || document_->version() != completion.source_version) {
-          appendOutput("Completion discarded: the source document changed while clangd was responding\n");
-        } else {
-          if (completion.edit && completion.edit->start.line < document_->lines().size()
-              && completion.edit->end.line < document_->lines().size()) {
-            auto start = completion.edit->start; auto end = completion.edit->end;
-            start.column = document_->byteColumn(start.line, start.column);
-            end.column = document_->byteColumn(end.line, end.column);
-            document_->replaceRange(start, end, completion.edit->text);
-          } else document_->replaceIdentifierBeforeCursor(completion.insertion);
-          lsp_.change(*document_); editor_.invalidateSyntax(); updateStatus();
-          if (!completion.documentation.empty())
-            appendOutput("Completion documentation:\n" + completion.documentation + "\n");
-        }
+        if (completion.edit && completion.edit->start.line < document_->lines().size()
+            && completion.edit->end.line < document_->lines().size()) {
+          auto start = completion.edit->start; auto end = completion.edit->end;
+          start.column = document_->byteColumn(start.line, start.column);
+          end.column = document_->byteColumn(end.line, end.column);
+          document_->replaceRange(start, end, completion.edit->text);
+        } else document_->replaceIdentifierBeforeCursor(completion.insertion);
+        lsp_.change(*document_); editor_.invalidateSyntax(); updateStatus();
+        if (!completion.documentation.empty())
+          appendOutput("Completion documentation:\n" + completion.documentation + "\n");
       }
     }
   }
-  auto signatures = lsp_.takeSignatures();
+  auto signatures = std::move(lsp_events.signatures);
   if (!signatures.empty()) {
     std::ostringstream text;
     for (const auto& signature : signatures) {
@@ -4541,9 +3365,9 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
     }
     showTextDialog("Signature help", text.str());
   }
-  auto hover = lsp_.takeHover();
+  auto hover = std::move(lsp_events.hover);
   if (!hover.empty()) showTextDialog("Symbol information", std::move(hover));
-  auto definitions = lsp_.takeDefinitions();
+  auto definitions = std::move(lsp_events.definitions);
   if (!definitions.empty()) {
     const auto& location = definitions.front();
     openFile(location.path);
@@ -4553,7 +3377,7 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
       editor_.reveal(position);
     }
   }
-  auto references = lsp_.takeReferences();
+  auto references = std::move(lsp_events.references);
   if (!references.empty()) {
     std::vector<std::string> labels;
     labels.reserve(references.size());
@@ -4574,13 +3398,13 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
       }
     }
   }
-  if (auto rename = lsp_.takeRenameEdit()) applyWorkspaceEdit(std::move(*rename), "Rename");
-  for (auto& request : lsp_.takeWorkspaceApplyRequests()) {
+  if (lsp_events.rename_edit) applyWorkspaceEdit(std::move(*lsp_events.rename_edit), "Rename");
+  for (auto& request : lsp_events.workspace_apply_requests) {
     std::string failure_reason;
     const bool applied = applyWorkspaceEdit(std::move(request.edit), request.label, &failure_reason);
     lsp_.respondWorkspaceApplyEdit(request.id, applied, std::move(failure_reason));
   }
-  auto code_actions = lsp_.takeCodeActions();
+  auto code_actions = std::move(lsp_events.code_actions);
   if (!code_actions.empty()) {
     std::size_t selection = 1;
     if (code_actions.size() > 1 || !code_actions.front().automatic) {
@@ -4592,16 +3416,12 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
     }
     if (selection > 0 && selection <= code_actions.size()) {
       auto& action = code_actions[selection - 1];
-      if (!document_ || document_->path() != action.source_path || document_->version() != action.source_version)
-        appendOutput("Code Action discarded: the source document changed while clangd was responding\n");
-      else {
-        appendOutput("Code Action: " + action.title + "\n");
-        applyWorkspaceEdit(std::move(action.edit), action.title);
-      }
+      appendOutput("Code Action: " + action.title + "\n");
+      applyWorkspaceEdit(std::move(action.edit), action.title);
     }
   }
-  if (auto counterpart = lsp_.takeSwitchedSourceHeader()) openFile(*counterpart);
-  auto workspace_symbols = lsp_.takeWorkspaceSymbols();
+  if (lsp_events.switched_source_header) openFile(*lsp_events.switched_source_header);
+  auto workspace_symbols = std::move(lsp_events.workspace_symbols);
   if (!workspace_symbols.empty()) {
     std::vector<std::string> labels;
     labels.reserve(workspace_symbols.size());
@@ -4630,61 +3450,43 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
     const auto selection = choose(std::move(title) + " — " + hierarchy->root, labels);
     if (selection > 0 && selection <= hierarchy->items.size()) navigateTo(hierarchy->items[selection - 1]);
   };
-  showHierarchy("Call Hierarchy", lsp_.takeCallHierarchy());
-  showHierarchy("Type Hierarchy", lsp_.takeTypeHierarchy());
-  for (const auto& feedback : lsp_.takeFeedback()) {
-    const auto operation = [&feedback] {
-      switch (feedback.operation) {
-        case LspOperation::Completion: return "Completion";
-        case LspOperation::SignatureHelp: return "Signature help";
-        case LspOperation::Hover: return "Symbol information";
-        case LspOperation::Definition: return "Go to definition";
-        case LspOperation::References: return "Find references";
-        case LspOperation::Rename: return "Rename";
-        case LspOperation::DocumentSymbols: return "Outline";
-        case LspOperation::CodeActions: return "Code Actions";
-        case LspOperation::OrganizeIncludes: return "Organize Includes";
-        case LspOperation::SwitchSourceHeader: return "Switch Header/Source";
-        case LspOperation::WorkspaceSymbols: return "Workspace Symbols";
-        case LspOperation::CallHierarchy: return "Call Hierarchy";
-        case LspOperation::TypeHierarchy: return "Type Hierarchy";
-        case LspOperation::Server: return "clangd";
-      }
-      return "clangd";
-    }();
-    appendOutput(std::string(operation) + (feedback.error ? " error: " : ": ") + feedback.message + "\n");
+  showHierarchy("Call Hierarchy", std::move(lsp_events.call_hierarchy));
+  showHierarchy("Type Hierarchy", std::move(lsp_events.type_hierarchy));
+  for (const auto& feedback : lsp_events.feedback) {
+    appendOutput(std::string(lspOperationLabel(feedback.operation))
+      + (feedback.error ? " error: " : ": ") + feedback.message + "\n");
     if (feedback.operation == LspOperation::Server && feedback.error)
       showNotification(feedback.message, NotificationKind::Error, std::chrono::milliseconds{6000});
   }
 
-  for (auto& chunk : build_process_.drain()) processBuildOutput(chunk);
-  if (build_stage_ != BuildStage::Idle && !build_process_.running() && build_process_.exitCode().has_value()) {
-    const auto code = *build_process_.exitCode();
-    const auto finished_stage = build_stage_;
-    build_process_.stop();
+  const auto build_poll = build_session_.poll(root_);
+  for (const auto& chunk : build_poll.output) appendBuildOutput(chunk);
+  if (build_poll.diagnostics_added != 0) problems_signature_.clear();
+  if (build_poll.completion) {
+    const auto code = build_poll.completion->exit_code;
+    const auto finished_stage = build_poll.completion->stage;
     const auto stage_name = finished_stage == BuildStage::Configure ? "Configure"
       : finished_stage == BuildStage::Clean ? "Clean" : "Build";
-    const auto stage_elapsed = std::chrono::duration<double>(
-      std::chrono::steady_clock::now() - build_stage_started_).count();
+    const auto stage_elapsed = build_poll.completion->elapsed;
     if (code != 0) {
       finishBuildOperation(code, stage_name);
-    } else if (finished_stage == BuildStage::Configure) {
-      refreshCompilationDatabase(true);
-      refreshCMakeTargets();
-      if (build_operation_ == BuildOperation::Configure) finishBuildOperation(0, {});
-      else {
-        std::ostringstream stage_summary; stage_summary.setf(std::ios::fixed); stage_summary.precision(1);
-        stage_summary << "Configure finished with exit code 0 after " << stage_elapsed << " s\n";
-        appendBuildOutput(stage_summary.str()); appendOutput(stage_summary.str());
-        (void)startBuildStage(false);
-      }
-    } else if (finished_stage == BuildStage::Clean && build_operation_ == BuildOperation::Rebuild) {
-      std::ostringstream stage_summary; stage_summary.setf(std::ios::fixed); stage_summary.precision(1);
-      stage_summary << "Clean finished with exit code 0 after " << stage_elapsed << " s\n";
-      appendBuildOutput(stage_summary.str()); appendOutput(stage_summary.str());
-      (void)startBuildStage(false);
     } else {
-      finishBuildOperation(0, {});
+      if (finished_stage == BuildStage::Configure) {
+        refreshCompilationDatabase(true);
+        refreshCMakeTargets();
+      }
+      const auto next_stage = build_session_.nextStageAfterSuccess();
+      if (next_stage == BuildStage::Build) {
+        std::ostringstream stage_summary;
+        stage_summary.setf(std::ios::fixed);
+        stage_summary.precision(1);
+        stage_summary << stage_name << " finished with exit code 0 after " << stage_elapsed << " s\n";
+        appendBuildOutput(stage_summary.str());
+        appendOutput(stage_summary.str());
+        (void)startBuildStage(false);
+      } else {
+        finishBuildOperation(0, {});
+      }
     }
   }
   for (auto& chunk : run_process_.drain()) appendOutput(chunk);
@@ -4703,9 +3505,8 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
   }
   gdb_.poll();
   const bool debug_active = gdb_.active();
-  if (debug_active_observed_ && !debug_active && gdb_.exited())
+  if (debug_ui_.observeActive(debug_active, gdb_.exited()))
     showNotification("Debuggee finished", NotificationKind::Success);
-  debug_active_observed_ = debug_active;
   for (auto& line : gdb_.takeOutput()) appendOutput(line + "\n");
   for (auto& result : gdb_.takeResults()) {
     const auto operation = result.kind == DebugResultKind::Evaluation ? "Evaluation"
@@ -4966,19 +3767,14 @@ auto IdeWindow::launchCommand(LaunchCommand& command, std::string& error) -> boo
   if (project_settings_.launch.executable.empty()) refreshCMakeTargets();
   const CMakeTarget* target{};
   if (!project_settings_.launch.target.empty()) {
-    const auto configured = std::find_if(cmake_targets_.begin(), cmake_targets_.end(), [this](const auto& item) {
-      return item.name == project_settings_.launch.target;
-    });
-    if (configured == cmake_targets_.end()) {
+    target = cmake_session_.targetNamed(project_settings_.launch.target);
+    if (!target) {
       error = "Configured CMake target was not found: " + project_settings_.launch.target; return false;
     }
-    target = &*configured;
-  } else if (selected_cmake_target_ && *selected_cmake_target_ < cmake_targets_.size())
-    target = &cmake_targets_[*selected_cmake_target_];
+  } else target = cmake_session_.selectedTarget();
   if (!resolveLaunchCommand(root_, project_settings_.launch, target, command, error)) return false;
   if (!command.explicit_executable && target) {
-    preferred_cmake_target_ = target->name;
-    preferred_cmake_configuration_ = target->configuration;
+    cmake_session_.rememberTarget(*target);
     debug_state_dirty_ = true; saveDebugState();
   }
   return true;

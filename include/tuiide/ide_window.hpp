@@ -2,17 +2,24 @@
 
 #include "tuiide/code_editor.hpp"
 #include "tuiide/build_diagnostic.hpp"
+#include "tuiide/build_output_collector.hpp"
 #include "tuiide/build_progress.hpp"
+#include "tuiide/build_session.hpp"
+#include "tuiide/build_workflow.hpp"
 #include "tuiide/cmake_model.hpp"
 #include "tuiide/cmake_presets.hpp"
+#include "tuiide/cmake_session.hpp"
 #include "tuiide/cmake_source_edit.hpp"
 #include "tuiide/clang_format.hpp"
 #include "tuiide/compilation_database.hpp"
 #include "tuiide/command_state.hpp"
 #include "tuiide/console_widget.hpp"
 #include "tuiide/debug_session.hpp"
+#include "tuiide/debug_ui_controller.hpp"
+#include "tuiide/document_session.hpp"
 #include "tuiide/gdb_client.hpp"
 #include "tuiide/lsp_client.hpp"
+#include "tuiide/lsp_ui_controller.hpp"
 #include "tuiide/process.hpp"
 #include "tuiide/pseudo_terminal.hpp"
 #include "tuiide/project_template.hpp"
@@ -20,6 +27,7 @@
 #include "tuiide/project_history.hpp"
 #include "tuiide/project_import.hpp"
 #include "tuiide/project_settings.hpp"
+#include "tuiide/project_session.hpp"
 #include "tuiide/project_tree.hpp"
 #include "tuiide/recovery.hpp"
 #include "tuiide/sidebar_tabs.hpp"
@@ -138,7 +146,7 @@ class IdeWindow final : public finalcut::FDialog {
   void toggleSelectedBreakpoint();
   void removeSelectedBreakpoint();
   void clearBreakpoints();
-  void refreshOutline();
+  void refreshOutline(std::optional<LspDocumentSymbols> response = std::nullopt);
   void openSelectedOutlineSymbol();
   void openSelectedFrame();
   void addWatch();
@@ -208,6 +216,7 @@ class IdeWindow final : public finalcut::FDialog {
   void cancelBuild();
   void launchSettings();
   auto beginBuildOperation(bool save_documents) -> bool;
+  auto startPreLaunchBuild(BuildContinuation continuation) -> bool;
   auto startConfigureStage() -> bool;
   auto startBuildStage(bool clean_stage) -> bool;
   void finishBuildOperation(int exit_code, std::string_view failed_stage);
@@ -216,7 +225,6 @@ class IdeWindow final : public finalcut::FDialog {
   void selectCMakeBuildPreset();
   void refreshCMakeTargets();
   void selectCMakeTarget();
-  void processBuildOutput(std::string_view chunk);
   void run();
   void stopRun();
   void startRun();
@@ -241,61 +249,37 @@ class IdeWindow final : public finalcut::FDialog {
   auto choose(std::string title, const std::vector<std::string>& items) -> std::size_t;
   auto launchCommand(LaunchCommand& command, std::string& error) -> bool;
 
-  std::filesystem::path root_;
-  std::filesystem::path build_dir_;
-  std::filesystem::path session_file_;
-  std::filesystem::path recovery_file_;
+  // Transitional aliases keep UI presentation code stable while project and
+  // CMake identities, settings, and derived paths are owned by their sessions.
+  ProjectSession project_session_;
+  CMakeSession cmake_session_;
+  std::filesystem::path& root_;
+  std::filesystem::path& build_dir_;
+  std::filesystem::path& session_file_;
+  std::filesystem::path& recovery_file_;
   std::filesystem::path project_history_file_;
-  ProjectSettings project_settings_;
+  ProjectSettings& project_settings_;
   std::vector<std::filesystem::path> recent_projects_;
   std::vector<std::filesystem::path> file_paths_;
   std::string project_filter_;
   std::unordered_map<const finalcut::FListViewItem*, std::filesystem::path> project_item_paths_;
-  std::vector<std::optional<SourceLocation>> debug_locations_;
-  std::vector<std::optional<std::string>> debug_thread_ids_;
-  std::vector<std::optional<std::size_t>> debug_watch_indices_;
-  std::vector<std::optional<int>> debug_frame_levels_;
-  std::vector<std::optional<std::size_t>> debug_variable_indices_;
-  std::vector<DebugBreakpoint> breakpoint_rows_;
   std::vector<Position> outline_positions_;
-  std::filesystem::path outline_path_;
-  int outline_version_{-1};
-  std::filesystem::path outline_requested_path_;
-  int outline_requested_version_{-1};
-  std::filesystem::path outline_observed_path_;
-  int outline_observed_version_{-1};
-  unsigned outline_stable_tick_{};
-  std::string debug_signature_;
-  std::string breakpoint_signature_;
-  std::vector<std::unique_ptr<Document>> documents_;
-  struct ClosedDocument { std::filesystem::path path; Position cursor; };
-  std::vector<ClosedDocument> closed_documents_;
-  Document* document_{};
-  std::size_t active_document_{};
+  // Transitional aliases keep UI-only code small while ownership and invariants
+  // live in DocumentSession. New document operations belong in the service.
+  DocumentSession document_session_;
+  std::vector<std::unique_ptr<Document>>& documents_;
+  std::vector<ClosedDocument>& closed_documents_;
+  Document*& document_;
+  std::size_t& active_document_;
   LspClient lsp_;
+  LspUiController lsp_ui_;
   CompilationDatabase compilation_database_;
   std::unordered_set<std::filesystem::path> compilation_database_warnings_;
   GdbClient gdb_;
-  AsyncProcess build_process_;
+  DebugUiController debug_ui_;
+  BuildSession build_session_;
   AsyncProcess run_process_;
   PseudoTerminal terminal_;
-  enum class BuildOperation { None, Configure, Build, Rebuild, Clean };
-  enum class BuildStage { Idle, Configure, Clean, Build };
-  BuildOperation build_operation_{BuildOperation::None};
-  BuildStage build_stage_{BuildStage::Idle};
-  std::chrono::steady_clock::time_point build_started_{};
-  std::chrono::steady_clock::time_point build_stage_started_{};
-  std::optional<unsigned> build_progress_;
-  std::string build_partial_;
-  std::vector<BuildDiagnostic> build_diagnostics_;
-  std::vector<CMakeTarget> cmake_targets_;
-  std::vector<CMakeConfigurePreset> cmake_presets_;
-  std::vector<CMakeBuildPreset> cmake_build_presets_;
-  std::optional<std::size_t> selected_cmake_target_;
-  std::string selected_cmake_preset_;
-  std::string selected_cmake_build_preset_;
-  std::string preferred_cmake_target_;
-  std::string preferred_cmake_configuration_;
   std::size_t diagnostic_index_{};
   std::string output_text_;
   std::string build_output_text_;
@@ -307,18 +291,12 @@ class IdeWindow final : public finalcut::FDialog {
   int timer_id_{};
   bool debug_state_dirty_{};
   bool run_active_{};
-  bool lsp_ready_observed_{};
-  bool debug_active_observed_{};
   std::chrono::steady_clock::time_point notification_deadline_{};
   finalcut::FWidget* context_focus_{};
   finalcut::FMenu* active_context_menu_{};
   std::size_t sidebar_width_{};
   std::size_t lower_panel_height_{};
-  enum class PendingLaunch { None, Run, Debug };
-  PendingLaunch pending_launch_{PendingLaunch::None};
   std::function<void()> deferred_command_;
-  std::uint64_t diagnostics_revision_{};
-  std::uint64_t semantic_tokens_revision_{};
   bool ui_ready_{};
   std::optional<CommandAvailability> menu_state_;
   std::string search_query_;

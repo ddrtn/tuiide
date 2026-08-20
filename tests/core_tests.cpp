@@ -1,18 +1,26 @@
 #include "tuiide/document.hpp"
 #include "tuiide/document_labels.hpp"
+#include "tuiide/document_session.hpp"
+#include "tuiide/build_command.hpp"
 #include "tuiide/build_diagnostic.hpp"
+#include "tuiide/build_output_collector.hpp"
 #include "tuiide/build_progress.hpp"
+#include "tuiide/build_session.hpp"
+#include "tuiide/build_workflow.hpp"
 #include "tuiide/cmake_model.hpp"
 #include "tuiide/cmake_presets.hpp"
+#include "tuiide/cmake_session.hpp"
 #include "tuiide/cmake_source_edit.hpp"
 #include "tuiide/clipboard.hpp"
 #include "tuiide/clang_format.hpp"
 #include "tuiide/compilation_database.hpp"
 #include "tuiide/command_state.hpp"
 #include "tuiide/debug_session.hpp"
+#include "tuiide/debug_ui_controller.hpp"
 #include "tuiide/gdb_client.hpp"
 #include "tuiide/gdb_mi.hpp"
 #include "tuiide/lsp_client.hpp"
+#include "tuiide/lsp_ui_controller.hpp"
 #include "tuiide/launch_configuration.hpp"
 #include "tuiide/process.hpp"
 #include "tuiide/pseudo_terminal.hpp"
@@ -21,6 +29,7 @@
 #include "tuiide/project_history.hpp"
 #include "tuiide/project_import.hpp"
 #include "tuiide/project_settings.hpp"
+#include "tuiide/project_session.hpp"
 #include "tuiide/project_tree.hpp"
 #include "tuiide/recovery.hpp"
 #include "tuiide/syntax.hpp"
@@ -47,6 +56,40 @@ void expect(bool condition, const char* message) {
 }
 
 int main() {
+  tuiide::BuildWorkflow build_workflow;
+  build_workflow.begin(tuiide::BuildOperation::Build, false, tuiide::BuildContinuation::Run);
+  expect(build_workflow.operation() == tuiide::BuildOperation::Build
+      && build_workflow.stage() == tuiide::BuildStage::Configure
+      && build_workflow.continuation() == tuiide::BuildContinuation::Run
+      && build_workflow.nextStageAfterSuccess() == tuiide::BuildStage::Build
+      && build_workflow.nextStageAfterSuccess() == tuiide::BuildStage::Idle,
+    "unconfigured build workflow runs configure and build in order");
+  build_workflow.setProgress(37);
+  expect(build_workflow.progress() == 37 && build_workflow.operationElapsed() >= 0.0
+      && build_workflow.stageElapsed() >= 0.0,
+    "build workflow owns progress and elapsed operation/stage timing");
+  build_workflow.enterStage(tuiide::BuildStage::Build);
+  expect(!build_workflow.progress(), "entering a new build stage clears stale progress");
+  expect(build_workflow.takeContinuation() == tuiide::BuildContinuation::Run
+      && build_workflow.continuation() == tuiide::BuildContinuation::None,
+    "build continuation survives intermediate stages and can be consumed exactly once");
+  build_workflow.begin(tuiide::BuildOperation::Rebuild, true);
+  expect(build_workflow.stage() == tuiide::BuildStage::Clean
+      && build_workflow.nextStageAfterSuccess() == tuiide::BuildStage::Build,
+    "configured rebuild workflow runs clean before build");
+  build_workflow.begin(tuiide::BuildOperation::Configure, true);
+  expect(build_workflow.operationName() == "Configure"
+      && build_workflow.stageName() == "Configure"
+      && build_workflow.nextStageAfterSuccess() == tuiide::BuildStage::Idle,
+    "configure-only workflow finishes without a build stage");
+  build_workflow.begin(tuiide::BuildOperation::Clean, false);
+  expect(!build_workflow.running() && build_workflow.operation() == tuiide::BuildOperation::Clean,
+    "clean workflow remains idle when no configured build tree exists");
+  build_workflow.reset();
+  expect(build_workflow.operation() == tuiide::BuildOperation::None
+      && build_workflow.stage() == tuiide::BuildStage::Idle,
+    "build workflow reset clears operation and stage together");
+
   expect(tuiide::base64Encode("").empty(), "empty clipboard text has empty base64");
   expect(tuiide::base64Encode("f") == "Zg==" && tuiide::base64Encode("foo") == "Zm9v", "clipboard base64 padding is correct");
   expect(tuiide::base64Encode("Привет") == "0J/RgNC40LLQtdGC", "clipboard base64 preserves UTF-8 bytes");
@@ -103,6 +146,161 @@ int main() {
     "CMake percentage build progress is parsed");
   expect(!tuiide::parseBuildProgress("Building target without progress"),
     "ordinary build output does not invent progress");
+
+  tuiide::BuildOutputCollector build_output;
+  const auto first_build_update = build_output.append(
+    "[12/48] Building CXX object\nsrc/main.cpp:12:7: error: expec", "/project");
+  expect(first_build_update.progress == 25,
+    "build output collector reports progress from complete lines");
+  expect(first_build_update.diagnostics_added == 0 && build_output.hasPartialLine(),
+    "build output collector keeps an incomplete diagnostic line");
+  const auto second_build_update = build_output.append("ted ';'\n", "/project");
+  expect(second_build_update.diagnostics_added == 1 && !build_output.hasPartialLine(),
+    "build output collector joins chunked diagnostic lines");
+  expect(build_output.diagnostics().size() == 1
+      && build_output.diagnostics().front().path == "/project/src/main.cpp",
+    "build output collector stores parsed diagnostics");
+  const auto trailing_build_update = build_output.append(
+    "src/lib.cpp:3: warning: unfinished output", "/project");
+  expect(trailing_build_update.diagnostics_added == 0 && build_output.hasPartialLine(),
+    "build output collector defers a final unterminated line");
+  const auto finished_build_update = build_output.finish("/project");
+  expect(finished_build_update.diagnostics_added == 1 && !build_output.hasPartialLine(),
+    "build output collector flushes the final unterminated line");
+  build_output.clearDiagnostics();
+  expect(build_output.diagnostics().empty(), "build diagnostics can be cleared independently");
+  (void)build_output.append("partial", "/project");
+  build_output.reset();
+  expect(build_output.diagnostics().empty() && !build_output.hasPartialLine(),
+    "build output collector reset clears all state");
+
+  tuiide::BuildSession build_session;
+  build_session.prepare();
+  build_session.begin(tuiide::BuildOperation::Build, false, tuiide::BuildContinuation::Run);
+  expect(build_session.running() && build_session.stage() == tuiide::BuildStage::Configure,
+    "build session starts an unconfigured build at the configure stage");
+  const auto session_output = build_session.ingest(
+    "[ 40%] Building CXX object\nsrc/main.cpp:2:1: warning: check this\n", "/project");
+  expect(session_output.diagnostics_added == 1 && build_session.progress() == 40
+      && build_session.diagnostics().size() == 1,
+    "build session keeps progress and diagnostics synchronized with streamed output");
+  expect(build_session.nextStageAfterSuccess() == tuiide::BuildStage::Build,
+    "build session advances configure to build through its workflow");
+  build_session.enterStage(tuiide::BuildStage::Build);
+  expect(!build_session.start({}, {}, {}), "build session rejects an empty process command");
+  (void)build_session.ingest("src/lib.cpp:3: error: final line", "/project");
+  const auto build_finish = build_session.finish("/project");
+  expect(build_finish.diagnostics_added == 1 && build_finish.operation == "Build"
+      && build_finish.continuation == tuiide::BuildContinuation::Run
+      && !build_session.running() && build_session.diagnostics().size() == 2,
+    "finishing a build flushes output, returns continuation, and resets runtime state");
+  build_session.prepare();
+  build_session.begin(tuiide::BuildOperation::Configure, false);
+  (void)build_session.ingest("src/cancel.cpp:4: warning: cancelled", "/project");
+  const auto build_cancel = build_session.cancel("/project");
+  expect(build_cancel.stage == "Configure" && build_cancel.diagnostics_added == 1
+      && !build_session.running() && build_session.diagnostics().size() == 1,
+    "cancelling a build flushes its last partial diagnostic and resets the workflow");
+
+  tuiide::LspUiController lsp_ui;
+  auto lsp_changes = lsp_ui.observe(false, 0, 0);
+  expect(!lsp_changes.became_ready && !lsp_changes.diagnostics_changed
+      && !lsp_changes.semantic_tokens_changed,
+    "LSP UI controller starts without synthetic state changes");
+  lsp_changes = lsp_ui.observe(true, 2, 3);
+  expect(lsp_changes.became_ready && lsp_changes.diagnostics_changed
+      && lsp_changes.semantic_tokens_changed,
+    "LSP UI controller reports readiness and revision transitions once");
+  lsp_changes = lsp_ui.observe(true, 2, 3);
+  expect(!lsp_changes.became_ready && !lsp_changes.diagnostics_changed
+      && !lsp_changes.semantic_tokens_changed,
+    "LSP UI controller suppresses unchanged revisions");
+  const tuiide::LspDocumentIdentity first_lsp_document{"/project/main.cpp", 4};
+  const tuiide::LspDocumentIdentity second_lsp_document{"/project/main.cpp", 5};
+  expect(lsp_ui.updateOutline(first_lsp_document, true, 10) == tuiide::OutlineDecision::Clear
+      && lsp_ui.updateOutline(first_lsp_document, true, 14) == tuiide::OutlineDecision::None
+      && lsp_ui.updateOutline(first_lsp_document, true, 15) == tuiide::OutlineDecision::Request,
+    "outline reset clears stale presentation and waits for a stable document revision");
+  expect(lsp_ui.acceptOutline(first_lsp_document, first_lsp_document)
+      && lsp_ui.renderedOutlineMatches(first_lsp_document),
+    "outline response is accepted only for the active document revision");
+  expect(lsp_ui.updateOutline(second_lsp_document, true, 16) == tuiide::OutlineDecision::Clear
+      && !lsp_ui.renderedOutlineMatches(first_lsp_document),
+    "editing a document invalidates its rendered outline immediately");
+  expect(lsp_ui.updateOutline(second_lsp_document, true, 21) == tuiide::OutlineDecision::Request
+      && !lsp_ui.acceptOutline(first_lsp_document, second_lsp_document)
+      && lsp_ui.acceptOutline(second_lsp_document, second_lsp_document),
+    "stale outline responses cannot replace the active revision");
+  expect(lsp_ui.updateOutline(std::nullopt, false, 22) == tuiide::OutlineDecision::Clear
+      && lsp_ui.updateOutline(std::nullopt, false, 23) == tuiide::OutlineDecision::None,
+    "closing the active source clears outline state once");
+  expect(tuiide::lspOperationLabel(tuiide::LspOperation::OrganizeIncludes) == "Organize Includes",
+    "LSP feedback operations have stable user-facing labels");
+  tuiide::LspEventBatch lsp_batch;
+  tuiide::LspCompletionItem current_completion;
+  current_completion.label = "current";
+  current_completion.source_path = first_lsp_document.path;
+  current_completion.source_version = first_lsp_document.version;
+  tuiide::LspCompletionItem stale_completion = current_completion;
+  stale_completion.label = "stale";
+  stale_completion.source_version = first_lsp_document.version - 1;
+  lsp_batch.completions = {current_completion, stale_completion};
+  tuiide::LspCodeAction current_action;
+  current_action.title = "Current action";
+  current_action.source_path = first_lsp_document.path;
+  current_action.source_version = first_lsp_document.version;
+  auto stale_action = current_action;
+  stale_action.title = "Stale action";
+  stale_action.source_path = "/project/other.cpp";
+  lsp_batch.code_actions = {current_action, stale_action};
+  auto routed_lsp_batch = tuiide::LspUiController::route(
+    std::move(lsp_batch), first_lsp_document);
+  expect(routed_lsp_batch.completions.size() == 1
+      && routed_lsp_batch.completions.front().label == "current"
+      && routed_lsp_batch.discarded_completions == 1,
+    "LSP event routing removes completion responses for stale document revisions");
+  expect(routed_lsp_batch.code_actions.size() == 1
+      && routed_lsp_batch.code_actions.front().title == "Current action"
+      && routed_lsp_batch.discarded_code_actions == 1,
+    "LSP event routing removes code actions belonging to another document");
+
+  tuiide::DebugUiController debug_ui;
+  tuiide::DebugSnapshot debug_snapshot;
+  debug_snapshot.running = true;
+  debug_snapshot.stopped = true;
+  debug_snapshot.registers_enabled = true;
+  debug_snapshot.selected_frame = 1;
+  debug_snapshot.watches.push_back({"counter", "7", {}});
+  debug_snapshot.registers.push_back({"rax", "0x7"});
+  debug_snapshot.threads.push_back({"2", "worker", "stopped", true});
+  debug_snapshot.frames.push_back({1, "main", "/project/src/main.cpp", 12});
+  debug_snapshot.variables.push_back({"value", "7", "int", "value", "var1", 1, true, false});
+  expect(debug_ui.updateDebug(debug_snapshot) && debug_ui.debugRows().size() == 5,
+    "debug UI controller builds one typed row for every visible debugger item");
+  expect(debug_ui.debugRows()[0].watch_index == 0
+      && debug_ui.debugRows()[2].thread_id == "2"
+      && debug_ui.debugRows()[3].frame_level == 1
+      && debug_ui.debugRows()[3].file == "/project/src/main.cpp"
+      && debug_ui.debugRows()[4].variable_index == 0,
+    "debug UI rows retain watch, thread, frame, source, and variable actions");
+  expect(!debug_ui.updateDebug(debug_snapshot),
+    "unchanged debugger snapshots do not request a panel redraw");
+  std::vector<tuiide::DebugBreakpoint> controller_breakpoints{
+    {"/project/src/main.cpp", 12, true, "value > 0", 2, {}, false, {}}};
+  expect(debug_ui.updateBreakpoints(controller_breakpoints, false, "/project")
+      && debug_ui.breakpointRows().size() == 1
+      && debug_ui.breakpointRows().front().label.find("src/main.cpp:12") != std::string::npos
+      && debug_ui.breakpointRows().front().label.find("[not started]") != std::string::npos,
+    "breakpoint model uses project-relative labels and inactive debugger state");
+  expect(debug_ui.updateBreakpoints(controller_breakpoints, true, "/project")
+      && debug_ui.breakpointRows().front().label.find("[unresolved]") != std::string::npos,
+    "starting GDB refreshes unresolved breakpoint labels without breakpoint changes");
+  expect(!debug_ui.observeActive(true, false)
+      && debug_ui.observeActive(false, true)
+      && !debug_ui.observeActive(false, true),
+    "debug UI controller reports the debuggee-finished transition once");
+  expect(debug_ui.debugRow(50) == nullptr && debug_ui.breakpointRow(50) == nullptr,
+    "debug UI controller rejects out-of-range panel selections");
 
   tuiide::Document document;
   document.insert("int main() {");
@@ -503,6 +701,41 @@ int main() {
   expect(normalized_document.load(path_test / "alias/source.cpp", document_error), "document loads through a symlink");
   expect(normalized_document.path() == tuiide::normalizePath(path_test / "real/source.cpp"), "loaded document stores normalized identity");
   std::filesystem::remove_all(path_test, symlink_error);
+
+  const auto session_documents = std::filesystem::temp_directory_path()
+      / ("tuiide-document-session-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(session_documents);
+  { std::ofstream file(session_documents / "first.cpp"); file << "int first;\n"; }
+  { std::ofstream file(session_documents / "second.cpp"); file << "int second;\n"; }
+  tuiide::DocumentSession document_session;
+  auto first_open = document_session.open(session_documents / "first.cpp", document_error);
+  auto duplicate_open = document_session.open(session_documents / "./first.cpp", document_error);
+  expect(first_open && first_open->newly_loaded && duplicate_open && !duplicate_open->newly_loaded
+      && document_session.documents().size() == 1 && document_session.activeIndex() == 0,
+    "document session normalizes identities and activates an existing document without duplicating it");
+  auto second_open = document_session.open(session_documents / "second.cpp", document_error);
+  expect(second_open && second_open->newly_loaded && document_session.documents().size() == 2,
+    "document session owns newly loaded documents");
+  document_session.activate(0)->setCursor({0, 3});
+  document_session.closeActive();
+  expect(document_session.documents().size() == 1
+      && document_session.activeDocument() == second_open->document && document_session.activeIndex() == 0,
+    "closing the active document selects the nearest remaining document");
+  const auto closed_document = document_session.takeLastClosed();
+  expect(closed_document && closed_document->path == tuiide::normalizePath(session_documents / "first.cpp")
+      && closed_document->cursor == tuiide::Position{0, 3},
+    "document session retains the path and cursor in reopen history");
+  expect(!document_session.open(session_documents / "missing.cpp", document_error) && !document_error.empty(),
+    "document session reports load failures without adding a document");
+  const auto untitled = document_session.createUntitled();
+  expect(untitled.newly_loaded && untitled.document->path().empty()
+      && document_session.documents().size() == 2,
+    "document session creates and activates an untitled document");
+  document_session.clear();
+  expect(document_session.documents().empty() && !document_session.activeDocument()
+      && document_session.closedDocuments().empty(),
+    "clearing a document session removes documents, active state, and reopen history");
+  std::filesystem::remove_all(session_documents, symlink_error);
 
   const auto history_test = std::filesystem::temp_directory_path()
     / ("tuiide-history-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -1145,6 +1378,36 @@ int main() {
       && loaded_settings.launch.pre_launch_build && loaded_settings.launch.external_terminal
       && loaded_settings.launch.terminal == "test-terminal",
     "project settings preserve shortcuts and all UTF-8 launch configuration fields");
+  { std::ofstream cmake_file(settings_project / "CMakeLists.txt"); cmake_file << "project(settings_test)\n"; }
+  tuiide::ProjectSession project_session;
+  tuiide::ProjectOpenResult project_open_result;
+  expect(project_session.open(settings_project, {}, project_open_result, session_error)
+      && !project_open_result.used_default_settings
+      && project_session.root() == tuiide::normalizePath(settings_project)
+      && project_session.buildDirectory() == loaded_settings.build_directory
+      && project_session.sessionFile() == loaded_settings.build_directory / ".tuiide-session.json"
+      && project_session.recoveryFile() == loaded_settings.build_directory / ".tuiide-recovery.json",
+    "project session owns normalized identity, settings, and derived state paths");
+  auto session_settings = project_session.settings();
+  session_settings.build_directory = settings_project / "out/alternate";
+  project_session.applySettings(session_settings);
+  expect(project_session.buildDirectory() == session_settings.build_directory
+      && project_session.sessionFile().parent_path() == session_settings.build_directory,
+    "applying project settings updates all derived session paths together");
+  project_session.close();
+  expect(!project_session.open() && project_session.root().empty()
+      && project_session.buildDirectory().empty() && project_session.sessionFile().empty(),
+    "closing a project session clears project-specific state");
+
+  const auto fallback_project = settings_project / "fallback";
+  std::filesystem::create_directories(fallback_project);
+  { std::ofstream cmake_file(fallback_project / "CMakeLists.txt"); cmake_file << "project(fallback)\n"; }
+  { std::ofstream settings_file(fallback_project / ".tuiide-project.json"); settings_file << "{invalid"; }
+  expect(project_session.open(fallback_project, settings_project / "fallback-build",
+      project_open_result, session_error)
+      && project_open_result.used_default_settings && !project_open_result.warning.empty()
+      && project_session.buildDirectory() == tuiide::normalizePath(settings_project / "fallback-build"),
+    "project session reports invalid or missing settings and accepts an explicit build-directory override");
   std::ifstream settings_json(settings_project / ".tuiide-project.json");
   const std::string settings_text((std::istreambuf_iterator<char>(settings_json)), std::istreambuf_iterator<char>());
   expect(settings_text.find("\"version\": 1") != std::string::npos
@@ -1343,6 +1606,88 @@ int main() {
   });
   expect(user_build != build_presets.end() && user_build->verbose && user_build->targets == std::vector<std::string>{"app"},
     "user build preset overrides inherited fields");
+
+  tuiide::CMakeSession cmake_session;
+  const auto default_build = preset_source / "default-build";
+  cmake_session.reset(default_build);
+  cmake_session.restoreSelection("demo", "Release", "dev", "dev-build");
+  const auto preset_refresh = cmake_session.refreshPresets(preset_source, default_build);
+  expect(preset_refresh.valid && preset_refresh.configure_error.empty()
+      && preset_refresh.build_error.empty() && preset_refresh.validation_error.empty(),
+    "CMake session validates restored configure and build presets");
+  expect(cmake_session.buildDirectory() == preset_source / "out/dev",
+    "CMake session derives the active build directory from the configure preset");
+  cmake_session.replaceTargets({{"helper", "Debug", default_build / "helper"},
+    {"demo", "Release", default_build / "demo"}});
+  expect(cmake_session.selectedTarget() && cmake_session.selectedTarget()->name == "demo"
+      && cmake_session.selectedTarget()->configuration == "Release",
+    "CMake session restores an executable target by name and configuration");
+  expect(!cmake_session.selectTarget(2), "CMake session rejects an out-of-range target selection");
+  expect(cmake_session.selectConfigurePreset("user", default_build)
+      && cmake_session.configurePreset() == "user" && cmake_session.buildPreset().empty()
+      && cmake_session.buildDirectory() == preset_source / "relative-build"
+      && cmake_session.targets().empty() && cmake_session.preferredTarget().empty(),
+    "changing configure preset clears incompatible build and target selections");
+  expect(cmake_session.selectBuildPreset("user-build", default_build)
+      && cmake_session.configurePreset() == "user"
+      && cmake_session.buildPreset() == "user-build",
+    "selecting a build preset activates its configure preset");
+  expect(!cmake_session.selectConfigurePreset("missing", default_build)
+      && !cmake_session.selectBuildPreset("missing", default_build),
+    "CMake session rejects selections absent from refreshed presets");
+  cmake_session.restoreSelection({}, {}, "missing", {});
+  const auto invalid_preset_refresh = cmake_session.refreshPresets(preset_source, default_build);
+  expect(!invalid_preset_refresh.valid
+      && invalid_preset_refresh.validation_error.find("no longer exists") != std::string::npos,
+    "CMake session reports a removed restored preset without changing project settings");
+
+  tuiide::ProjectSettings command_settings;
+  command_settings.generator = "Ninja";
+  command_settings.toolchain = "/opt/toolchains/test.cmake";
+  command_settings.c_compiler = "/usr/bin/clang";
+  command_settings.cpp_compiler = "/usr/bin/clang++";
+  command_settings.c_standard = "17";
+  command_settings.cpp_standard = "20";
+  command_settings.build_type = "RelWithDebInfo";
+  const auto command_project = preset_source / "project with spaces";
+  const auto command_build = preset_source / "build with spaces";
+  auto configure_command = tuiide::BuildCommandService::configure(command_project,
+    command_build, command_settings, {}, presets, session_error);
+  expect(configure_command && session_error.empty()
+      && configure_command->arguments == std::vector<std::string>{
+        "cmake", "-S", command_project.string(), "-B", command_build.string(),
+        "-G", "Ninja", "-DCMAKE_TOOLCHAIN_FILE=/opt/toolchains/test.cmake",
+        "-DCMAKE_C_COMPILER=/usr/bin/clang", "-DCMAKE_CXX_COMPILER=/usr/bin/clang++",
+        "-DCMAKE_C_STANDARD=17", "-DCMAKE_CXX_STANDARD=20",
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"},
+    "configure command applies project toolchain, compiler, standard, and build settings without shell splitting");
+  command_settings = {};
+  configure_command = tuiide::BuildCommandService::configure(command_project,
+    command_build, command_settings, "dev", presets, session_error);
+  expect(configure_command
+      && std::find(configure_command->arguments.begin(), configure_command->arguments.end(), "-B")
+        == configure_command->arguments.end()
+      && configure_command->arguments.back() == "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "configure preset with binaryDir remains authoritative and exports compile commands");
+  configure_command = tuiide::BuildCommandService::configure(command_project,
+    command_build, command_settings, "missing", presets, session_error);
+  expect(!configure_command && session_error.find("no longer exists") != std::string::npos,
+    "removed configure preset produces an actionable command error");
+
+  const tuiide::CMakeTarget command_target{"demo", "Release", command_build / "demo"};
+  auto build_command = tuiide::BuildCommandService::build(command_project,
+    command_build, 7, {}, &command_target, false);
+  expect(build_command.arguments == std::vector<std::string>{
+      "cmake", "--build", command_build.string(), "--parallel", "7",
+      "--target", "demo", "--config", "Release"}
+      && build_command.working_directory.empty(),
+    "build command applies the configured parallelism, target, and configuration");
+  build_command = tuiide::BuildCommandService::build(command_project,
+    command_build, 0, "dev-build", nullptr, true);
+  expect(build_command.arguments == std::vector<std::string>{
+      "cmake", "--build", "--preset", "dev-build", "--parallel", "1", "--target", "clean"}
+      && build_command.working_directory == command_project,
+    "preset clean command uses the project working directory and defensively clamps parallelism");
   std::filesystem::remove_all(preset_source, cleanup_error);
 
   const std::vector<std::uint32_t> semantic_data{

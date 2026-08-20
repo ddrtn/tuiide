@@ -328,6 +328,85 @@ Rapid editor changes are coalesced into a single LSP update after 150 ms. Intera
 requests flush pending text first, superseded requests are cancelled, and responses
 for an older revision or a document that is no longer active are discarded.
 
+Document ownership is isolated in `DocumentSession`: it normalizes and deduplicates
+opened paths, maintains the active document invariant, and owns the bounded reopen
+history. `IdeWindow` remains responsible for prompts and editor/LSP presentation.
+
+CMake command construction is isolated in `BuildCommandService`. Configure, build,
+clean, preset, target, configuration, and parallel-job arguments are assembled as an
+argument vector, so paths containing spaces never pass through a shell.
+
+Project identity and settings are owned by `ProjectSession`. Opening a project validates
+its CMake root, loads settings or reports the default-settings fallback, and updates the
+build, debug-session, and recovery paths as one consistent state transition.
+
+Reusable modal UI lives in `ui_dialogs.cpp`. Its common base keeps dialogs centered and
+responsive, while prompt, selection, command-palette, text, and confirmation dialogs no
+longer increase the size of the main window implementation.
+
+Project creation and source-import wizard UI lives in `project_dialogs.cpp`; generation,
+validation, and filesystem changes remain in the independently tested project core modules.
+The same module owns project-scoped file and directory choosers, including safe navigation
+and subdirectory creation without allowing a new source path to escape the project root.
+`ProjectSettingsDialog` uses a private implementation in that module, keeping its Final Cut
+widgets, responsive layout, and field parsing out of the main-window translation unit.
+
+Launch-configuration UI is isolated in `run_dialogs.cpp`. It resolves project-relative
+paths and collects the selected CMake target, executable override, arguments, environment,
+stdin source, pre-launch build, and optional external-terminal command.
+
+Breakpoint and logpoint properties are isolated in `debug_dialogs.cpp`. The dialog edits
+enabled state, condition, ignored-hit count, and log message while keeping validation out
+of the main-window implementation.
+
+Find/Replace UI and its request model live in `search_dialogs.cpp`. The dialog returns a
+single typed action for next/previous, one/all replacements, or result collection together
+with case, whole-word, regular-expression, and project-scope options.
+
+C++ class-template options are part of `project_dialogs.cpp`: namespace and inheritance,
+base header, constructor/destructor policy, final classes, and copy/move operations. The
+main-window implementation no longer defines any dialog classes.
+
+`BuildWorkflow` owns the CMake operation/stage state machine. It chooses the initial stage
+from the requested operation and configured-build-tree state, then drives configure-to-build
+and rebuild clean-to-build transitions independently of process and UI code.
+The workflow also owns an optional Run or Debug continuation for pre-launch builds; it
+survives configure/build stages, is cleared on cancellation, and is consumed once on success.
+The main window has no writable aliases for operation or stage; all state changes pass through
+the workflow API, while status and command availability use its read-only accessors.
+Build percentage and operation/stage timing are owned by the same workflow; entering a new
+stage clears stale progress, and the status bar reads a consistent snapshot from one owner.
+`BuildOutputCollector` joins output split across process reads, parses progress only from
+complete lines, accumulates compiler diagnostics, and flushes an unterminated final line
+when the operation ends. This keeps stream framing and diagnostic state out of the window.
+
+`CMakeSession` owns the active configure/build preset pair, preset-derived build directory,
+executable targets, and the preferred target/configuration restored from the debug session.
+It validates restored presets, clears incompatible selections, and preserves a target across
+CMake File API refreshes by matching both its name and configuration. `ProjectSession` keeps
+the project-configured default build directory and session paths independent of that choice.
+
+`BuildSession` is the single owner of the asynchronous CMake process, workflow state, streamed
+output, progress, and compiler diagnostics. Its polling result combines output with a typed
+stage-completion event and performs a final drain after joining the process reader, preventing
+trailing build output from being lost. Finish and cancellation consistently flush partial
+diagnostics and reset workflow state while keeping completed diagnostics available to Problems.
+
+`LspUiController` tracks clangd readiness and diagnostic/semantic-token revisions without
+duplicating counters in the window. It debounces Outline requests per document version, rejects
+stale responses, invalidates rendered symbols immediately after edits, and forces stale Outline
+content to clear after server restart. Completion and code-action responses use the same
+path-and-version guard, while feedback operation names are mapped in one tested location.
+All queued clangd responses are drained together into a typed `LspEventBatch`; the window no
+longer calls individual `take*()` methods. Routing removes completion and code-action payloads
+that belong to another path or document version before any modal UI is opened, while navigation,
+workspace edits, symbols, hierarchies, server requests, and feedback remain in the same poll batch.
+
+`DebugUiController` converts GDB state snapshots into typed Debug and Breakpoints rows. Each row
+carries its thread, frame, watch, variable, or source action directly, replacing parallel metadata
+arrays in the window. Stable signatures suppress redundant redraws, debugger lifecycle changes
+refresh unresolved breakpoint labels, and the debuggee-finished transition is emitted only once.
+
 ## Clipboard behavior
 
 Copy and cut always update the in-process clipboard. When available, the same
