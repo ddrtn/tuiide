@@ -407,6 +407,17 @@ carries its thread, frame, watch, variable, or source action directly, replacing
 arrays in the window. Stable signatures suppress redundant redraws, debugger lifecycle changes
 refresh unresolved breakpoint labels, and the debuggee-finished transition is emitted only once.
 
+`EventLog` owns the bounded Output and Build histories. Every record has a channel, source,
+severity, global sequence, and per-channel revision while retaining the existing plain-text panel
+presentation. Clearing or copying a panel now uses the same owner as rendering. Every Project,
+Editor, Build, Run, GDB, clangd, and system call site publishes an explicit source and severity;
+the former untyped Output compatibility wrappers have been removed.
+
+`RunSession` owns both execution transports: captured external-terminal launcher processes and
+the integrated PTY. It also lends a separately tracked PTY console to the GDB inferior, so Run
+completion, console input, resizing, interruption, and shutdown no longer depend on parallel
+flags in the main window.
+
 ## Clipboard behavior
 
 Copy and cut always update the in-process clipboard. When available, the same

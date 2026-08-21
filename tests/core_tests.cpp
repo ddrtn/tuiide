@@ -1,6 +1,7 @@
 #include "tuiide/document.hpp"
 #include "tuiide/document_labels.hpp"
 #include "tuiide/document_session.hpp"
+#include "tuiide/event_log.hpp"
 #include "tuiide/build_command.hpp"
 #include "tuiide/build_diagnostic.hpp"
 #include "tuiide/build_output_collector.hpp"
@@ -32,6 +33,7 @@
 #include "tuiide/project_session.hpp"
 #include "tuiide/project_tree.hpp"
 #include "tuiide/recovery.hpp"
+#include "tuiide/run_session.hpp"
 #include "tuiide/syntax.hpp"
 #include "tuiide/tab_bar_layout.hpp"
 #include "tuiide/text_display.hpp"
@@ -301,6 +303,35 @@ int main() {
     "debug UI controller reports the debuggee-finished transition once");
   expect(debug_ui.debugRow(50) == nullptr && debug_ui.breakpointRow(50) == nullptr,
     "debug UI controller rejects out-of-range panel selections");
+
+  tuiide::EventLog event_log;
+  event_log.publish(tuiide::EventChannel::Output, tuiide::EventSource::Project,
+    tuiide::EventSeverity::Warning, "project warning\n");
+  event_log.publish(tuiide::EventChannel::Build, tuiide::EventSource::Build,
+    tuiide::EventSeverity::Success, "build complete\n");
+  expect(event_log.text(tuiide::EventChannel::Output) == "project warning\n"
+      && event_log.text(tuiide::EventChannel::Build) == "build complete\n",
+    "structured event log keeps Output and Build channels independent");
+  expect(event_log.events(tuiide::EventChannel::Output).front().source
+        == tuiide::EventSource::Project
+      && event_log.events(tuiide::EventChannel::Output).front().severity
+        == tuiide::EventSeverity::Warning
+      && event_log.events(tuiide::EventChannel::Output).front().sequence == 1
+      && event_log.events(tuiide::EventChannel::Build).front().sequence == 2,
+    "structured events retain source, severity, and global sequence metadata");
+  const auto output_revision = event_log.revision(tuiide::EventChannel::Output);
+  event_log.publish(tuiide::EventChannel::Output, tuiide::EventSource::System,
+    tuiide::EventSeverity::Information, std::string(150001, 'x'));
+  expect(event_log.text(tuiide::EventChannel::Output).size() == 120000
+      && event_log.events(tuiide::EventChannel::Output).size() == 1
+      && event_log.events(tuiide::EventChannel::Output).front().message.size() == 120000,
+    "event log trims text and structured history at the same event boundary");
+  event_log.clear(tuiide::EventChannel::Output);
+  expect(event_log.text(tuiide::EventChannel::Output).empty()
+      && event_log.events(tuiide::EventChannel::Output).empty()
+      && event_log.revision(tuiide::EventChannel::Output) > output_revision
+      && !event_log.text(tuiide::EventChannel::Build).empty(),
+    "clearing one event channel preserves the other channel");
 
   tuiide::Document document;
   document.insert("int main() {");
@@ -851,6 +882,27 @@ int main() {
   expect(terminal_exit && *terminal_exit == 0 && terminal_output.find("10 40") != std::string::npos
       && terminal_output.find("received:интерактивный ввод") != std::string::npos,
     "PTY exposes dimensions and transports terminal input and output");
+
+  tuiide::RunSession run_session;
+  expect(run_session.start({"sh", "-c", "printf 'run-session-output'"},
+      tuiide::RunTransport::Process, {}, {}),
+    "run session starts the selected process transport");
+  std::string run_output;
+  std::optional<int> run_completion;
+  for (int attempt = 0; attempt < 200 && !run_completion; ++attempt) {
+    auto poll = run_session.poll();
+    for (const auto& chunk : poll.output) run_output += chunk;
+    run_completion = poll.completion;
+    if (!run_completion) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  expect(run_completion && *run_completion == 0 && run_output == "run-session-output"
+      && !run_session.running(),
+    "run session reports output and completion as one lifecycle transition");
+  expect(run_session.openDebugConsole(72, 18) && !run_session.running()
+      && run_session.consoleRunning() && !run_session.debugTerminal().empty(),
+    "debug console PTY does not masquerade as an active Run command");
+  run_session.stop();
+  expect(!run_session.consoleRunning(), "stopping a run session also closes its debug console PTY");
 
   tuiide::TerminalBuffer terminal_buffer;
   terminal_buffer.append("progress 10%\rprogress 90%\x1b[K\n\x1b[31mошибка\x1b[0m\n");

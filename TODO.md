@@ -169,8 +169,15 @@
     - [x] Централизовать сбор и маршрутизацию остальных LSP response payloads
       через типизированный `LspEventBatch`.
   - [x] Вынести синхронизацию debugger state и панелей в `DebugUiController`.
-- [ ] Ввести структурированный event/log API вместо прямого `appendOutput()` из
+- [x] Ввести структурированный event/log API вместо прямого `appendOutput()` из
   всех сценариев и централизовать состояние фоновых процессов.
+  - [x] Вынести историю Output/Build, channel/source/severity, sequence/revision,
+    очистку и ограничение размера в тестируемый `EventLog`; перевести основные
+    Build/Run/Debug/LSP потоки на структурированные события.
+  - [x] Объединить process/PTY lifecycle обычного запуска и PTY-консоль GDB в
+    отдельный `RunSession`, сохранив разные состояния Run и Debug Console.
+  - [x] Перевести оставшиеся project/editor/system сообщения с compatibility
+    wrapper на явные source/severity.
 - [ ] Покрыть unit-тестами историю undo/dirty, atomic save, URI, LSP errors,
   GDB/MI parser, project import/settings и rollback CMake-операций.
 - [ ] Расширить integration tests: C и C++, paths с пробелами/Unicode, Ninja и

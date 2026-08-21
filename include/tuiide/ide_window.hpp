@@ -17,6 +17,7 @@
 #include "tuiide/debug_session.hpp"
 #include "tuiide/debug_ui_controller.hpp"
 #include "tuiide/document_session.hpp"
+#include "tuiide/event_log.hpp"
 #include "tuiide/gdb_client.hpp"
 #include "tuiide/lsp_client.hpp"
 #include "tuiide/lsp_ui_controller.hpp"
@@ -30,6 +31,7 @@
 #include "tuiide/project_session.hpp"
 #include "tuiide/project_tree.hpp"
 #include "tuiide/recovery.hpp"
+#include "tuiide/run_session.hpp"
 #include "tuiide/sidebar_tabs.hpp"
 #include "tuiide/text_search.hpp"
 #include "tuiide/workspace_edit.hpp"
@@ -234,8 +236,8 @@ class IdeWindow final : public finalcut::FDialog {
   void debugRestart();
   auto applyWorkspaceEdit(WorkspaceEdit edit, std::string title = "Workspace edit",
     std::string* failure_reason = nullptr) -> bool;
-  void appendOutput(std::string_view text);
-  void appendBuildOutput(std::string_view text);
+  void publishEvent(EventSource source, EventSeverity severity, std::string message,
+    EventChannel channel = EventChannel::Output);
   enum class NotificationKind { Information, Success, Warning, Error };
   void showNotification(std::string message, NotificationKind kind = NotificationKind::Information,
       std::chrono::milliseconds duration = std::chrono::milliseconds{4000});
@@ -278,11 +280,9 @@ class IdeWindow final : public finalcut::FDialog {
   GdbClient gdb_;
   DebugUiController debug_ui_;
   BuildSession build_session_;
-  AsyncProcess run_process_;
-  PseudoTerminal terminal_;
+  RunSession run_session_;
   std::size_t diagnostic_index_{};
-  std::string output_text_;
-  std::string build_output_text_;
+  EventLog event_log_;
   std::string problems_filter_;
   std::string problems_signature_;
   std::string problems_text_;
@@ -290,7 +290,6 @@ class IdeWindow final : public finalcut::FDialog {
   std::vector<ProblemRow> problem_rows_;
   int timer_id_{};
   bool debug_state_dirty_{};
-  bool run_active_{};
   std::chrono::steady_clock::time_point notification_deadline_{};
   finalcut::FWidget* context_focus_{};
   finalcut::FMenu* active_context_menu_{};

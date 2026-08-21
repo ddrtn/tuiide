@@ -47,6 +47,7 @@ add_library(tuiide_core
   src/document.cpp
   src/document_session.cpp
   src/document_labels.cpp
+  src/event_log.cpp
   src/syntax.cpp
   src/tab_bar_layout.cpp
   src/text_display.cpp
@@ -62,6 +63,7 @@ add_library(tuiide_core
   src/project_template.cpp
   src/project_tree.cpp
   src/recovery.cpp
+  src/run_session.cpp
   src/workspace_edit.cpp
   src/workspace_file_transaction.cpp
   src/lsp_client.cpp
