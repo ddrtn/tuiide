@@ -35,10 +35,33 @@
   если команда сейчас невозможна.
 - [x] Добавить Debug Stop и Restart. После завершения inferior корректно обновлять
   статус, стек, locals и доступность команд.
-- [ ] Добавить PTY-тест, проходящий каждый пункт меню в допустимом и недопустимом
+- [x] Добавить PTY-тест, проходящий каждый пункт меню в допустимом и недопустимом
   контексте; отдельно проверить ответы LSP «нет результатов» и ошибки процесса.
-  Сейчас PTY покрывает File menu и недоступные File/Search/LSP/CMake/Run/Debug
-  команды; LSP integration отдельно проверяет пустой ответ и аварийный clangd.
+  PTY suite покрывает все верхние меню, модальные normal/cancel/error сценарии,
+  пустые/ошибочные LSP-ответы и интерактивные GDB-операции.
+  - [x] Добавить обход всех девяти верхних меню, видимый Project Refresh и
+    normal/empty clipboard-сценарии; сохранить полный configure/build/run smoke.
+  - [x] Выполнить из PTY оставшиеся изменяющие проект команды и каждый модальный
+    диалог в normal/cancel/error вариантах.
+    - [x] Покрыть создание каталога, rename/move и удаление пустого каталога:
+      normal, cancel и отказ для пути вне проекта без изменений на диске.
+    - [x] Покрыть шаблон заголовочного файла и удаление файла: normal, cancel,
+      duplicate-path error и запрет удаления изменённого открытого документа.
+    - [x] Покрыть New Project и Project Settings: normal, cancel и безопасный
+      error-путь с проверкой файловой системы и сохранённых настроек.
+    - [x] Покрыть Window/Help: справку, About, фильтр Problems, copy/clear,
+      защиту последней sidebar-панели и сброс размеров.
+    - [x] Покрыть Tools: shortcut table, настройку shortcut, темы и цвета в
+      normal/cancel/error и no-project вариантах с проверкой сохранения.
+    - [x] Покрыть Search: find next/previous, go-to-line, project search,
+      replace и Problems в normal/cancel/error вариантах.
+    - [x] Покрыть оставшиеся LSP/Debug диалоги.
+      - [x] Проверить Hover, Definition, References, Rename и Code Actions через
+        fake clangd: normal/empty/error, отмену preview и неизменность файла.
+      - [x] Проверить Signature Help, Workspace Symbols и Call/Type Hierarchy
+        через меню Tools: normal/empty/error и отмену выбора результата.
+      - [x] Проверить breakpoint properties, watches, evaluate/set variable,
+        disassembly и memory: normal/cancel/error и сохранение debug session.
 
 ## P1 — проекты и CMake
 
@@ -178,25 +201,39 @@
     отдельный `RunSession`, сохранив разные состояния Run и Debug Console.
   - [x] Перевести оставшиеся project/editor/system сообщения с compatibility
     wrapper на явные source/severity.
-- [ ] Покрыть unit-тестами историю undo/dirty, atomic save, URI, LSP errors,
+- [x] Покрыть unit-тестами историю undo/dirty, atomic save, URI, LSP errors,
   GDB/MI parser, project import/settings и rollback CMake-операций.
-- [ ] Расширить integration tests: C и C++, paths с пробелами/Unicode, Ninja и
+  - [x] Проверить ветвление undo/redo, clean-state после save, BOM/CRLF,
+    permissions, отсутствие временных файлов и неуспешный Save As.
+  - [x] Проверить Unicode/reserved file URI, malformed URI и типизированное
+    извлечение ошибок JSON-RPC без исключений на повреждённом ответе.
+  - [x] Проверить вложенные GDB/MI records, escapes, stream/error records и
+    детерминированный отказ на оборванном вводе.
+  - [x] Проверить import/settings, stale preview, validation и rollback
+    файловых и CMake-aware операций без частично применённых изменений.
+- [x] Расширить integration tests: C и C++, paths с пробелами/Unicode, Ninja и
   Makefiles, несколько targets/configurations, external file changes и recovery.
-- [ ] Добавить ASan/UBSan-конфигурацию, clang-tidy/cppcheck и отдельный длительный
+  - [x] Проверить C++ smoke project в Unicode/space path и отдельную C17 matrix:
+    Unix Makefiles/Debug, Ninja/Release, два executable targets, File API и запуск.
+  - [x] Проверить внешнее изменение/удаление открытого файла и полный recovery
+    lifecycle через пользовательский TUI-сценарий.
+  - [x] Пройти через PTY импорт C++ каталога, создание build-каталога, preview,
+    configure/build, launch arguments и интерактивный stdin для Run и Debug.
+- [x] Добавить ASan/UBSan-конфигурацию, clang-tidy/cppcheck и отдельный длительный
   тест больших файлов; обычная сборка на разработческой машине остаётся однопоточной.
-- [ ] Добавить `--help`, `--version`, `--project`, лог-файл/diagnostic mode и ясные
+- [x] Добавить `--help`, `--version`, `--project`, лог-файл/diagnostic mode и ясные
   сообщения об отсутствующих clangd, CMake, GDB и clipboard helpers.
-- [ ] Подготовить установку/пакетирование для Linux amd64, man page и проверку
+- [x] Подготовить установку/пакетирование для Linux amd64, man page и проверку
   обновления vendored Final Cut без локальных патчей.
 
 ## Критерии полноценной базовой версии
 
-- [ ] Ни один доступный пункт меню не остаётся без видимого результата.
-- [ ] Новый или импортированный C/C++ проект проходит configure/build/run/debug
+- [x] Ни один доступный пункт меню не остаётся без видимого результата.
+- [x] Новый или импортированный C/C++ проект проходит configure/build/run/debug
   только из интерфейса, включая аргументы программы и интерактивный stdin.
-- [ ] Search/Replace, completion, hover, navigation, rename, formatting и quick fix
+- [x] Search/Replace, completion, hover, navigation, rename, formatting и quick fix
   имеют рабочие normal/empty/error сценарии.
-- [ ] Переключение и закрытие проектов не оставляет процессов, документов,
+- [x] Переключение и закрытие проектов не оставляет процессов, документов,
   диагностик, targets, breakpoints или настроек от предыдущего проекта.
-- [ ] Полный CTest проходит; PTY suite проверяет меню, основные диалоги и жизненный
+- [x] Полный CTest проходит; PTY suite проверяет меню, основные диалоги и жизненный
   цикл проекта, а ограничения ptrace отмечаются как явный skip.

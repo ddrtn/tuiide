@@ -17,7 +17,10 @@ auto lspFileUri(const std::filesystem::path& path) -> std::string {
   const auto value = std::filesystem::absolute(path).generic_string();
   std::string result = "file://";
   for (const unsigned char c : value) {
-    const bool unreserved = std::isalnum(c) || c == '-' || c == '.' || c == '_' || c == '~' || c == '/';
+    const bool ascii_alphanumeric = (c >= 'a' && c <= 'z')
+      || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+    const bool unreserved = ascii_alphanumeric
+      || c == '-' || c == '.' || c == '_' || c == '~' || c == '/';
     if (unreserved) result.push_back(static_cast<char>(c));
     else {
       result.push_back('%');
@@ -30,24 +33,46 @@ auto lspFileUri(const std::filesystem::path& path) -> std::string {
 
 auto lspPathFromFileUri(std::string_view value) -> std::filesystem::path {
   constexpr std::string_view prefix = "file://";
-  if (value.starts_with(prefix)) value.remove_prefix(prefix.size());
+  if (!value.starts_with(prefix)) return {};
+  value.remove_prefix(prefix.size());
+  constexpr std::string_view localhost = "localhost";
+  if (value.starts_with(localhost)) value.remove_prefix(localhost.size());
+  if (value.empty() || value.front() != '/') return {};
   std::string decoded;
   decoded.reserve(value.size());
   for (std::size_t i = 0; i < value.size(); ++i) {
-    if (value[i] == '%' && i + 2 < value.size()) {
+    if (value[i] == '%') {
       const auto hex = [](char c) -> int {
         if (c >= '0' && c <= '9') return c - '0';
         if (c >= 'a' && c <= 'f') return c - 'a' + 10;
         if (c >= 'A' && c <= 'F') return c - 'A' + 10;
         return -1;
       };
+      if (i + 2 >= value.size()) return {};
       const int high = hex(value[i + 1]);
       const int low = hex(value[i + 2]);
-      if (high >= 0 && low >= 0) { decoded.push_back(static_cast<char>(high * 16 + low)); i += 2; continue; }
+      if (high < 0 || low < 0 || (high == 0 && low == 0)) return {};
+      decoded.push_back(static_cast<char>(high * 16 + low));
+      i += 2;
+      continue;
     }
+    if (value[i] == '?' || value[i] == '#') return {};
     decoded.push_back(value[i]);
   }
   return std::filesystem::path(decoded).lexically_normal();
+}
+
+auto lspResponseError(const json& message) -> std::optional<std::string> {
+  if (!message.is_object() || !message.contains("error")) return std::nullopt;
+  const auto& error = message["error"];
+  if (!error.is_object()) return "Malformed JSON-RPC error response";
+  if (error.contains("message") && error["message"].is_string()) {
+    auto text = error["message"].get<std::string>();
+    if (!text.empty()) return text;
+  }
+  if (error.contains("code") && error["code"].is_number_integer())
+    return "JSON-RPC error " + error["code"].dump();
+  return "Unknown JSON-RPC error";
 }
 
 auto parseWorkspaceEdit(const json& value) -> WorkspaceEdit {
@@ -544,14 +569,12 @@ void LspClient::handle(const json& message) {
         return LspOperation::TypeHierarchy;
       return std::nullopt;
     };
-    const auto errorMessage = [&message] {
-      if (!message.contains("error") || !message["error"].is_object()) return std::string{};
-      return message["error"].value("message", std::string("unknown JSON-RPC error"));
-    };
+    const auto response_error = lspResponseError(message);
     if (id == initialize_id_) {
       initialize_id_ = 0;
-      if (const auto error = errorMessage(); !error.empty()) {
-        feedback_.push_back({LspOperation::Server, true, "clangd initialization failed: " + error});
+      if (response_error) {
+        feedback_.push_back({LspOperation::Server, true,
+          "clangd initialization failed: " + *response_error});
         process_started_ = false; process_.stop();
         return;
       }
@@ -581,8 +604,9 @@ void LspClient::handle(const json& message) {
       if (open == open_documents_.end() || open->second.version != response_context->version
           || (active_document_set_ && active_document_path_ != response_context->path)) return;
     }
-    if (const auto error = errorMessage(); !error.empty()) {
-      if (const auto requested_operation = operation()) feedback_.push_back({*requested_operation, true, error});
+    if (response_error) {
+      if (const auto requested_operation = operation())
+        feedback_.push_back({*requested_operation, true, *response_error});
       else if (const auto semantic = semantic_requests_.find(id); semantic != semantic_requests_.end()) {
         semantic_dirty_.insert(semantic->second.path);
         semantic_requests_.erase(semantic);
@@ -610,7 +634,8 @@ void LspClient::handle(const json& message) {
       queueSemanticTokens(path);
     } else if (id == completion_id_) {
       const auto result = message.value("result", json{});
-      const auto items = result.is_array() ? result : result.value("items", json::array());
+      const auto items = result.is_array() ? result
+        : (result.is_object() ? result.value("items", json::array()) : json::array());
       for (const auto& item : items) {
         if (completions_.size() >= 100) break;
         if (!item.is_object()) continue;

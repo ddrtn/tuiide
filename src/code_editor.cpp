@@ -64,6 +64,9 @@ void CodeEditor::setDocument(Document* document) {
 void CodeEditor::setDiagnostics(const std::vector<Diagnostic>* diagnostics) { diagnostics_ = diagnostics; rebuildDiagnosticIndex(); redraw(); }
 void CodeEditor::setSemanticTokens(const std::vector<SemanticToken>* tokens) { semantic_tokens_ = tokens; rebuildSemanticIndex(); redraw(); }
 void CodeEditor::setChangedHandler(std::function<void()> handler) { changed_handler_ = std::move(handler); }
+void CodeEditor::setFeedbackHandler(std::function<void(std::string, bool)> handler) {
+  feedback_handler_ = std::move(handler);
+}
 void CodeEditor::setCommandHandler(std::function<bool(finalcut::FKey)> handler) { command_handler_ = std::move(handler); }
 void CodeEditor::setBreakpointProvider(std::function<bool(std::size_t)> provider) { breakpoint_provider_ = std::move(provider); }
 void CodeEditor::setIndentation(unsigned width, bool use_spaces) {
@@ -196,13 +199,23 @@ void CodeEditor::onKeyPress(finalcut::FKeyEvent* event) {
   bool edited = false;
   switch (key) {
     case finalcut::FKey::Ctrl_a: selection_anchor_ = Position{}; document_->setCursor({document_->lines().size() - 1, document_->lines().back().size()}); break;
-    case finalcut::FKey::Ctrl_c: if (const auto range = selectionRange()) clipboard_.copy(document_->extractRange(range->first, range->second)); break;
+    case finalcut::FKey::Ctrl_c:
+      if (const auto range = selectionRange()) {
+        clipboard_.copy(document_->extractRange(range->first, range->second));
+        if (feedback_handler_) feedback_handler_("Copied selection to clipboard\n", false);
+      }
+      break;
     case finalcut::FKey::Ctrl_x:
-      if (const auto range = selectionRange()) { clipboard_.copy(document_->extractRange(range->first, range->second)); edited = replaceSelection(""); }
+      if (const auto range = selectionRange()) {
+        clipboard_.copy(document_->extractRange(range->first, range->second));
+        edited = replaceSelection("");
+        if (feedback_handler_) feedback_handler_("Cut selection to clipboard\n", false);
+      }
       break;
     case finalcut::FKey::Ctrl_v: {
       const auto clipboard = clipboard_.paste();
       if (!clipboard.empty()) { if (!replaceSelection(clipboard)) document_->insert(clipboard); edited = true; }
+      else if (feedback_handler_) feedback_handler_("Paste unavailable: clipboard is empty\n", true);
       break;
     }
     case finalcut::FKey::Shift_left: startSelection(); document_->moveLeft(); break;
@@ -371,7 +384,13 @@ void CodeEditor::moveLine(bool down) {
   const auto before = document_->version();
   const auto [first, last] = selectedLines();
   document_->moveLines(first, last, down); clearSelection();
-  if (document_->version() != before) changed(); else redraw();
+  if (document_->version() != before) changed();
+  else {
+    redraw();
+    if (feedback_handler_) feedback_handler_(down
+      ? "Move line down unavailable: already at the end of the document\n"
+      : "Move line up unavailable: already at the beginning of the document\n", true);
+  }
   ensureVisible();
 }
 

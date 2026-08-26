@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 
@@ -21,6 +23,7 @@ struct IdeEvent {
 
 class EventLog {
  public:
+  auto openFile(const std::filesystem::path& path, std::string& error) -> bool;
   void publish(EventChannel channel, EventSource source, EventSeverity severity,
     std::string message);
   void clear(EventChannel channel);
@@ -29,6 +32,7 @@ class EventLog {
   [[nodiscard]] auto text(EventChannel channel) const noexcept -> const std::string&;
   [[nodiscard]] auto events(EventChannel channel) const noexcept -> const std::deque<IdeEvent>&;
   [[nodiscard]] auto revision(EventChannel channel) const noexcept -> std::uint64_t;
+  [[nodiscard]] auto filePath() const noexcept -> const std::filesystem::path&;
 
  private:
   struct Stream {
@@ -44,6 +48,12 @@ class EventLog {
   Stream output_;
   Stream build_;
   std::uint64_t next_sequence_{1};
+  std::filesystem::path file_path_;
+  std::ofstream file_;
 };
+
+[[nodiscard]] auto eventChannelName(EventChannel channel) noexcept -> std::string_view;
+[[nodiscard]] auto eventSourceName(EventSource source) noexcept -> std::string_view;
+[[nodiscard]] auto eventSeverityName(EventSeverity severity) noexcept -> std::string_view;
 
 }  // namespace tuiide

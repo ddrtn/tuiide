@@ -20,6 +20,8 @@ namespace tuiide {
 [[nodiscard]] auto lspLanguageId(const std::filesystem::path& path) -> std::string;
 [[nodiscard]] auto lspFileUri(const std::filesystem::path& path) -> std::string;
 [[nodiscard]] auto lspPathFromFileUri(std::string_view value) -> std::filesystem::path;
+[[nodiscard]] auto lspResponseError(const nlohmann::json& message)
+  -> std::optional<std::string>;
 
 struct Diagnostic {
   std::filesystem::path path;

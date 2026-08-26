@@ -26,6 +26,7 @@ class CodeEditor final : public finalcut::FWidget {
   void setDiagnostics(const std::vector<Diagnostic>* diagnostics);
   void setSemanticTokens(const std::vector<SemanticToken>* tokens);
   void setChangedHandler(std::function<void()> handler);
+  void setFeedbackHandler(std::function<void(std::string, bool)> handler);
   void setCommandHandler(std::function<bool(finalcut::FKey)> handler);
   void setBreakpointProvider(std::function<bool(std::size_t)> provider);
   void setIndentation(unsigned width, bool use_spaces);
@@ -73,6 +74,7 @@ class CodeEditor final : public finalcut::FWidget {
   CppSyntaxCache syntax_cache_;
   CMakeSyntaxCache cmake_syntax_cache_;
   std::function<void()> changed_handler_;
+  std::function<void(std::string, bool)> feedback_handler_;
   std::function<bool(finalcut::FKey)> command_handler_;
   std::function<bool(std::size_t)> breakpoint_provider_;
   std::optional<Position> selection_anchor_;

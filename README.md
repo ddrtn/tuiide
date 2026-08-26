@@ -7,6 +7,17 @@ diagnostics, asynchronous CMake builds, program output, and GDB/MI debugging.
 clangd requests distinguish unavailable, empty, and error results. Completion
 shows symbol kinds and applies server-provided insertion edits only to the matching
 document revision.
+
+Start the IDE with a positional project directory or `--project PATH`. Use
+`--log-file FILE` to append every structured Output/Build event as a timestamped,
+tab-separated record. `--diagnostic` adds startup reports for CMake, clangd, GDB,
+and native clipboard helpers; missing tools are always explained in Output when
+their features are unavailable. `--help` and `--version` work without a terminal:
+
+```sh
+./tuiide-build/tuiide --project /path/to/project --diagnostic \
+  --log-file /tmp/tuiide.log
+```
 **Tools → Signature help** shows overloads, documentation, and the active parameter;
 symbol information is shown in a scrollable dialog.
 **Search → Find** provides persistent case-sensitive, whole-word, and regular-
@@ -116,6 +127,8 @@ debug processes. CMake presets remain available and command-line project setting
 override their corresponding configure values. A bounded `# BEGIN TUI IDE` block
 in `.gitignore` ignores `.tuiide-project.json` and an in-project build directory;
 changing settings refreshes only that block and preserves all user-written rules.
+Press `Alt+L` to open **Run → Launch configuration** directly; the arguments field
+receives initial focus for fast edit-run-debug cycles.
 Select a file and press `Delete` to remove its exact path arguments from project
 `CMakeLists.txt` files, with an optional separately confirmed deletion from disk.
 Press `Insert` in Project (or use **File → New from template**) to create a C/C++
@@ -208,6 +221,52 @@ cmake -S tuiide -B tuiide-build -DCMAKE_BUILD_TYPE=Release
 cmake --build tuiide-build --parallel 1
 ctest --test-dir tuiide-build --output-on-failure
 ```
+
+## Install and package
+
+Install into a chosen prefix without writing to the source tree:
+
+```sh
+cmake --install tuiide-build --prefix /opt/tuiide
+/opt/tuiide/bin/tuiide --version
+```
+
+The install includes `tuiide(1)`, bash completion, this README, and the vendored
+Final Cut license. CPack produces a relocatable Linux/amd64 archive and an amd64
+Debian package; the latter derives its shared-library dependencies from the build
+host and recommends the optional IDE tools:
+
+```sh
+(cd tuiide-build && cpack -G TGZ)
+(cd tuiide-build && cpack -G DEB)
+```
+
+Before updating Final Cut, require a clean submodule, fetch upstream, inspect and
+check out the intended upstream commit, then update the pinned commit/version in
+`tuiide/cmake/FinalCutVendor.cmake`. No patch files or edits inside the vendor tree
+are maintained. Verify the result with:
+
+```sh
+cmake --build tuiide-build --target check-finalcut-vendor --parallel 1
+ctest --test-dir tuiide-build --output-on-failure -L vendor
+```
+
+Optional quality configurations are disabled by default and never change the one-thread build
+policy on this development host. Enable ASan/UBSan and the large-file stress test with:
+
+```sh
+cmake -S tuiide -B tuiide-build -DCMAKE_BUILD_TYPE=Debug \
+  -DTUIIDE_ENABLE_SANITIZERS=ON -DTUIIDE_ENABLE_LONG_TESTS=ON
+cmake --build tuiide-build --parallel 1
+ctest --test-dir tuiide-build --output-on-failure -L long
+```
+
+`TUIIDE_ENABLE_CLANG_TIDY=ON` and `TUIIDE_ENABLE_CPPCHECK=ON` attach the respective analyzer to
+project-owned targets while excluding vendored Final Cut. CMake reports a configuration error
+when an explicitly requested analyzer is not installed. The long test is opt-in; it loads,
+edits, searches, atomically saves, and incrementally highlights large UTF-8 source files.
+LeakSanitizer remains enabled by default; only tracer/ptrace-based environments that cannot run
+LSan should invoke CTest through `cmake -E env ASAN_OPTIONS=detect_leaks=0 ctest ...`.
 
 When `clangd`, GDB, and `libutil` are available, CTest also builds a temporary
 CMake fixture and verifies semantic tokens, completion, diagnostics, GDB/MI

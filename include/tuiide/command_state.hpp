@@ -8,6 +8,7 @@ struct CommandContext {
   bool has_project{};
   bool has_document{};
   bool has_saved_document{};
+  bool document_modified{};
   bool source_document{};
   bool cmake_document{};
   bool has_selection{};

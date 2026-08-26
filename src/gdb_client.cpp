@@ -15,6 +15,14 @@ auto unsignedField(const MiValue& value, std::string_view name) -> std::size_t {
 auto intField(const MiValue& value, std::string_view name) -> int {
   try { return std::stoi(value.string(name)); } catch (...) { return 0; }
 }
+auto quoteMiArgument(std::string_view value) -> std::string {
+  std::string result = "\"";
+  for (const char character : value) {
+    if (character == '\\' || character == '"') result.push_back('\\');
+    result.push_back(character);
+  }
+  return result + '"';
+}
 auto disassemblyText(const MiRecord& record) -> std::string {
   const auto* instructions = record.result("asm_insns");
   if (!instructions) return {};
@@ -52,6 +60,20 @@ auto memoryText(const MiRecord& record) -> std::string {
   }
   return text.str();
 }
+}
+
+auto gdbEvaluateCommand(std::string_view expression) -> std::string {
+  return "-data-evaluate-expression " + quoteMiArgument(expression);
+}
+
+auto gdbDisassembleCommand(std::string_view address, std::size_t bytes) -> std::string {
+  return "-data-disassemble -s " + quoteMiArgument(address)
+    + " -e " + quoteMiArgument("(" + std::string(address) + ") + " + std::to_string(bytes))
+    + " -- 0";
+}
+
+auto gdbReadMemoryCommand(std::string_view address, std::size_t bytes) -> std::string {
+  return "-data-read-memory-bytes " + quoteMiArgument(address) + " " + std::to_string(bytes);
 }
 
 auto GdbClient::start(const std::filesystem::path& executable,
@@ -141,29 +163,30 @@ auto GdbClient::toggleVariable(std::size_t index) -> bool {
 }
 auto GdbClient::evaluate(std::string expression) -> bool {
   if (!stopped_ || expression.empty()) return false;
-  pending_expressions_[command("-data-evaluate-expression " + quote(std::filesystem::path(expression)))] =
+  const auto token = command(gdbEvaluateCommand(expression));
+  pending_expressions_[token] =
     {DebugResultKind::Evaluation, std::move(expression)};
   return true;
 }
 auto GdbClient::assign(std::string expression, std::string value) -> bool {
   if (!stopped_ || expression.empty() || value.empty()) return false;
   auto assignment = "(" + expression + ") = (" + value + ")";
-  pending_expressions_[command("-data-evaluate-expression " + quote(std::filesystem::path(assignment)))] =
+  const auto token = command(gdbEvaluateCommand(assignment));
+  pending_expressions_[token] =
     {DebugResultKind::Assignment, std::move(expression)};
   return true;
 }
 auto GdbClient::disassemble(std::string address, std::size_t bytes) -> bool {
   if (!stopped_ || address.empty() || bytes == 0 || bytes > 4096) return false;
-  const auto end = "(" + address + ") + " + std::to_string(bytes);
-  pending_expressions_[command("-data-disassemble -s " + quote(std::filesystem::path(address))
-    + " -e " + quote(std::filesystem::path(end)) + " -- 0")] =
+  const auto token = command(gdbDisassembleCommand(address, bytes));
+  pending_expressions_[token] =
     {DebugResultKind::Disassembly, std::move(address)};
   return true;
 }
 auto GdbClient::readMemory(std::string address, std::size_t bytes) -> bool {
   if (!stopped_ || address.empty() || bytes == 0 || bytes > 4096) return false;
-  pending_expressions_[command("-data-read-memory-bytes " + quote(std::filesystem::path(address))
-    + " " + std::to_string(bytes))] = {DebugResultKind::Memory, std::move(address)};
+  const auto token = command(gdbReadMemoryCommand(address, bytes));
+  pending_expressions_[token] = {DebugResultKind::Memory, std::move(address)};
   return true;
 }
 auto GdbClient::addWatch(std::string expression) -> bool {
@@ -520,9 +543,7 @@ auto GdbClient::breakpointKey(const std::filesystem::path& file, std::size_t lin
   return std::filesystem::absolute(file).lexically_normal().string() + ":" + std::to_string(line);
 }
 auto GdbClient::quote(const std::filesystem::path& value) -> std::string {
-  std::string result = "\"";
-  for (const char c : value.string()) { if (c == '\\' || c == '"') result.push_back('\\'); result.push_back(c); }
-  return result + '"';
+  return quoteMiArgument(value.string());
 }
 
 }  // namespace tuiide

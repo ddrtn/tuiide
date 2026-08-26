@@ -34,6 +34,7 @@
 #include "tuiide/run_session.hpp"
 #include "tuiide/sidebar_tabs.hpp"
 #include "tuiide/text_search.hpp"
+#include "tuiide/tool_discovery.hpp"
 #include "tuiide/workspace_edit.hpp"
 
 #include <final/final.h>
@@ -110,7 +111,8 @@ class CommandListView final : public finalcut::FListView {
 
 class IdeWindow final : public finalcut::FDialog {
  public:
-  explicit IdeWindow(std::filesystem::path root, finalcut::FWidget* parent = nullptr);
+  explicit IdeWindow(std::filesystem::path root, std::filesystem::path log_file = {},
+    bool diagnostic = false, finalcut::FWidget* parent = nullptr);
   ~IdeWindow() override;
 
  protected:
@@ -192,7 +194,7 @@ class IdeWindow final : public finalcut::FDialog {
   void deleteSelectedProjectDirectory();
   void renameSelectedProjectEntry();
   void openFile(const std::filesystem::path& path);
-  auto save() -> bool;
+  auto save(bool report = true) -> bool;
   auto saveAllDocuments() -> bool;
   auto saveAs() -> bool;
   void find();
@@ -283,6 +285,8 @@ class IdeWindow final : public finalcut::FDialog {
   RunSession run_session_;
   std::size_t diagnostic_index_{};
   EventLog event_log_;
+  ExternalTools external_tools_;
+  bool diagnostic_mode_{};
   std::string problems_filter_;
   std::string problems_signature_;
   std::string problems_text_;
@@ -368,7 +372,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem separator1{&menu};
     finalcut::FMenuItem run{finalcut::FKey::F6, "&Run", &menu};
     finalcut::FMenuItem stop_run{"S&top program", &menu};
-    finalcut::FMenuItem launch_settings{"Launch &configuration...", &menu};
+    finalcut::FMenuItem launch_settings{finalcut::FKey::Meta_l, "&Launch configuration...", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem configure_preset{finalcut::FKey::Meta_p, "Configure &preset...", &menu};
     finalcut::FMenuItem build_preset{finalcut::FKey::Meta_b, "&Build preset...", &menu};
@@ -405,7 +409,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem watch{finalcut::FKey::Meta_w, "Add &watch...", &menu};
     finalcut::FMenuItem evaluate{"&Evaluate expression...", &menu};
     finalcut::FMenuItem set_variable{"Set &variable value...", &menu};
-    finalcut::FMenuItem disassembly{"&Disassembly...", &menu};
+    finalcut::FMenuItem disassembly{"Disassembl&y...", &menu};
     finalcut::FMenuItem memory{"&Memory...", &menu};
     finalcut::FMenuItem registers{finalcut::FKey::Meta_r, "Toggle &registers", &menu};
   };
@@ -421,7 +425,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem organize_includes{"Organize &includes", &menu};
     finalcut::FMenuItem switch_source_header{"Switch header / &source", &menu};
     finalcut::FMenuItem workspace_symbols{"&Workspace symbols...", &menu};
-    finalcut::FMenuItem call_hierarchy{"Call &hierarchy...", &menu};
+    finalcut::FMenuItem call_hierarchy{"Ca&ll hierarchy...", &menu};
     finalcut::FMenuItem type_hierarchy{"Type hierarch&y...", &menu};
     finalcut::FMenuItem separator_lsp{&menu};
     finalcut::FMenuItem format_document{"Format &document", &menu};

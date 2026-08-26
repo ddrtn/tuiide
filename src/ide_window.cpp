@@ -18,6 +18,7 @@
 #include <map>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <unordered_set>
 
 namespace tuiide {
@@ -45,6 +46,7 @@ auto ideCommands() -> const std::vector<IdeCommand>& {
     {"run.debug", "Debug: Start / Continue", finalcut::FKey::F5, "F5"},
     {"run.run", "Run: Run", finalcut::FKey::F6, "F6"},
     {"run.build", "Run: Build", finalcut::FKey::F7, "F7"},
+    {"run.launchSettings", "Run: Launch Configuration", finalcut::FKey::Meta_l, "Alt+L"},
     {"debug.breakpoint", "Debug: Toggle Breakpoint", finalcut::FKey::F9, "F9"},
     {"debug.stepInto", "Debug: Step Into", finalcut::FKey::F11, "F11"},
     {"debug.stepOut", "Debug: Step Out", finalcut::FKey::F12, "F12"},
@@ -128,12 +130,14 @@ struct ProjectNode {
 };
 }  // namespace
 
-IdeWindow::IdeWindow(std::filesystem::path initial_root, finalcut::FWidget* parent)
+IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path log_file,
+    bool diagnostic, finalcut::FWidget* parent)
     : FDialog(parent), root_(project_session_.root()), build_dir_(cmake_session_.buildDirectory()),
       session_file_(project_session_.sessionFile()), recovery_file_(project_session_.recoveryFile()),
       project_history_file_(defaultProjectHistoryPath()), project_settings_(project_session_.settings()),
       documents_(document_session_.documents()), closed_documents_(document_session_.closedDocuments()),
-      document_(document_session_.activeDocument()), active_document_(document_session_.activeIndex()) {
+      document_(document_session_.activeDocument()), active_document_(document_session_.activeIndex()),
+      external_tools_(discoverExternalTools()), diagnostic_mode_(diagnostic) {
   setText("TUI IDE — C/C++");
   unsetBorder();
   unsetTitleBarButtonVisibility();
@@ -179,6 +183,10 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, finalcut::FWidget* pare
     refreshTabs();
     updateStatus();
   });
+  editor_.setFeedbackHandler([this](std::string message, bool warning) {
+    publishEvent(EventSource::Editor,
+      warning ? EventSeverity::Warning : EventSeverity::Success, std::move(message));
+  });
   editor_.setCommandHandler([this](finalcut::FKey key) { return handleCommand(key); });
   editor_.setBreakpointProvider([this](std::size_t line) {
     return document_ && !document_->path().empty() && gdb_.hasBreakpoint(document_->path(), line + 1);
@@ -201,7 +209,6 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, finalcut::FWidget* pare
       return true;
     }
     if (key == finalcut::FKey::Meta_n) { deferred_command_ = [this] { createProjectDirectory(); }; return true; }
-    if (key == finalcut::FKey::F5) { refreshFiles(); return true; }
     if (key == finalcut::FKey::F2) { deferred_command_ = [this] { renameSelectedProjectEntry(); }; return true; }
     return handleCommand(key);
   });
@@ -249,6 +256,23 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, finalcut::FWidget* pare
 
   timer_id_ = addTimer(100);
   ui_ready_ = true;
+  std::string log_error;
+  if (!event_log_.openFile(log_file, log_error)) {
+    publishEvent(EventSource::System, EventSeverity::Error, "Log file: " + log_error + "\n");
+  } else if (!log_file.empty()) {
+    publishEvent(EventSource::System, EventSeverity::Information,
+      "Event log: " + event_log_.filePath().string() + "\n");
+  }
+  if (diagnostic_mode_) {
+    publishEvent(EventSource::System, EventSeverity::Information,
+      "Diagnostic mode enabled (hardware threads: "
+        + std::to_string(std::max(1U, std::thread::hardware_concurrency())) + ")\n");
+  }
+  for (const auto& message : externalToolMessages(external_tools_, diagnostic_mode_)) {
+    const bool missing = message.find("unavailable:") != std::string::npos;
+    publishEvent(EventSource::System,
+      missing ? EventSeverity::Warning : EventSeverity::Information, message + "\n");
+  }
   std::string history_error;
   recent_projects_ = loadRecentProjects(project_history_file_, history_error);
   if (!history_error.empty()) publishEvent(EventSource::System, EventSeverity::Error, "Recent projects: " + history_error + "\n");
@@ -368,10 +392,17 @@ void IdeWindow::setupMenus() {
   bind(search_menu_.references, finalcut::FKey::F4, "List symbol references");
   bind(search_menu_.problems, finalcut::FKey::Meta_e, "List build and clangd problems");
 
-  project_menu_.refresh.addCallback("clicked", [this] { deferred_command_ = [this] { refreshFiles(); }; });
+  project_menu_.refresh.addCallback("clicked", [this] { deferred_command_ = [this] {
+    refreshFiles();
+    publishEvent(EventSource::Project, EventSeverity::Information,
+      "Project tree refreshed: " + std::to_string(project_item_paths_.size()) + " entries\n");
+  }; });
   project_menu_.filter.addCallback("clicked", [this] { deferred_command_ = [this] { filterProjectTree(); }; });
   project_menu_.clear_filter.addCallback("clicked", [this] {
-    deferred_command_ = [this] { project_filter_.clear(); refreshFiles(); };
+    deferred_command_ = [this] {
+      project_filter_.clear(); refreshFiles();
+      publishEvent(EventSource::Project, EventSeverity::Information, "Project tree filter cleared\n");
+    };
   });
   project_menu_.new_directory.addCallback("clicked", [this] { deferred_command_ = [this] { createProjectDirectory(); }; });
   project_menu_.rename_move.addCallback("clicked", [this] { deferred_command_ = [this] { renameSelectedProjectEntry(); }; });
@@ -391,8 +422,8 @@ void IdeWindow::setupMenus() {
   bind(run_menu_.run, finalcut::FKey::F6, "Run the selected executable");
   run_menu_.stop_run.setStatusBarMessage("Terminate the running program and its process group");
   run_menu_.stop_run.addCallback("clicked", [this] { deferred_command_ = [this] { stopRun(); }; });
-  run_menu_.launch_settings.setStatusBarMessage("Set target, arguments, environment, stdin, and launch behavior");
-  run_menu_.launch_settings.addCallback("clicked", [this] { deferred_command_ = [this] { launchSettings(); }; });
+  bind(run_menu_.launch_settings, finalcut::FKey::Meta_l,
+    "Set target, arguments, environment, stdin, and launch behavior");
   bind(run_menu_.configure_preset, finalcut::FKey::Meta_p, "Select a CMake configure preset");
   bind(run_menu_.build_preset, finalcut::FKey::Meta_b, "Select a CMake build preset");
   bind(run_menu_.target, finalcut::FKey::Meta_t, "Select an executable CMake target");
@@ -532,6 +563,7 @@ void IdeWindow::applyShortcutAccelerators() {
     {"search.definition", &search_menu_.definition}, {"search.references", &search_menu_.references},
     {"search.problems", &search_menu_.problems}, {"run.debug", &debug_menu_.start},
     {"run.run", &run_menu_.run}, {"run.build", &run_menu_.build},
+    {"run.launchSettings", &run_menu_.launch_settings},
     {"debug.breakpoint", &debug_menu_.breakpoint}, {"debug.stepInto", &debug_menu_.step},
     {"debug.stepOut", &debug_menu_.finish}, {"debug.watch", &debug_menu_.watch},
     {"tools.completion", &tools_menu_.completion}, {"tools.hover", &tools_menu_.hover},
@@ -585,6 +617,7 @@ void IdeWindow::showKeyboardHelp() {
     "F11/F12      Step into/out\n"
     "Ctrl+F       Find/Replace text or project\n"
     "Alt+P/B/T    Configure/Build preset/Target\n"
+    "Alt+L        Launch configuration\n"
     "Alt+K        Search the command palette\n"
     "Alt+A        clangd Code Actions / Quick Fixes\n"
     "Ctrl+E       Focus Project explorer\n"
@@ -806,7 +839,11 @@ void IdeWindow::showProjectContextMenu(finalcut::FPoint position) {
         else removeSelectedProjectFile();
       };
     });
-    project_context_->refresh.addCallback("clicked", [this] { deferred_command_ = [this] { refreshFiles(); }; });
+    project_context_->refresh.addCallback("clicked", [this] { deferred_command_ = [this] {
+      refreshFiles();
+      publishEvent(EventSource::Project, EventSeverity::Information,
+        "Project tree refreshed: " + std::to_string(project_item_paths_.size()) + " entries\n");
+    }; });
   }
   const auto* item = files_.getCurrentItem();
   const auto entry = item ? project_item_paths_.find(item) : project_item_paths_.end();
@@ -883,7 +920,13 @@ void IdeWindow::resizeSidebar(int delta) {
   const auto width = std::max<std::size_t>(60, getClientWidth());
   const auto current = sidebar_width_ == 0 ? std::clamp<std::size_t>(width / 3, 20, 38) : sidebar_width_;
   const auto changed = static_cast<long long>(current) + delta;
-  sidebar_width_ = std::clamp<std::size_t>(changed < 0 ? 0 : static_cast<std::size_t>(changed), 18, width - 28);
+  const auto resized = std::clamp<std::size_t>(changed < 0 ? 0 : static_cast<std::size_t>(changed), 18, width - 28);
+  if (resized == current) {
+    showNotification(delta < 0 ? "Sidebar is already at minimum width"
+                               : "Sidebar is already at maximum width", NotificationKind::Information);
+    return;
+  }
+  sidebar_width_ = resized;
   debug_state_dirty_ = true; saveDebugState(); layout(); redraw();
 }
 
@@ -891,7 +934,13 @@ void IdeWindow::resizeLowerPanel(int delta) {
   const auto height = std::max<std::size_t>(18, getClientHeight());
   const auto current = lower_panel_height_ == 0 ? std::clamp<std::size_t>(height / 3, 5, 12) : lower_panel_height_;
   const auto changed = static_cast<long long>(current) + delta;
-  lower_panel_height_ = std::clamp<std::size_t>(changed < 0 ? 0 : static_cast<std::size_t>(changed), 4, height - 9);
+  const auto resized = std::clamp<std::size_t>(changed < 0 ? 0 : static_cast<std::size_t>(changed), 4, height - 9);
+  if (resized == current) {
+    showNotification(delta < 0 ? "Lower panel is already at minimum height"
+                               : "Lower panel is already at maximum height", NotificationKind::Information);
+    return;
+  }
+  lower_panel_height_ = resized;
   debug_state_dirty_ = true; saveDebugState(); layout(); redraw();
 }
 
@@ -1452,21 +1501,42 @@ auto IdeWindow::closeAllDocuments() -> bool {
 }
 
 void IdeWindow::unloadProject() {
+  const bool had_project = !root_.empty();
   clearRecovery(recovery_file_);
   if (debug_state_dirty_ && !root_.empty()) saveDebugState();
   lsp_.stop(); gdb_.stop(); build_session_.reset(); run_session_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
+  document_session_.clear();
+  editor_.setDocument(nullptr);
+  editor_.setDiagnostics(nullptr);
   project_session_.close();
   cmake_session_.reset();
-  closed_documents_.clear();
   project_filter_.clear();
+  search_query_.clear(); search_replacement_.clear(); search_options_ = {}; search_project_ = false;
+  problems_filter_.clear(); problems_signature_.clear(); problems_text_.clear(); problem_rows_.clear();
+  problems_.clear(); problems_.insert("No problems");
+  outline_.clear(); outline_.insert("Open a C/C++ file for outline"); outline_positions_.clear();
+  event_log_.clear(); output_.clear(); build_output_.clear(); console_.clear();
   applyShortcutAccelerators();
   editor_.setTheme("Dark", {});
   debug_ui_.reset(); debug_state_dirty_ = false;
   compilation_database_.clear(); compilation_database_warnings_.clear();
   lsp_ui_.reset();
-  refreshFiles(); refreshTabs(); refreshDebugPanel();
+  diagnostic_index_ = 0;
+  refreshFiles(); refreshTabs(); refreshDebugPanel(); refreshBreakpointsPanel();
   setText("TUI IDE — No project"); updateStatus();
+  if (had_project) {
+    const bool clean = documents_.empty() && !document_
+      && !lsp_.running() && lsp_.diagnostics().empty() && lsp_.semanticTokens().empty()
+      && !build_session_.running() && !run_session_.running() && !run_session_.consoleRunning()
+      && !gdb_.running() && gdb_.breakpoints().empty() && gdb_.watches().empty()
+      && cmake_session_.targets().empty() && cmake_session_.configurePresets().empty()
+      && cmake_session_.buildPresets().empty() && !project_session_.open();
+    publishEvent(EventSource::System, clean ? EventSeverity::Success : EventSeverity::Error,
+      clean ? "Previous project state cleared\n" : "Project state cleanup incomplete\n");
+    showNotification(clean ? "Previous project state cleared" : "Project state cleanup incomplete",
+      clean ? NotificationKind::Success : NotificationKind::Error);
+  }
 }
 
 auto IdeWindow::loadProject(std::filesystem::path root, std::filesystem::path build_directory) -> bool {
@@ -1961,7 +2031,7 @@ void IdeWindow::openFile(const std::filesystem::path& path) {
   refreshTabs();
 }
 
-auto IdeWindow::save() -> bool {
+auto IdeWindow::save(bool report) -> bool {
   if (!document_) return false;
   if (document_->path().empty()) return saveAs();
   std::string error;
@@ -1971,6 +2041,8 @@ auto IdeWindow::save() -> bool {
   }
   if (isCppSource(document_->path())) lsp_.change(*document_);
   refreshTabs(); updateStatus();
+  if (report) publishEvent(EventSource::Editor, EventSeverity::Success,
+    "Saved: " + document_->path().string() + "\n");
   return true;
 }
 
@@ -1981,7 +2053,7 @@ auto IdeWindow::saveAllDocuments() -> bool {
   for (std::size_t index = 0; index < documents_.size(); ++index) {
     if (!documents_[index]->modified()) continue;
     activateDocument(index);
-    if (!save()) {
+    if (!save(false)) {
       if (!documents_.empty()) activateDocument(std::min(original, documents_.size() - 1));
       publishEvent(EventSource::Editor, EventSeverity::Warning, "Save All cancelled; project action was not started\n");
       return false;
@@ -2263,6 +2335,8 @@ void IdeWindow::goToLine() {
       return;
     }
     editor_.reveal({line - 1, 0});
+    publishEvent(EventSource::Editor, EventSeverity::Information,
+      "Go to line: " + std::to_string(line) + "\n");
   } catch (...) { publishEvent(EventSource::Editor, EventSeverity::Error, "Invalid line number\n"); }
 }
 
@@ -2326,11 +2400,23 @@ void IdeWindow::openSelectedProblem() {
 }
 
 void IdeWindow::filterProblems() {
-  problems_filter_ = prompt("Filter Problems", "Text (empty clears):");
+  delTimer(timer_id_);
+  PromptDialog dialog("Filter Problems", "Text (empty clears):", this);
+  const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
+  timer_id_ = addTimer(100);
+  if (!accepted) {
+    publishEvent(EventSource::Editor, EventSeverity::Information, "Problems filter unchanged\n");
+    return;
+  }
+  problems_filter_ = dialog.value();
   problems_signature_.clear(); refreshProblemsPanel(); lower_tabs_.setCurrentIndex(1, true);
+  publishEvent(EventSource::Editor, EventSeverity::Information,
+    problems_filter_.empty() ? "Problems filter cleared\n"
+                             : "Problems filter: " + problems_filter_ + "\n");
 }
 
 void IdeWindow::clearLowerPanel() {
+  const auto panel = lower_tabs_.currentIndex();
   switch (lower_tabs_.currentIndex()) {
     case 0: event_log_.clear(EventChannel::Output); output_.clear(); break;
     case 1:
@@ -2339,6 +2425,10 @@ void IdeWindow::clearLowerPanel() {
     case 3: console_.clear(); break;
     default: break;
   }
+  const std::string message = panel == 0 ? "Output cleared" : panel == 1 ? "Problems cleared"
+    : panel == 2 ? "Build output cleared" : "Terminal cleared";
+  showNotification(message, NotificationKind::Information);
+  publishEvent(EventSource::System, EventSeverity::Information, message + "\n");
 }
 
 void IdeWindow::copyLowerPanel() {
@@ -2521,6 +2611,11 @@ void IdeWindow::clean() {
 }
 
 auto IdeWindow::beginBuildOperation(bool save_documents) -> bool {
+  if (!external_tools_.cmake) {
+    publishEvent(EventSource::Build, EventSeverity::Error,
+      "CMake unavailable: install cmake or add it to PATH; configure and build cannot start.\n");
+    return false;
+  }
   if (save_documents && !saveAllDocuments()) {
     publishEvent(EventSource::Build, EventSeverity::Warning, "CMake operation cancelled because not all documents were saved\n"); return false;
   }
@@ -2758,6 +2853,8 @@ void IdeWindow::stopRun() {
 
 void IdeWindow::debugRun() {
   if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: no project is open\n"); return; }
+  if (!external_tools_.gdb) { publishEvent(EventSource::Debug, EventSeverity::Error,
+    "GDB unavailable: install gdb or add it to PATH; debugging cannot start.\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: a CMake operation is in progress\n"); return; }
   if (!gdb_.running()) {
     if (!saveAllDocuments()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug cancelled because not all documents were saved\n"); return; }
@@ -2782,6 +2879,8 @@ void IdeWindow::debugRun() {
 }
 
 void IdeWindow::startDebug() {
+  if (!external_tools_.gdb) { publishEvent(EventSource::Debug, EventSeverity::Error,
+    "GDB unavailable: install gdb or add it to PATH; debugging cannot start.\n"); return; }
   LaunchCommand launch;
   std::string error;
   if (!launchCommand(launch, error)) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: " + error + "\n"); return; }
@@ -2819,6 +2918,8 @@ void IdeWindow::debugRestart() {
   if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart unavailable: no project is open\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart unavailable: a CMake operation is in progress\n"); return; }
   if (!gdb_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart unavailable: debugger is not started\n"); return; }
+  if (!external_tools_.gdb) { publishEvent(EventSource::Debug, EventSeverity::Error,
+    "GDB unavailable: install gdb or add it to PATH; debugging cannot restart.\n"); return; }
   if (!saveAllDocuments()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart cancelled because not all documents were saved\n"); return; }
   if (project_settings_.launch.pre_launch_build) {
     gdb_.stop(); run_session_.stop(); console_.setControlEnabled(false); debug_ui_.invalidateDebug(); refreshDebugPanel();
@@ -2912,6 +3013,11 @@ void IdeWindow::restartLanguageServer() {
   if (root_.empty()) return;
   lsp_.stop();
   lsp_ui_.reset();
+  if (!external_tools_.clangd) {
+    publishEvent(EventSource::Lsp, EventSeverity::Warning,
+      "clangd unavailable: install clangd or add it to PATH; C/C++ completion and code navigation are disabled.\n");
+    return;
+  }
   if (!lsp_.start(root_, project_settings_.clangd_arguments, project_settings_.environment, build_dir_)) {
     publishEvent(EventSource::Lsp, EventSeverity::Warning, "clangd unavailable: failed to start clangd\n");
     return;
@@ -2928,6 +3034,7 @@ void IdeWindow::updateMenuState() {
     .has_project = !root_.empty(),
     .has_document = document_ != nullptr,
     .has_saved_document = document_ && !document_->path().empty(),
+    .document_modified = document_ && document_->modified(),
     .source_document = document_ && isCppSource(document_->path()),
     .cmake_document = document_ && isCMakePath(document_->path()),
     .has_selection = editor_.hasSelection(),
@@ -3198,6 +3305,14 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       if (root_.empty()) publishEvent(EventSource::Build, EventSeverity::Warning, "Target selection unavailable: no project is open\n");
       else if (build_session_.running()) publishEvent(EventSource::Build, EventSeverity::Warning, "Target selection unavailable: a build is in progress\n");
       else deferred_command_ = [this] { selectCMakeTarget(); };
+      return true;
+    case finalcut::FKey::Meta_l:
+      if (root_.empty()) publishEvent(EventSource::Project, EventSeverity::Warning,
+        "Launch configuration unavailable: no project is open\n");
+      else if (build_session_.running() || run_session_.running() || gdb_.running())
+        publishEvent(EventSource::Project, EventSeverity::Warning,
+          "Launch configuration unavailable while build, program, or debugger is running\n");
+      else deferred_command_ = [this] { launchSettings(); };
       return true;
     case finalcut::FKey::Meta_e:
       if (root_.empty()) publishEvent(EventSource::Build, EventSeverity::Warning, "Problems unavailable: no project is open\n");

@@ -1,0 +1,60 @@
+.TH TUIIDE 1 "August 2026" "tuiide 0.1.0" "User Commands"
+.SH NAME
+tuiide \- terminal IDE for C and C++
+.SH SYNOPSIS
+.B tuiide
+.RI [ options ]
+.RI [ project ]
+.SH DESCRIPTION
+.B tuiide
+is a UTF-8 terminal IDE for Linux/amd64. It provides project browsing,
+editing and syntax highlighting, clangd language features, CMake builds,
+integrated program execution, and GDB/MI debugging using the Final Cut UI.
+The optional project argument must name a directory containing CMakeLists.txt.
+.SH OPTIONS
+.TP
+.BR \-h , " " \-\-help
+Print command-line help and exit.
+.TP
+.B \-\-version
+Print the program version and exit.
+.TP
+.BI \-\-project " PATH"
+Open the CMake project rooted at PATH. A positional project path remains supported.
+.TP
+.BI \-\-log-file " FILE"
+Append timestamped, tab-separated Output and Build events to FILE. Embedded
+newlines, carriage returns, tabs, and backslashes are escaped.
+.TP
+.B \-\-diagnostic
+Report detected and missing CMake, clangd, GDB, and native clipboard tools in Output.
+.TP
+.B \-\-
+Stop option processing. Use this before a project path beginning with a dash.
+.SH EXTERNAL TOOLS
+CMake is required for configure and build operations. clangd supplies C/C++
+completion, diagnostics, and navigation. GDB supplies debugging, and clang-format
+supplies source formatting. wl-copy/wl-paste, xclip, or xsel enable the native
+clipboard; internal and OSC 52 fallbacks remain available without them.
+.SH FILES
+.TP
+.I .tuiide-project.json
+Per-project build, launch, editor, language-server, and shortcut settings.
+.TP
+.I BUILD-DIRECTORY/.tuiide-session.json
+Open-document and debugger session state.
+.TP
+.I $XDG_CONFIG_HOME/tuiide/recent-projects.json
+Recent projects. ~/.config is used when XDG_CONFIG_HOME is unset.
+.SH KEYBOARD
+Press F10 to activate the menu, Alt+K for the command palette, F7 to build,
+F6 to run, F5 to start or continue debugging, and Ctrl+D to exit when the
+integrated terminal is inactive. The Help menu contains the complete key list.
+.SH EXIT STATUS
+Zero indicates normal termination. Status 2 indicates an invalid command line;
+other non-zero values indicate startup or runtime failure.
+.SH SEE ALSO
+.BR cmake (1),
+.BR clangd (1),
+.BR gdb (1),
+.BR clang-format (1)

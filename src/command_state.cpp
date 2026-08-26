@@ -9,7 +9,7 @@ auto commandAvailability(const CommandContext& context) -> CommandAvailability {
   return {
     .close_project = context.has_project,
     .project_file = context.has_project,
-    .save = context.has_document,
+    .save = context.has_document && (!context.has_saved_document || context.document_modified),
     .save_all = context.has_modified_documents,
     .save_as = context.has_document,
     .close_document = context.has_document,

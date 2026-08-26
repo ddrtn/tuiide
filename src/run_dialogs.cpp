@@ -68,7 +68,7 @@ struct LaunchSettingsDialog::Impl {
     });
     save.addCallback("clicked", [this] { owner->done(finalcut::FDialog::ResultCode::Accept); });
     cancel.addCallback("clicked", [this] { owner->done(finalcut::FDialog::ResultCode::Reject); });
-    executable.setFocus();
+    arguments.setFocus();
   }
 
   auto readConfiguration(LaunchConfiguration& result, std::string& error) const -> bool {

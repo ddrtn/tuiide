@@ -67,6 +67,12 @@ struct DebugBreakpoint {
   std::string error;
 };
 
+[[nodiscard]] auto gdbEvaluateCommand(std::string_view expression) -> std::string;
+[[nodiscard]] auto gdbDisassembleCommand(std::string_view address,
+  std::size_t bytes) -> std::string;
+[[nodiscard]] auto gdbReadMemoryCommand(std::string_view address,
+  std::size_t bytes) -> std::string;
+
 class GdbClient {
  public:
   auto start(const std::filesystem::path& executable,

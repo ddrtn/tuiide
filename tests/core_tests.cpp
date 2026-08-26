@@ -13,6 +13,7 @@
 #include "tuiide/cmake_session.hpp"
 #include "tuiide/cmake_source_edit.hpp"
 #include "tuiide/clipboard.hpp"
+#include "tuiide/cli.hpp"
 #include "tuiide/clang_format.hpp"
 #include "tuiide/compilation_database.hpp"
 #include "tuiide/command_state.hpp"
@@ -39,6 +40,7 @@
 #include "tuiide/text_display.hpp"
 #include "tuiide/text_search.hpp"
 #include "tuiide/terminal_buffer.hpp"
+#include "tuiide/tool_discovery.hpp"
 #include "tuiide/workspace_edit.hpp"
 #include "tuiide/workspace_file_transaction.hpp"
 
@@ -58,6 +60,34 @@ void expect(bool condition, const char* message) {
 }
 
 int main() {
+  const auto cli = tuiide::parseCommandLine({"--diagnostic", "--log-file", "/tmp/tuiide.log",
+    "--project=/tmp/project with spaces"});
+  expect(cli.error.empty() && cli.options.diagnostic
+      && cli.options.log_file == "/tmp/tuiide.log"
+      && cli.options.project == "/tmp/project with spaces",
+    "command line parser accepts diagnostic, log, and explicit project options");
+  expect(tuiide::parseCommandLine({"first", "second"}).error.find("more than once") != std::string::npos,
+    "command line parser rejects multiple project paths");
+  expect(tuiide::parseCommandLine({"--unknown"}).error.find("unknown option") != std::string::npos,
+    "command line parser rejects unknown options");
+  expect(tuiide::commandLineHelp("tuiide").find("--project PATH") != std::string::npos,
+    "command line help documents project selection");
+
+  const auto tool_directory = std::filesystem::temp_directory_path()
+    / ("tuiide-tool-discovery-" + std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(tool_directory);
+  const auto fake_tool = tool_directory / "fake-tool";
+  { std::ofstream file(fake_tool); file << "#!/bin/sh\nexit 0\n"; }
+  std::filesystem::permissions(fake_tool, std::filesystem::perms::owner_all);
+  const auto discovered_tool = tuiide::findExecutable("fake-tool", tool_directory.string());
+  expect(discovered_tool && discovered_tool->filename() == "fake-tool",
+    "tool discovery finds an executable in an explicit PATH");
+  expect(!tuiide::findExecutable("missing-tool", tool_directory.string()),
+    "tool discovery reports an absent executable");
+  std::error_code tool_cleanup_error;
+  std::filesystem::remove_all(tool_directory, tool_cleanup_error);
+
   tuiide::BuildWorkflow build_workflow;
   build_workflow.begin(tuiide::BuildOperation::Build, false, tuiide::BuildContinuation::Run);
   expect(build_workflow.operation() == tuiide::BuildOperation::Build
@@ -305,6 +335,12 @@ int main() {
     "debug UI controller rejects out-of-range panel selections");
 
   tuiide::EventLog event_log;
+  const auto event_file = std::filesystem::temp_directory_path()
+    / ("tuiide-event-log-" + std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+  std::string event_file_error;
+  expect(event_log.openFile(event_file, event_file_error) && event_file_error.empty(),
+    "event log opens an append-only diagnostic file");
   event_log.publish(tuiide::EventChannel::Output, tuiide::EventSource::Project,
     tuiide::EventSeverity::Warning, "project warning\n");
   event_log.publish(tuiide::EventChannel::Build, tuiide::EventSource::Build,
@@ -332,6 +368,14 @@ int main() {
       && event_log.revision(tuiide::EventChannel::Output) > output_revision
       && !event_log.text(tuiide::EventChannel::Build).empty(),
     "clearing one event channel preserves the other channel");
+  std::ifstream event_input(event_file);
+  const std::string event_file_text((std::istreambuf_iterator<char>(event_input)),
+    std::istreambuf_iterator<char>());
+  expect(event_file_text.find("\toutput\tproject\twarning\tproject warning\\n") != std::string::npos
+      && event_file_text.find("\tbuild\tbuild\tsuccess\tbuild complete\\n") != std::string::npos,
+    "event log file retains structured metadata and escaped messages");
+  std::error_code event_cleanup_error;
+  std::filesystem::remove(event_file, event_cleanup_error);
 
   tuiide::Document document;
   document.insert("int main() {");
@@ -571,6 +615,7 @@ int main() {
   project_context.run_running = false;
   project_context.has_document = true;
   project_context.has_saved_document = true;
+  project_context.document_modified = true;
   project_context.source_document = true;
   project_context.has_selection = true;
   project_context.has_modified_documents = true;
@@ -587,6 +632,10 @@ int main() {
       && source_commands.switch_document && source_commands.close_all && source_commands.close_others
       && source_commands.reopen_closed,
     "editor and clangd commands follow document capabilities");
+  project_context.document_modified = false;
+  expect(!tuiide::commandAvailability(project_context).save,
+    "Save is disabled for an already saved clean document");
+  project_context.document_modified = true;
   project_context.build_running = true;
   const auto building_commands = tuiide::commandAvailability(project_context);
   expect(!building_commands.build && !building_commands.run && !building_commands.cmake_configuration
@@ -621,6 +670,27 @@ int main() {
   const auto unicode_lsp_uri = tuiide::lspFileUri(unicode_lsp_path);
   expect(unicode_lsp_uri.find(' ') == std::string::npos && unicode_lsp_uri.find("%D1%84") != std::string::npos,
     "LSP file URI percent-encodes spaces and UTF-8 bytes");
+  const auto reserved_lsp_path = std::filesystem::absolute("directory/a#b?c%d.cpp");
+  const auto reserved_lsp_uri = tuiide::lspFileUri(reserved_lsp_path);
+  expect(reserved_lsp_uri.find("%23") != std::string::npos
+      && reserved_lsp_uri.find("%3F") != std::string::npos
+      && reserved_lsp_uri.find("%25") != std::string::npos
+      && tuiide::lspPathFromFileUri(reserved_lsp_uri) == reserved_lsp_path.lexically_normal(),
+    "LSP file URI round-trips reserved filename bytes without treating them as URI syntax");
+  expect(tuiide::lspPathFromFileUri("file://localhost/tmp/source.cpp") == "/tmp/source.cpp"
+      && tuiide::lspPathFromFileUri("https://example.test/source.cpp").empty()
+      && tuiide::lspPathFromFileUri("file://remote-host/tmp/source.cpp").empty()
+      && tuiide::lspPathFromFileUri("file:///tmp/bad%2G.cpp").empty()
+      && tuiide::lspPathFromFileUri("file:///tmp/bad%00.cpp").empty(),
+    "LSP URI decoder accepts local file URIs and rejects schemes, authorities, and malformed escapes");
+  expect(!tuiide::lspResponseError({{"jsonrpc", "2.0"}, {"result", nullptr}})
+      && tuiide::lspResponseError({{"error", {{"code", -32602}, {"message", "invalid params"}}}})
+        == "invalid params"
+      && tuiide::lspResponseError({{"error", {{"code", -32601}, {"message", 42}}}})
+        == "JSON-RPC error -32601"
+      && tuiide::lspResponseError({{"error", "broken"}})
+        == "Malformed JSON-RPC error response",
+    "LSP JSON-RPC errors are parsed without throwing on missing or malformed messages");
 
   const auto hierarchical_symbols = tuiide::parseDocumentSymbols(nlohmann::json::array({
     {{"name", "Widget"}, {"detail", "class Widget"}, {"kind", 5},
@@ -927,10 +997,21 @@ int main() {
   expect(formatter_arguments_text.find("--assume-filename=/tmp/sample.cpp") != std::string::npos
       && formatter_arguments_text.find("--lines=3:5") != std::string::npos,
     "clang-format receives the assumed filename and one-based selected line range");
+  const auto unchanged_format = tuiide::clangFormat("int main() {}\n", "/tmp/sample.cpp",
+    {}, formatter.string());
+  expect(unchanged_format.success && unchanged_format.text == "int main() {}\n",
+    "clang-format reports a successful no-change result");
   const auto missing_formatter = tuiide::clangFormat("int x;\n", "/tmp/sample.cpp", {},
     (formatter_tools / "missing-clang-format").string());
   expect(!missing_formatter.success && missing_formatter.error.find("not found") != std::string::npos,
     "missing clang-format executable produces an actionable error without SIGPIPE");
+  const auto failing_formatter = formatter_tools / "clang-format-failing";
+  { std::ofstream script(failing_formatter); script << "#!/bin/sh\necho 'invalid style' >&2\nexit 9\n"; }
+  std::filesystem::permissions(failing_formatter, std::filesystem::perms::owner_all);
+  const auto failed_format = tuiide::clangFormat("int x;\n", "/tmp/sample.cpp", {},
+    failing_formatter.string());
+  expect(!failed_format.success && failed_format.error.find("exit code 9: invalid style") != std::string::npos,
+    "clang-format failure preserves its exit code and diagnostic text");
   ::unsetenv("TUIIDE_FORMAT_ARGS");
   std::filesystem::remove_all(formatter_tools, clipboard_cleanup_error);
 
@@ -1012,6 +1093,12 @@ int main() {
   search_matches = tuiide::searchText("abc", "[", "", {.regular_expression = true}, search_error);
   expect(search_matches.empty() && search_error.starts_with("Invalid regular expression"),
     "invalid regular expressions return an actionable error");
+  search_matches = tuiide::searchText("abc", "missing", "", {}, search_error);
+  expect(search_matches.empty() && search_error.empty(),
+    "a valid search with no matches is distinct from a search error");
+  search_matches = tuiide::searchText("abc", "", "", {}, search_error);
+  expect(search_matches.empty() && search_error == "Search text is empty",
+    "an empty search query is rejected with an actionable error");
 
   tuiide::Document utf8;
   utf8.insert("аб");
@@ -1083,6 +1170,16 @@ int main() {
   std::filesystem::remove(session_path, cleanup_error);
 
   tuiide::GdbClient debugger;
+  expect(tuiide::gdbEvaluateCommand("result + pair.right")
+      == "-data-evaluate-expression \"result + pair.right\""
+      && tuiide::gdbEvaluateCommand("name == \"value\"")
+        == "-data-evaluate-expression \"name == \\\"value\\\"\"",
+    "GDB evaluation command preserves spaces and escapes expression quotes");
+  expect(tuiide::gdbDisassembleCommand("$pc", 96)
+      == "-data-disassemble -s \"$pc\" -e \"($pc) + 96\" -- 0"
+      && tuiide::gdbReadMemoryCommand("$sp + 8", 32)
+        == "-data-read-memory-bytes \"$sp + 8\" 32",
+    "GDB disassembly and memory commands retain their address before request state moves it");
   expect(!debugger.evaluate("1 + 1") && !debugger.assign("value", "2")
       && !debugger.disassemble("$pc") && !debugger.readMemory("$sp", 32),
     "GDB expression operations require a stopped debuggee");
@@ -1097,6 +1194,15 @@ int main() {
     "breakpoint properties can be updated before GDB starts");
   expect(debugger.removeBreakpoint("/tmp/source.cpp", 17) && debugger.breakpoints().empty(),
     "breakpoint can be removed through the structured API");
+  expect(debugger.addBreakpoint("/tmp/old-project.cpp", 9)
+      && debugger.addWatch("old_project_value"),
+    "debug session can hold project-specific breakpoint and watch state");
+  debugger.setRegistersEnabled(true);
+  debugger.clearSessionState();
+  expect(debugger.breakpoints().empty() && debugger.watches().empty()
+      && !debugger.registersEnabled() && debugger.takeOutput().empty()
+      && debugger.takeResults().empty(),
+    "clearing a debug session removes all state owned by the previous project");
 
   const auto mi_stack = tuiide::parseMiRecord(
     R"(27^done,stack=[frame={level="0",func="compute",fullname="/tmp/a,b.cpp",line="7"},frame={level="1",func="main",line="12"}])");
@@ -1448,8 +1554,13 @@ int main() {
     "applying project settings updates all derived session paths together");
   project_session.close();
   expect(!project_session.open() && project_session.root().empty()
-      && project_session.buildDirectory().empty() && project_session.sessionFile().empty(),
-    "closing a project session clears project-specific state");
+      && project_session.buildDirectory().empty() && project_session.sessionFile().empty()
+      && project_session.recoveryFile().empty()
+      && project_session.settings().build_directory.empty()
+      && project_session.settings().launch.target.empty()
+      && project_session.settings().shortcuts.empty()
+      && project_session.settings().colors.empty(),
+    "closing a project session clears paths, launch settings, shortcuts, and colors");
 
   const auto fallback_project = settings_project / "fallback";
   std::filesystem::create_directories(fallback_project);
@@ -1692,6 +1803,13 @@ int main() {
   expect(!invalid_preset_refresh.valid
       && invalid_preset_refresh.validation_error.find("no longer exists") != std::string::npos,
     "CMake session reports a removed restored preset without changing project settings");
+  cmake_session.reset();
+  expect(cmake_session.buildDirectory().empty() && cmake_session.targets().empty()
+      && cmake_session.configurePresets().empty() && cmake_session.buildPresets().empty()
+      && cmake_session.configurePreset().empty() && cmake_session.buildPreset().empty()
+      && cmake_session.preferredTarget().empty() && cmake_session.preferredConfiguration().empty()
+      && cmake_session.selectedTarget() == nullptr,
+    "resetting a CMake session removes targets, presets, selections, and build-directory identity");
 
   tuiide::ProjectSettings command_settings;
   command_settings.generator = "Ninja";
