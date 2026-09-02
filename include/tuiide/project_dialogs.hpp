@@ -73,7 +73,8 @@ class ProjectSettingsDialog final : public CenteredDialog {
 
 class ClassOptionsDialog final : public CenteredDialog {
  public:
-  explicit ClassOptionsDialog(finalcut::FWidget* parent = nullptr);
+  explicit ClassOptionsDialog(std::string header_extension = "hpp",
+    finalcut::FWidget* parent = nullptr);
   ~ClassOptionsDialog() override;
   [[nodiscard]] auto options() const -> CppClassOptions;
 

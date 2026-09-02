@@ -12,6 +12,8 @@ enum class InheritanceAccess { Public, Protected, Private };
 
 struct CppClassOptions {
   std::string class_name;
+  std::string header_file_name;
+  std::string source_file_name;
   std::string namespace_name;
   std::string base_class;
   std::string base_header;

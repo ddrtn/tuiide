@@ -29,6 +29,7 @@
 #include "tuiide/project_import.hpp"
 #include "tuiide/project_settings.hpp"
 #include "tuiide/project_session.hpp"
+#include "tuiide/user_settings.hpp"
 #include "tuiide/project_tree.hpp"
 #include "tuiide/recovery.hpp"
 #include "tuiide/run_session.hpp"
@@ -127,7 +128,7 @@ class IdeWindow final : public finalcut::FDialog {
   void resizeLowerPanel(int delta);
   void resetPanelSizes();
   void setupMenus();
-  void applyShortcutAccelerators();
+  void applyShortcutAccelerators(bool enabled = true);
   void queueMenuCommand(finalcut::FKey key);
   void showAbout();
   void showKeyboardHelp();
@@ -262,6 +263,8 @@ class IdeWindow final : public finalcut::FDialog {
   std::filesystem::path& session_file_;
   std::filesystem::path& recovery_file_;
   std::filesystem::path project_history_file_;
+  std::filesystem::path user_settings_file_;
+  UserSettings user_settings_;
   ProjectSettings& project_settings_;
   std::vector<std::filesystem::path> recent_projects_;
   std::vector<std::filesystem::path> file_paths_;
@@ -318,7 +321,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem project_separator{&menu};
     finalcut::FMenuItem new_file{finalcut::FKey::Ctrl_n, "&New", &menu};
     finalcut::FMenuItem new_project_file{"New from &template...", &menu};
-    finalcut::FMenuItem open{finalcut::FKey::Ctrl_o, "&Open...", &menu};
+    finalcut::FMenuItem open{finalcut::FKey::Ctrl_o, "Open f&ile...", &menu};
     finalcut::FMenuItem save{finalcut::FKey::Ctrl_s, "&Save", &menu};
     finalcut::FMenuItem save_all{"Save A&ll", &menu};
     finalcut::FMenuItem save_as{"Save &As...", &menu};
@@ -342,8 +345,8 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem select_all{finalcut::FKey::Ctrl_a, "Select &All", &menu};
     finalcut::FMenuItem separator3{&menu};
     finalcut::FMenuItem toggle_comment{"Toggle co&mment", &menu};
-    finalcut::FMenuItem duplicate_line{"D&uplicate line", &menu};
-    finalcut::FMenuItem move_line_up{"Move line u&p", &menu};
+    finalcut::FMenuItem duplicate_line{"Duplicate l&ine", &menu};
+    finalcut::FMenuItem move_line_up{"Move li&ne up", &menu};
     finalcut::FMenuItem move_line_down{"Move line do&wn", &menu};
     finalcut::FMenuItem delete_line{"De&lete line", &menu};
   };
@@ -358,25 +361,25 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem go_to_line{finalcut::FKey::Ctrl_g, "&Go to line...", &menu};
     finalcut::FMenuItem separator{&menu};
     finalcut::FMenuItem definition{finalcut::FKey::F3, "Go to &definition", &menu};
-    finalcut::FMenuItem references{finalcut::FKey::F4, "Find &references", &menu};
-    finalcut::FMenuItem problems{finalcut::FKey::Meta_e, "&Problems...", &menu};
+    finalcut::FMenuItem references{finalcut::FKey::F4, "Find r&eferences", &menu};
+    finalcut::FMenuItem problems{finalcut::FKey::Ctrl_k, "Pro&blems...", &menu};
   };
   struct RunMenu {
     explicit RunMenu(finalcut::FMenuBar& bar) : menu{"&Run", &bar} {}
     finalcut::FMenu menu;
-    finalcut::FMenuItem configure{"&Configure", &menu};
+    finalcut::FMenuItem configure{"C&onfigure", &menu};
     finalcut::FMenuItem build{finalcut::FKey::F7, "&Build", &menu};
     finalcut::FMenuItem rebuild{"&Rebuild", &menu};
     finalcut::FMenuItem clean{"C&lean", &menu};
     finalcut::FMenuItem cancel_build{"Cancel B&uild", &menu};
     finalcut::FMenuItem separator1{&menu};
-    finalcut::FMenuItem run{finalcut::FKey::F6, "&Run", &menu};
+    finalcut::FMenuItem run{finalcut::FKey::F6, "Ru&n", &menu};
     finalcut::FMenuItem stop_run{"S&top program", &menu};
-    finalcut::FMenuItem launch_settings{finalcut::FKey::Meta_l, "&Launch configuration...", &menu};
+    finalcut::FMenuItem launch_settings{finalcut::FKey::Meta_l, "Laun&ch configuration...", &menu};
     finalcut::FMenuItem separator2{&menu};
-    finalcut::FMenuItem configure_preset{finalcut::FKey::Meta_p, "Configure &preset...", &menu};
-    finalcut::FMenuItem build_preset{finalcut::FKey::Meta_b, "&Build preset...", &menu};
-    finalcut::FMenuItem target{finalcut::FKey::Meta_t, "Select &target...", &menu};
+    finalcut::FMenuItem configure_preset{finalcut::FKey::Ctrl_p, "Configure &preset...", &menu};
+    finalcut::FMenuItem build_preset{finalcut::FKey::Meta_b, "Build pre&set...", &menu};
+    finalcut::FMenuItem target{finalcut::FKey::Ctrl_t, "Select tar&get...", &menu};
   };
   struct ProjectMenu {
     explicit ProjectMenu(finalcut::FMenuBar& bar) : menu{"&Project", &bar} {}
@@ -393,52 +396,52 @@ class IdeWindow final : public finalcut::FDialog {
     explicit DebugMenu(finalcut::FMenuBar& bar) : menu{"&Debug", &bar} {}
     finalcut::FMenu menu;
     finalcut::FMenuItem start{finalcut::FKey::F5, "&Start / Continue", &menu};
-    finalcut::FMenuItem pause{finalcut::FKey::F17, "&Pause", &menu};
+    finalcut::FMenuItem pause{finalcut::FKey::F17, "Pa&use", &menu};
     finalcut::FMenuItem stop{"S&top", &menu};
     finalcut::FMenuItem restart{"&Restart", &menu};
     finalcut::FMenuItem separator1{&menu};
     finalcut::FMenuItem breakpoint{finalcut::FKey::F9, "Toggle &breakpoint", &menu};
     finalcut::FMenuItem breakpoint_properties{"Breakpoint &properties...", &menu};
     finalcut::FMenuItem breakpoint_enable{"Enable / &disable breakpoint", &menu};
-    finalcut::FMenuItem breakpoint_remove{"&Remove breakpoint", &menu};
+    finalcut::FMenuItem breakpoint_remove{"Remove brea&kpoint", &menu};
     finalcut::FMenuItem breakpoint_clear{"Remove &all breakpoints", &menu};
     finalcut::FMenuItem next{finalcut::FKey::F34, "&Next", &menu};
     finalcut::FMenuItem step{finalcut::FKey::F11, "Step &into", &menu};
     finalcut::FMenuItem finish{finalcut::FKey::F12, "Step &out", &menu};
     finalcut::FMenuItem separator2{&menu};
-    finalcut::FMenuItem watch{finalcut::FKey::Meta_w, "Add &watch...", &menu};
+    finalcut::FMenuItem watch{finalcut::FKey::Ctrl_l, "Add &watch...", &menu};
     finalcut::FMenuItem evaluate{"&Evaluate expression...", &menu};
     finalcut::FMenuItem set_variable{"Set &variable value...", &menu};
     finalcut::FMenuItem disassembly{"Disassembl&y...", &menu};
     finalcut::FMenuItem memory{"&Memory...", &menu};
-    finalcut::FMenuItem registers{finalcut::FKey::Meta_r, "Toggle &registers", &menu};
+    finalcut::FMenuItem registers{finalcut::FKey::Ctrl_r, "Toggle re&gisters", &menu};
   };
   struct ToolsMenu {
     explicit ToolsMenu(finalcut::FMenuBar& bar) : menu{"&Tools", &bar} {}
     finalcut::FMenu menu;
-    finalcut::FMenuItem completion{finalcut::FKey::Ctrl_space, "&Completion", &menu};
+    finalcut::FMenuItem completion{finalcut::FKey::Ctrl_space, "Co&mpletion", &menu};
     finalcut::FMenuItem signature{"Signature &help...", &menu};
     finalcut::FMenuItem hover{finalcut::FKey::F1, "Symbol &information", &menu};
     finalcut::FMenuItem rename{finalcut::FKey::F2, "&Rename symbol...", &menu};
     finalcut::FMenuItem separator{&menu};
     finalcut::FMenuItem code_actions{finalcut::FKey::Meta_a, "Code &actions...", &menu};
-    finalcut::FMenuItem organize_includes{"Organize &includes", &menu};
+    finalcut::FMenuItem organize_includes{"Organize incl&udes", &menu};
     finalcut::FMenuItem switch_source_header{"Switch header / &source", &menu};
     finalcut::FMenuItem workspace_symbols{"&Workspace symbols...", &menu};
     finalcut::FMenuItem call_hierarchy{"Ca&ll hierarchy...", &menu};
     finalcut::FMenuItem type_hierarchy{"Type hierarch&y...", &menu};
     finalcut::FMenuItem separator_lsp{&menu};
     finalcut::FMenuItem format_document{"Format &document", &menu};
-    finalcut::FMenuItem format_selection{"Format &selection", &menu};
+    finalcut::FMenuItem format_selection{"Format selectio&n", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem command_palette{finalcut::FKey::Meta_k, "Command &palette...", &menu};
-    finalcut::FMenuItem configure_shortcut{"Configure &shortcut...", &menu};
-    finalcut::FMenuItem shortcut_conflicts{"Shortcut &conflicts...", &menu};
+    finalcut::FMenuItem configure_shortcut{"Configure sh&ortcut...", &menu};
+    finalcut::FMenuItem shortcut_conflicts{"Shortcut con&flicts...", &menu};
     finalcut::FMenuItem separator3{&menu};
     finalcut::FMenuItem theme{"Editor &theme...", &menu};
     finalcut::FMenuItem colors{"Editor &colors...", &menu};
     finalcut::FMenuItem separator4{&menu};
-    finalcut::FMenuItem project_settings{"Project &Settings...", &menu};
+    finalcut::FMenuItem project_settings{"Project settin&gs...", &menu};
   };
   struct WindowMenu {
     explicit WindowMenu(finalcut::FMenuBar& bar) : menu{"&Window", &bar} {}
@@ -447,16 +450,16 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem next{finalcut::FKey::Ctrl_page_down, "&Next file", &menu};
     finalcut::FMenuItem separator{&menu};
     finalcut::FCheckMenuItem open_files{"Show Open &files", &menu};
-    finalcut::FCheckMenuItem project{"Show &Project", &menu};
-    finalcut::FCheckMenuItem outline{"Show &Outline", &menu};
+    finalcut::FCheckMenuItem project{"Show pr&oject", &menu};
+    finalcut::FCheckMenuItem outline{"Show O&utline", &menu};
     finalcut::FCheckMenuItem debug{"Show &Debug", &menu};
     finalcut::FCheckMenuItem breakpoints{"Show &Breakpoints", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem clear_lower{"&Clear active lower panel", &menu};
-    finalcut::FMenuItem copy_lower{"&Copy active lower panel", &menu};
-    finalcut::FMenuItem filter_problems{"Filter &Problems...", &menu};
+    finalcut::FMenuItem copy_lower{"Cop&y active lower panel", &menu};
+    finalcut::FMenuItem filter_problems{"Filter proble&ms...", &menu};
     finalcut::FMenuItem separator3{&menu};
-    finalcut::FMenuItem sidebar_narrower{"Sidebar &narrower", &menu};
+    finalcut::FMenuItem sidebar_narrower{"Sidebar n&arrower", &menu};
     finalcut::FMenuItem sidebar_wider{"Sidebar &wider", &menu};
     finalcut::FMenuItem lower_shorter{"Lower panel &shorter", &menu};
     finalcut::FMenuItem lower_taller{"Lower panel &taller", &menu};
@@ -518,7 +521,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem open{finalcut::FKey::Return, "&Open selected", &debug_menu};
     finalcut::FMenuItem add_watch{finalcut::FKey::Insert, "Add &watch...", &debug_menu};
     finalcut::FMenuItem remove_watch{finalcut::FKey::Del_char, "&Remove watch", &debug_menu};
-    finalcut::FMenuItem registers{finalcut::FKey::Meta_r, "Toggle &registers", &debug_menu};
+    finalcut::FMenuItem registers{finalcut::FKey::Ctrl_r, "Toggle &registers", &debug_menu};
     finalcut::FMenu breakpoint_menu;
     finalcut::FMenuItem open_breakpoint{finalcut::FKey::Return, "&Open source", &breakpoint_menu};
     finalcut::FMenuItem properties{finalcut::FKey::F2, "Breakpoint &properties...", &breakpoint_menu};

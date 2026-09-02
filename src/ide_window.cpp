@@ -11,6 +11,7 @@
 #include "tuiide/workspace_file_transaction.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
 #include <csignal>
@@ -42,7 +43,7 @@ auto ideCommands() -> const std::vector<IdeCommand>& {
     {"search.goToLine", "Search: Go to Line", finalcut::FKey::Ctrl_g, "Ctrl+G"},
     {"search.definition", "Search: Go to Definition", finalcut::FKey::F3, "F3"},
     {"search.references", "Search: Find References", finalcut::FKey::F4, "F4"},
-    {"search.problems", "Search: Problems", finalcut::FKey::Meta_e, "Alt+E"},
+    {"search.problems", "Search: Problems", finalcut::FKey::Ctrl_k, "Ctrl+K"},
     {"run.debug", "Debug: Start / Continue", finalcut::FKey::F5, "F5"},
     {"run.run", "Run: Run", finalcut::FKey::F6, "F6"},
     {"run.build", "Run: Build", finalcut::FKey::F7, "F7"},
@@ -50,13 +51,17 @@ auto ideCommands() -> const std::vector<IdeCommand>& {
     {"debug.breakpoint", "Debug: Toggle Breakpoint", finalcut::FKey::F9, "F9"},
     {"debug.stepInto", "Debug: Step Into", finalcut::FKey::F11, "F11"},
     {"debug.stepOut", "Debug: Step Out", finalcut::FKey::F12, "F12"},
-    {"debug.watch", "Debug: Add Watch", finalcut::FKey::Meta_w, "Alt+W"},
+    {"debug.watch", "Debug: Add Watch", finalcut::FKey::Ctrl_l, "Ctrl+L"},
     {"tools.completion", "Tools: Completion", finalcut::FKey::Ctrl_space, "Ctrl+Space"},
     {"tools.hover", "Tools: Symbol Information", finalcut::FKey::F1, "F1"},
     {"tools.rename", "Tools: Rename Symbol", finalcut::FKey::F2, "F2"},
     {"tools.codeActions", "Tools: Code Actions", finalcut::FKey::Meta_a, "Alt+A"},
     {"window.previous", "Window: Previous File", finalcut::FKey::Ctrl_page_up, "Ctrl+PageUp"},
     {"window.next", "Window: Next File", finalcut::FKey::Ctrl_page_down, "Ctrl+PageDown"},
+    {"window.previousSidebar", "Window: Previous Sidebar Tab", finalcut::FKey::Meta_page_up, "Alt+PageUp"},
+    {"window.nextSidebar", "Window: Next Sidebar Tab", finalcut::FKey::Meta_page_down, "Alt+PageDown"},
+    {"window.previousLower", "Window: Previous Lower Tab", finalcut::FKey::Shift_Meta_page_up, "Alt+Shift+PageUp"},
+    {"window.nextLower", "Window: Next Lower Tab", finalcut::FKey::Shift_Meta_page_down, "Alt+Shift+PageDown"},
   };
   return commands;
 }
@@ -80,9 +85,16 @@ auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
     {"CTRL+W", finalcut::FKey::Ctrl_w}, {"CTRL+Y", finalcut::FKey::Ctrl_y},
     {"CTRL+SPACE", finalcut::FKey::Ctrl_space},
     {"CTRL+PAGEUP", finalcut::FKey::Ctrl_page_up}, {"CTRL+PAGEDOWN", finalcut::FKey::Ctrl_page_down},
-    {"ALT+A", finalcut::FKey::Meta_a}, {"ALT+B", finalcut::FKey::Meta_b}, {"ALT+E", finalcut::FKey::Meta_e},
-    {"ALT+K", finalcut::FKey::Meta_k}, {"ALT+P", finalcut::FKey::Meta_p},
-    {"ALT+R", finalcut::FKey::Meta_r}, {"ALT+T", finalcut::FKey::Meta_t},
+    {"ALT+PAGEUP", finalcut::FKey::Meta_page_up}, {"ALT+PAGEDOWN", finalcut::FKey::Meta_page_down},
+    {"ALT+SHIFT+PAGEUP", finalcut::FKey::Shift_Meta_page_up},
+    {"ALT+SHIFT+PAGEDOWN", finalcut::FKey::Shift_Meta_page_down},
+    {"ALT+A", finalcut::FKey::Meta_a}, {"ALT+B", finalcut::FKey::Meta_b},
+    {"ALT+D", finalcut::FKey::Meta_d}, {"ALT+E", finalcut::FKey::Meta_e},
+    {"ALT+F", finalcut::FKey::Meta_f}, {"ALT+H", finalcut::FKey::Meta_h},
+    {"ALT+K", finalcut::FKey::Meta_k}, {"ALT+L", finalcut::FKey::Meta_l},
+    {"ALT+P", finalcut::FKey::Meta_p},
+    {"ALT+R", finalcut::FKey::Meta_r}, {"ALT+S", finalcut::FKey::Meta_s},
+    {"ALT+T", finalcut::FKey::Meta_t},
     {"ALT+U", finalcut::FKey::Meta_u}, {"ALT+W", finalcut::FKey::Meta_w},
     {"ALT+SHIFT+W", finalcut::FKey::Meta_W},
     {"F1", finalcut::FKey::F1}, {"F2", finalcut::FKey::F2}, {"F3", finalcut::FKey::F3},
@@ -128,16 +140,34 @@ struct ProjectNode {
   bool file{};
   std::map<std::string, ProjectNode> children;
 };
+
+template <typename Menu>
+auto menuMnemonicError(std::string_view menu_name, const Menu& menu) -> std::string {
+  std::map<int, std::string> owners;
+  for (const auto* item : menu.getItemList()) {
+    if (item == nullptr || item->isSeparator() || !item->hasHotkey()) continue;
+    const auto mnemonic = std::tolower(static_cast<unsigned char>(static_cast<int>(item->getHotkey())));
+    const auto [found, inserted] = owners.emplace(mnemonic, item->getText().toString());
+    if (!inserted) {
+      return "Duplicate mnemonic '" + std::string(1, static_cast<char>(mnemonic)) + "' in "
+        + std::string(menu_name) + ": " + found->second + " and " + item->getText().toString();
+    }
+  }
+  return {};
+}
 }  // namespace
 
 IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path log_file,
     bool diagnostic, finalcut::FWidget* parent)
     : FDialog(parent), root_(project_session_.root()), build_dir_(cmake_session_.buildDirectory()),
       session_file_(project_session_.sessionFile()), recovery_file_(project_session_.recoveryFile()),
-      project_history_file_(defaultProjectHistoryPath()), project_settings_(project_session_.settings()),
+      project_history_file_(defaultProjectHistoryPath()), user_settings_file_(defaultUserSettingsPath()),
+      project_settings_(project_session_.settings()),
       documents_(document_session_.documents()), closed_documents_(document_session_.closedDocuments()),
       document_(document_session_.activeDocument()), active_document_(document_session_.activeIndex()),
       external_tools_(discoverExternalTools()), diagnostic_mode_(diagnostic) {
+  std::string user_settings_error;
+  if (!loadUserSettings(user_settings_file_, user_settings_, user_settings_error)) user_settings_ = {};
   setText("TUI IDE — C/C++");
   unsetBorder();
   unsetTitleBarButtonVisibility();
@@ -147,6 +177,23 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   menu_bar_.addAccelerator(finalcut::FKey::F10, &menu_bar_);
   menu_bar_.addAccelerator(finalcut::FKey::Menu, &menu_bar_);
   setupMenus();
+  const std::array<std::pair<std::string_view, const finalcut::FMenu*>, 9> menus{{
+    {"File", &file_menu_.menu}, {"Edit", &edit_menu_.menu}, {"Search", &search_menu_.menu},
+    {"Run", &run_menu_.menu}, {"Project", &project_menu_.menu}, {"Debug", &debug_menu_.menu},
+    {"Tools", &tools_menu_.menu}, {"Window", &window_menu_.menu}, {"Help", &help_menu_.menu},
+  }};
+  if (const auto top_error = menuMnemonicError("top-level menu", menu_bar_); !top_error.empty())
+    throw std::logic_error(top_error);
+  for (const auto& [name, menu] : menus) {
+    if (const auto error = menuMnemonicError(name, *menu); !error.empty()) throw std::logic_error(error);
+  }
+  // Top-level Meta keys are routed by IdeWindow::onKeyPress so they work
+  // consistently when focus is inside a child widget or a terminal sends ESC prefixes.
+  menu_bar_.delAccelerator();
+  menu_bar_.addAccelerator(finalcut::FKey::F10, &menu_bar_);
+  menu_bar_.addAccelerator(finalcut::FKey::Menu, &menu_bar_);
+  applyShortcutAccelerators();
+  editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
   sidebar_tabs_.addTab("Open files", tabs_);
   sidebar_tabs_.addTab("Project", files_);
   sidebar_tabs_.addTab("Outline", outline_);
@@ -263,6 +310,9 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
     publishEvent(EventSource::System, EventSeverity::Information,
       "Event log: " + event_log_.filePath().string() + "\n");
   }
+  if (!user_settings_error.empty())
+    publishEvent(EventSource::System, EventSeverity::Error,
+      "User settings: " + user_settings_error + "; defaults are used\n");
   if (diagnostic_mode_) {
     publishEvent(EventSource::System, EventSeverity::Information,
       "Diagnostic mode enabled (hardware threads: "
@@ -390,7 +440,7 @@ void IdeWindow::setupMenus() {
   bind(search_menu_.go_to_line, finalcut::FKey::Ctrl_g, "Move to a line number");
   bind(search_menu_.definition, finalcut::FKey::F3, "Open the symbol definition");
   bind(search_menu_.references, finalcut::FKey::F4, "List symbol references");
-  bind(search_menu_.problems, finalcut::FKey::Meta_e, "List build and clangd problems");
+  bind(search_menu_.problems, finalcut::FKey::Ctrl_k, "List build and clangd problems");
 
   project_menu_.refresh.addCallback("clicked", [this] { deferred_command_ = [this] {
     refreshFiles();
@@ -424,9 +474,9 @@ void IdeWindow::setupMenus() {
   run_menu_.stop_run.addCallback("clicked", [this] { deferred_command_ = [this] { stopRun(); }; });
   bind(run_menu_.launch_settings, finalcut::FKey::Meta_l,
     "Set target, arguments, environment, stdin, and launch behavior");
-  bind(run_menu_.configure_preset, finalcut::FKey::Meta_p, "Select a CMake configure preset");
+  bind(run_menu_.configure_preset, finalcut::FKey::Ctrl_p, "Select a CMake configure preset");
   bind(run_menu_.build_preset, finalcut::FKey::Meta_b, "Select a CMake build preset");
-  bind(run_menu_.target, finalcut::FKey::Meta_t, "Select an executable CMake target");
+  bind(run_menu_.target, finalcut::FKey::Ctrl_t, "Select an executable CMake target");
 
   bind(debug_menu_.start, finalcut::FKey::F5, "Start or continue debugging");
   bind(debug_menu_.pause, finalcut::FKey::F17, "Pause the debuggee");
@@ -446,7 +496,7 @@ void IdeWindow::setupMenus() {
   bind(debug_menu_.next, finalcut::FKey::F34, "Step over the current source line");
   bind(debug_menu_.step, finalcut::FKey::F11, "Step into the current call");
   bind(debug_menu_.finish, finalcut::FKey::F12, "Finish the current stack frame");
-  bind(debug_menu_.watch, finalcut::FKey::Meta_w, "Add a GDB watch expression");
+  bind(debug_menu_.watch, finalcut::FKey::Ctrl_l, "Add a GDB watch expression");
   debug_menu_.evaluate.setStatusBarMessage("Evaluate a C/C++ expression in the selected stack frame");
   debug_menu_.evaluate.addCallback("clicked", [this] { deferred_command_ = [this] { evaluateExpression(); }; });
   debug_menu_.set_variable.setStatusBarMessage("Change a variable in the selected stack frame");
@@ -455,7 +505,7 @@ void IdeWindow::setupMenus() {
   debug_menu_.disassembly.addCallback("clicked", [this] { deferred_command_ = [this] { showDisassembly(); }; });
   debug_menu_.memory.setStatusBarMessage("Read a bounded memory range as hex and ASCII");
   debug_menu_.memory.addCallback("clicked", [this] { deferred_command_ = [this] { showMemory(); }; });
-  bind(debug_menu_.registers, finalcut::FKey::Meta_r, "Show or hide amd64 registers");
+  bind(debug_menu_.registers, finalcut::FKey::Ctrl_r, "Show or hide amd64 registers");
 
   bind(tools_menu_.completion, finalcut::FKey::Ctrl_space, "Request clangd completion");
   tools_menu_.signature.setStatusBarMessage("Show clangd function signature help");
@@ -495,7 +545,7 @@ void IdeWindow::setupMenus() {
     deferred_command_ = [this] { formatDocument(true); };
   });
   bind(tools_menu_.command_palette, finalcut::FKey::Meta_k, "Search and execute an IDE command");
-  tools_menu_.configure_shortcut.setStatusBarMessage("Override a command shortcut for this project");
+  tools_menu_.configure_shortcut.setStatusBarMessage("Configure a user-wide command shortcut");
   tools_menu_.configure_shortcut.addCallback("clicked", [this] {
     deferred_command_ = [this] { configureShortcut(); };
   });
@@ -554,7 +604,7 @@ void IdeWindow::setupMenus() {
   help_menu_.about.addCallback("clicked", [this] { deferred_command_ = [this] { showAbout(); }; });
 }
 
-void IdeWindow::applyShortcutAccelerators() {
+void IdeWindow::applyShortcutAccelerators(bool enabled) {
   const std::map<std::string_view, finalcut::FMenuItem*> items{
     {"file.new", &file_menu_.new_file}, {"file.open", &file_menu_.open},
     {"file.save", &file_menu_.save}, {"file.close", &file_menu_.close},
@@ -575,11 +625,13 @@ void IdeWindow::applyShortcutAccelerators() {
     const auto item = items.find(command.id);
     if (item == items.end()) continue;
     auto key = std::optional<finalcut::FKey>{command.default_key};
-    const auto custom = project_settings_.shortcuts.find(std::string(command.id));
-    if (custom != project_settings_.shortcuts.end()) key = shortcutKey(custom->second);
+    const auto custom = user_settings_.shortcuts.find(std::string(command.id));
+    if (custom != user_settings_.shortcuts.end()) key = shortcutKey(custom->second);
     item->second->delAccelerator();
-    if (key) item->second->addAccelerator(*key);
+    if (enabled && key) item->second->addAccelerator(*key);
   }
+  tools_menu_.command_palette.delAccelerator();
+  if (enabled) tools_menu_.command_palette.addAccelerator(finalcut::FKey::Meta_k);
 }
 
 void IdeWindow::queueMenuCommand(finalcut::FKey key) {
@@ -589,8 +641,8 @@ void IdeWindow::queueMenuCommand(finalcut::FKey key) {
       return item.default_key == key;
     });
     if (command != ideCommands().end()) {
-      const auto custom = project_settings_.shortcuts.find(std::string(command->id));
-      if (custom != project_settings_.shortcuts.end()) {
+      const auto custom = user_settings_.shortcuts.find(std::string(command->id));
+      if (custom != user_settings_.shortcuts.end()) {
         const auto configured = shortcutKey(custom->second);
         if (configured) effective_key = *configured;
       }
@@ -610,13 +662,16 @@ void IdeWindow::showAbout() {
 
 void IdeWindow::showKeyboardHelp() {
   finalcut::FMessageBox::info(this, "Keyboard shortcuts",
-    "F10  Menu     Ctrl+N/O/S/W  Files\n"
+    "F10 or Alt+F/E/S/R/P/D/T/W/H  Menu; underlines local, shortcuts global\n"
+    "Ctrl+N/O/S/W  Files\n"
     "F1/F2/F3/F4  Info/Rename/Definition/References\n"
     "F5/F6/F7     Debug/Run/Build\n"
     "F9           Breakpoint   Ctrl+F10  Next\n"
     "F11/F12      Step into/out\n"
+    "Alt+PgUp/Dn  Previous/next sidebar tab\n"
+    "Alt+Shift+PgUp/Dn  Previous/next lower tab\n"
     "Ctrl+F       Find/Replace text or project\n"
-    "Alt+P/B/T    Configure/Build preset/Target\n"
+    "Ctrl+P, Alt+B, Ctrl+T  Configure/Build preset/Target\n"
     "Alt+L        Launch configuration\n"
     "Alt+K        Search the command palette\n"
     "Alt+A        clangd Code Actions / Quick Fixes\n"
@@ -629,9 +684,9 @@ void IdeWindow::showKeyboardHelp() {
 void IdeWindow::showCommandPalette() {
   std::vector<std::string> items;
   for (const auto& command : ideCommands()) {
-    const auto custom = project_settings_.shortcuts.find(std::string(command.id));
+    const auto custom = user_settings_.shortcuts.find(std::string(command.id));
     items.push_back(std::string(command.title) + "  ["
-      + (custom == project_settings_.shortcuts.end() ? std::string(command.default_shortcut) : custom->second) + "]");
+      + (custom == user_settings_.shortcuts.end() ? std::string(command.default_shortcut) : custom->second) + "]");
   }
   delTimer(timer_id_);
   CommandPaletteDialog dialog(std::move(items), this);
@@ -639,65 +694,36 @@ void IdeWindow::showCommandPalette() {
   timer_id_ = addTimer(100);
   if (selected == 0 || selected > ideCommands().size()) return;
   const auto& command = ideCommands()[selected - 1];
-  const auto custom = project_settings_.shortcuts.find(std::string(command.id));
-  const auto key = custom == project_settings_.shortcuts.end()
+  const auto custom = user_settings_.shortcuts.find(std::string(command.id));
+  const auto key = custom == user_settings_.shortcuts.end()
     ? std::optional<finalcut::FKey>{command.default_key} : shortcutKey(custom->second);
   if (key) (void)handleCommand(*key);
 }
 
 void IdeWindow::configureShortcut() {
-  if (root_.empty()) {
-    publishEvent(EventSource::Project, EventSeverity::Warning, "Shortcut configuration unavailable: no project is open\n");
-    return;
-  }
-  std::vector<std::string> items;
+  std::vector<ShortcutEditorCommand> commands;
+  commands.reserve(ideCommands().size());
   for (const auto& command : ideCommands()) {
-    const auto custom = project_settings_.shortcuts.find(std::string(command.id));
-    items.push_back(std::string(command.title) + "  ["
-      + (custom == project_settings_.shortcuts.end() ? std::string(command.default_shortcut) : custom->second) + "]");
+    commands.push_back({std::string(command.id), std::string(command.title),
+      std::string(command.default_shortcut)});
   }
-  const auto selected = choose("Configure shortcut", items);
-  if (selected == 0 || selected > ideCommands().size()) return;
-  const auto& command = ideCommands()[selected - 1];
-  const auto value = prompt("Configure shortcut", "Shortcut (or Default):");
-  if (value.empty()) return;
-  auto normalized = value;
-  normalized.erase(std::remove_if(normalized.begin(), normalized.end(), [](unsigned char character) {
-    return std::isspace(character) != 0;
-  }), normalized.end());
-  if (normalized == "Default" || normalized == "default") {
-    project_settings_.shortcuts.erase(std::string(command.id));
-  } else {
-    const auto key = shortcutKey(normalized);
-    if (!key) {
-      finalcut::FMessageBox::error(this,
-        "Unsupported shortcut. Use Ctrl+letter, Alt+letter, Ctrl+PageUp/PageDown, or F1-F12.");
-      return;
-    }
-    if (*key == finalcut::FKey::Meta_k) {
-      finalcut::FMessageBox::error(this, "Alt+K is reserved for the command palette.");
-      return;
-    }
-    for (const auto& other : ideCommands()) {
-      if (other.id == command.id) continue;
-      const auto custom = project_settings_.shortcuts.find(std::string(other.id));
-      const auto other_key = custom == project_settings_.shortcuts.end()
-        ? std::optional<finalcut::FKey>{other.default_key} : shortcutKey(custom->second);
-      if (other_key && *other_key == *key) {
-        finalcut::FMessageBox::error(this, finalcut::FString(
-          "Shortcut conflicts with: " + std::string(other.title)));
-        return;
-      }
-    }
-    project_settings_.shortcuts[std::string(command.id)] = normalized;
-  }
+  delTimer(timer_id_);
+  applyShortcutAccelerators(false);
+  ShortcutEditorDialog dialog(std::move(commands), user_settings_.shortcuts, this);
+  const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
+  applyShortcutAccelerators();
+  timer_id_ = addTimer(100);
+  if (!accepted) return;
+  auto updated = user_settings_;
+  updated.shortcuts = dialog.overrides();
   std::string error;
-  if (!saveProjectSettings(root_, project_settings_, error)) {
+  if (!saveUserSettings(user_settings_file_, updated, error)) {
     finalcut::FMessageBox::error(this, finalcut::FString(error));
     return;
   }
+  user_settings_ = std::move(updated);
   applyShortcutAccelerators();
-  publishEvent(EventSource::Project, EventSeverity::Success, "Shortcut updated: " + std::string(command.title) + "\n");
+  publishEvent(EventSource::Project, EventSeverity::Success, "Shortcut settings updated\n");
 }
 
 void IdeWindow::showShortcutConflicts() {
@@ -707,8 +733,8 @@ void IdeWindow::showShortcutConflicts() {
   owners[finalcut::FKey::Meta_k].push_back("Tools: Command Palette (reserved)");
   table << "Alt+K\tTools: Command Palette (reserved)\n";
   for (const auto& command : ideCommands()) {
-    const auto custom = project_settings_.shortcuts.find(std::string(command.id));
-    const auto label = custom == project_settings_.shortcuts.end()
+    const auto custom = user_settings_.shortcuts.find(std::string(command.id));
+    const auto label = custom == user_settings_.shortcuts.end()
       ? std::string(command.default_shortcut) : custom->second;
     const auto key = shortcutKey(label);
     if (key) owners[*key].push_back(std::string(command.title));
@@ -727,46 +753,56 @@ void IdeWindow::showShortcutConflicts() {
 }
 
 void IdeWindow::selectTheme() {
-  if (root_.empty()) { publishEvent(EventSource::Editor, EventSeverity::Warning, "Theme settings unavailable: no project is open\n"); return; }
-  const std::vector<std::string> themes{"Dark", "Light", "High contrast"};
-  const auto selected = choose("Editor theme", themes);
-  if (selected == 0 || selected > themes.size()) return;
-  project_settings_.theme = themes[selected - 1];
-  std::string error;
-  if (!saveProjectSettings(root_, project_settings_, error)) {
-    finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
+  const auto original_theme = effectiveEditorTheme(user_settings_);
+  const auto original_colors = user_settings_.colors;
+  delTimer(timer_id_);
+  ThemeEditorDialog dialog(user_settings_.theme, user_settings_.custom_themes,
+    [this](const std::string& theme) { editor_.setTheme(theme, user_settings_.colors); }, this);
+  const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
+  timer_id_ = addTimer(100);
+  if (!accepted) {
+    editor_.setTheme(original_theme, original_colors);
+    return;
   }
-  editor_.setTheme(project_settings_.theme, project_settings_.colors);
-  publishEvent(EventSource::Editor, EventSeverity::Information, "Editor theme: " + project_settings_.theme + "\n");
+  auto updated = user_settings_;
+  updated.theme = dialog.selectedTheme();
+  updated.custom_themes = dialog.customThemes();
+  std::string error;
+  if (!saveUserSettings(user_settings_file_, updated, error)) {
+    editor_.setTheme(original_theme, original_colors);
+    finalcut::FMessageBox::error(this, finalcut::FString(error));
+    return;
+  }
+  user_settings_ = std::move(updated);
+  editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
+  publishEvent(EventSource::Editor, EventSeverity::Information, "Editor theme: " + user_settings_.theme + "\n");
 }
 
 void IdeWindow::configureEditorColor() {
-  if (root_.empty()) { publishEvent(EventSource::Editor, EventSeverity::Warning, "Color settings unavailable: no project is open\n"); return; }
-  const std::vector<std::string> roles{"foreground", "background", "gutter", "breakpoint",
-    "diagnosticError", "diagnosticWarning", "diagnosticNote", "selectionForeground", "selectionBackground",
-    "plain", "keyword", "type", "string", "number", "comment", "preprocessor", "namespace",
-    "function", "variable", "parameter", "property", "macro", "enumMember"};
-  std::vector<std::string> role_items;
-  for (const auto& role : roles) {
-    const auto configured = project_settings_.colors.find(role);
-    role_items.push_back(role + "  [" + (configured == project_settings_.colors.end() ? "theme default" : configured->second) + "]");
+  const auto original_colors = user_settings_.colors;
+  const auto theme = effectiveEditorTheme(user_settings_);
+  delTimer(timer_id_);
+  applyShortcutAccelerators(false);
+  ColorEditorDialog dialog(theme, original_colors,
+    [this, &theme](const auto& colors) { editor_.setTheme(theme, colors); }, this);
+  const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
+  applyShortcutAccelerators();
+  timer_id_ = addTimer(100);
+  if (!accepted) {
+    editor_.setTheme(theme, original_colors);
+    return;
   }
-  const auto role_index = choose("Editor color role", role_items);
-  if (role_index == 0 || role_index > roles.size()) return;
-  const std::vector<std::string> colors{"Theme default", "Black", "Blue", "Green", "Cyan", "Red", "Magenta",
-    "Brown", "LightGray", "DarkGray", "LightBlue", "LightGreen", "LightCyan", "LightRed",
-    "LightMagenta", "Yellow", "White"};
-  const auto color_index = choose("Color for " + roles[role_index - 1], colors);
-  if (color_index == 0 || color_index > colors.size()) return;
-  const auto& role = roles[role_index - 1];
-  if (color_index == 1) project_settings_.colors.erase(role);
-  else project_settings_.colors[role] = colors[color_index - 1];
+  auto updated = user_settings_;
+  updated.colors = dialog.overrides();
   std::string error;
-  if (!saveProjectSettings(root_, project_settings_, error)) {
-    finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
+  if (!saveUserSettings(user_settings_file_, updated, error)) {
+    editor_.setTheme(theme, original_colors);
+    finalcut::FMessageBox::error(this, finalcut::FString(error));
+    return;
   }
-  editor_.setTheme(project_settings_.theme, project_settings_.colors);
-  publishEvent(EventSource::Editor, EventSeverity::Success, "Editor color updated: " + role + "\n");
+  user_settings_ = std::move(updated);
+  editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
+  publishEvent(EventSource::Editor, EventSeverity::Success, "Editor colors updated\n");
 }
 
 void IdeWindow::showTextDialog(std::string title, std::string text) {
@@ -868,7 +904,7 @@ void IdeWindow::showDebugContextMenu(finalcut::FPoint position, bool breakpoints
     debug_context_->add_watch.addCallback("clicked", [this] { deferred_command_ = [this] { addWatch(); }; });
     debug_context_->remove_watch.addCallback("clicked", [this] { deferred_command_ = [this] { removeSelectedWatch(); }; });
     debug_context_->registers.addCallback("clicked", [this] {
-      deferred_command_ = [this] { (void)handleCommand(finalcut::FKey::Meta_r); };
+      deferred_command_ = [this] { (void)handleCommand(finalcut::FKey::Ctrl_r); };
     });
     debug_context_->properties.addCallback("clicked", [this] { deferred_command_ = [this] { editSelectedBreakpoint(); }; });
     debug_context_->toggle.addCallback("clicked", [this] { deferred_command_ = [this] { toggleSelectedBreakpoint(); }; });
@@ -1518,7 +1554,7 @@ void IdeWindow::unloadProject() {
   outline_.clear(); outline_.insert("Open a C/C++ file for outline"); outline_positions_.clear();
   event_log_.clear(); output_.clear(); build_output_.clear(); console_.clear();
   applyShortcutAccelerators();
-  editor_.setTheme("Dark", {});
+  editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
   debug_ui_.reset(); debug_state_dirty_ = false;
   compilation_database_.clear(); compilation_database_warnings_.clear();
   lsp_ui_.reset();
@@ -1554,7 +1590,7 @@ auto IdeWindow::loadProject(std::filesystem::path root, std::filesystem::path bu
     publishEvent(EventSource::Project, EventSeverity::Warning, "Project settings: " + open_result.warning + "; defaults are used\n");
   applyShortcutAccelerators();
   editor_.setIndentation(project_settings_.tab_width, project_settings_.use_spaces);
-  editor_.setTheme(project_settings_.theme, project_settings_.colors);
+  editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
   setText("TUI IDE — C/C++ — " + root_.filename().string());
   lsp_ui_.reset();
   loadDebugState();
@@ -1599,7 +1635,7 @@ void IdeWindow::projectSettings() {
   project_session_.applySettings(std::move(updated));
   cmake_session_.reset(project_session_.buildDirectory());
   editor_.setIndentation(project_settings_.tab_width, project_settings_.use_spaces);
-  editor_.setTheme(project_settings_.theme, project_settings_.colors);
+  editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
   refreshCompilationDatabase(true);
   restartLanguageServer();
   publishEvent(EventSource::Project, EventSeverity::Success, "Project settings saved; build directory: " + build_dir_.string() + "\n");
@@ -1804,7 +1840,7 @@ void IdeWindow::createProjectFile() {
   bool created{};
   if (types[selection - 1] == ProjectTemplate::CppClass) {
     delTimer(timer_id_);
-    ClassOptionsDialog dialog(this);
+    ClassOptionsDialog dialog(project_settings_.cpp_header_extension, this);
     const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
     auto options = dialog.options();
     timer_id_ = addTimer(100);
@@ -1813,9 +1849,15 @@ void IdeWindow::createProjectFile() {
       finalcut::FMessageBox::error(this, finalcut::FString(error));
       return;
     }
-    const auto header = chooseProjectSavePath("C++ class header path", start_directory, options.class_name + ".hpp");
+    const auto header_name = options.header_file_name.empty()
+      ? options.class_name + "." + project_settings_.cpp_header_extension
+      : options.header_file_name;
+    const auto source_name = options.source_file_name.empty()
+      ? options.class_name + ".cpp" : options.source_file_name;
+    const auto header = chooseProjectSavePath("C++ class header path", start_directory, header_name);
     if (!header) return;
-    const auto source = chooseProjectSavePath("C++ class implementation path", header->parent_path(), options.class_name + ".cpp");
+    const auto source = chooseProjectSavePath("C++ class implementation path",
+      header->parent_path(), source_name);
     if (!source) return;
     std::error_code relative_error;
     options.header_path = std::filesystem::relative(*header, root_, relative_error);
@@ -2730,17 +2772,22 @@ auto IdeWindow::refreshCMakePresets(bool report_error) -> bool {
 }
 
 void IdeWindow::selectCMakePreset() {
-  if (!refreshCMakePresets()) return;
-  std::vector<std::string> labels{"No preset -> " + session_file_.parent_path().string()};
-  for (const auto& preset : cmake_session_.configurePresets()) {
-    auto label = preset.display_name + " [" + preset.name + "]";
-    if (!preset.binary_directory.empty()) label += " -> " + preset.binary_directory.string();
-    labels.push_back(std::move(label));
+  delTimer(timer_id_);
+  CMakePresetManagerDialog dialog(root_, CMakePresetKind::Configure,
+    cmake_session_.configurePreset(), this);
+  const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
+  timer_id_ = addTimer(100);
+  activateWindow();
+  raiseWindow();
+  setFocus();
+  editor_.setFocus();
+  finalcut::FWidget::setFocusWidget(&editor_);
+  if (!accepted) {
+    if (dialog.changed()) (void)refreshCMakePresets();
+    return;
   }
-  const auto selection = choose("CMake configure preset", labels);
-  if (selection == 0 || selection > labels.size()) return;
-  const auto name = selection == 1 ? std::string{}
-    : cmake_session_.configurePresets()[selection - 2].name;
+  if (!refreshCMakePresets()) return;
+  const auto name = dialog.selectedPreset();
   if (!cmake_session_.selectConfigurePreset(name, project_session_.buildDirectory())) return;
   debug_state_dirty_ = true;
   saveDebugState();
@@ -2754,27 +2801,24 @@ void IdeWindow::selectCMakePreset() {
 }
 
 void IdeWindow::selectCMakeBuildPreset() {
-  if (!refreshCMakePresets()) return;
-  std::vector<const CMakeBuildPreset*> available;
-  std::vector<std::string> labels{"No build preset"};
-  for (const auto& preset : cmake_session_.buildPresets()) {
-    const auto configure = std::ranges::find(cmake_session_.configurePresets(),
-      preset.configure_preset, &CMakeConfigurePreset::name);
-    if (configure == cmake_session_.configurePresets().end()) continue;
-    available.push_back(&preset);
-    auto label = preset.display_name + " [" + preset.name + "] / configure: " + preset.configure_preset;
-    if (!preset.configuration.empty()) label += " / " + preset.configuration;
-    if (!preset.targets.empty()) {
-      label += " / targets:";
-      for (const auto& target : preset.targets) label += " " + target;
-    }
-    labels.push_back(std::move(label));
+  delTimer(timer_id_);
+  CMakePresetManagerDialog dialog(root_, CMakePresetKind::Build,
+    cmake_session_.buildPreset(), this);
+  const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
+  timer_id_ = addTimer(100);
+  activateWindow();
+  raiseWindow();
+  setFocus();
+  editor_.setFocus();
+  finalcut::FWidget::setFocusWidget(&editor_);
+  if (!accepted) {
+    if (dialog.changed()) (void)refreshCMakePresets();
+    return;
   }
-  const auto selection = choose("CMake build preset", labels);
-  if (selection == 0 || selection > labels.size()) return;
-  const auto name = selection == 1 ? std::string{} : available[selection - 2]->name;
+  if (!refreshCMakePresets()) return;
+  const auto name = dialog.selectedPreset();
   if (!cmake_session_.selectBuildPreset(name, project_session_.buildDirectory())) return;
-  if (selection != 1) refreshFiles();
+  if (!name.empty()) refreshFiles();
   debug_state_dirty_ = true;
   saveDebugState();
   publishEvent(EventSource::Build, EventSeverity::Information, "Selected build preset: " + (cmake_session_.buildPreset().empty()
@@ -3192,10 +3236,29 @@ void IdeWindow::updateStatus() {
 }
 
 auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
+  const auto top_menu = [this, key]() -> finalcut::FMenuItem* {
+    switch (key) {
+      case finalcut::FKey::Meta_f: return file_menu_.menu.getItem();
+      case finalcut::FKey::Meta_e: return edit_menu_.menu.getItem();
+      case finalcut::FKey::Meta_s: return search_menu_.menu.getItem();
+      case finalcut::FKey::Meta_r: return run_menu_.menu.getItem();
+      case finalcut::FKey::Meta_p: return project_menu_.menu.getItem();
+      case finalcut::FKey::Meta_d: return debug_menu_.menu.getItem();
+      case finalcut::FKey::Meta_t: return tools_menu_.menu.getItem();
+      case finalcut::FKey::Meta_w: return window_menu_.menu.getItem();
+      case finalcut::FKey::Meta_h: return help_menu_.menu.getItem();
+      default: return nullptr;
+    }
+  }();
+  if (top_menu != nullptr) {
+    finalcut::FAccelEvent accelerator(finalcut::Event::Accelerator, finalcut::FWidget::getFocusWidget());
+    finalcut::FApplication::sendEvent(top_menu, &accelerator);
+    return true;
+  }
   bool custom_match{};
   for (const auto& command : ideCommands()) {
-    const auto custom = project_settings_.shortcuts.find(std::string(command.id));
-    if (custom == project_settings_.shortcuts.end()) continue;
+    const auto custom = user_settings_.shortcuts.find(std::string(command.id));
+    if (custom == user_settings_.shortcuts.end()) continue;
     const auto configured = shortcutKey(custom->second);
     if (configured && *configured == key) {
       key = command.default_key;
@@ -3205,7 +3268,7 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
   }
   if (!custom_match) {
     for (const auto& command : ideCommands()) {
-      if (command.default_key == key && project_settings_.shortcuts.contains(std::string(command.id)))
+      if (command.default_key == key && user_settings_.shortcuts.contains(std::string(command.id)))
         return true;
     }
   }
@@ -3254,6 +3317,30 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
     case finalcut::FKey::Meta_u: reopenClosedDocument(); return true;
     case finalcut::FKey::Ctrl_page_up: switchDocument(-1); return true;
     case finalcut::FKey::Ctrl_page_down: switchDocument(1); return true;
+    case finalcut::FKey::Meta_page_up:
+      sidebar_tabs_.selectRelative(-1, true);
+      showNotification("Sidebar: " + sidebar_tabs_.currentTitle());
+      publishEvent(EventSource::System, EventSeverity::Information,
+        "Sidebar tab: " + sidebar_tabs_.currentTitle() + "\n");
+      return true;
+    case finalcut::FKey::Meta_page_down:
+      sidebar_tabs_.selectRelative(1, true);
+      showNotification("Sidebar: " + sidebar_tabs_.currentTitle());
+      publishEvent(EventSource::System, EventSeverity::Information,
+        "Sidebar tab: " + sidebar_tabs_.currentTitle() + "\n");
+      return true;
+    case finalcut::FKey::Shift_Meta_page_up:
+      lower_tabs_.selectRelative(-1, true);
+      showNotification("Lower panel: " + lower_tabs_.currentTitle());
+      publishEvent(EventSource::System, EventSeverity::Information,
+        "Lower panel tab: " + lower_tabs_.currentTitle() + "\n");
+      return true;
+    case finalcut::FKey::Shift_Meta_page_down:
+      lower_tabs_.selectRelative(1, true);
+      showNotification("Lower panel: " + lower_tabs_.currentTitle());
+      publishEvent(EventSource::System, EventSeverity::Information,
+        "Lower panel tab: " + lower_tabs_.currentTitle() + "\n");
+      return true;
     case finalcut::FKey::Ctrl_f:
       if (!document_) publishEvent(EventSource::Editor, EventSeverity::Warning, "Find unavailable: no document is open\n");
       else deferred_command_ = [this] { find(); };
@@ -3284,14 +3371,14 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       if (document_ && isCMakePath(document_->path())) deferred_command_ = [this] { showCMakeCompletion(); };
       else if (requireLspDocument("Completion")) lsp_.requestCompletion(*document_);
       return true;
-    case finalcut::FKey::Meta_w:
+    case finalcut::FKey::Ctrl_l:
       if (root_.empty()) publishEvent(EventSource::Debug, EventSeverity::Warning, "Add watch unavailable: no project is open\n");
       else deferred_command_ = [this] { addWatch(); };
       return true;
     case finalcut::FKey::Meta_a:
       if (requireLspDocument("Code Actions")) requestCodeActions(false);
       return true;
-    case finalcut::FKey::Meta_p:
+    case finalcut::FKey::Ctrl_p:
       if (root_.empty()) publishEvent(EventSource::Build, EventSeverity::Warning, "Configure preset unavailable: no project is open\n");
       else if (build_session_.running()) publishEvent(EventSource::Build, EventSeverity::Warning, "Configure preset unavailable: a build is in progress\n");
       else deferred_command_ = [this] { selectCMakePreset(); };
@@ -3301,7 +3388,7 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       else if (build_session_.running()) publishEvent(EventSource::Build, EventSeverity::Warning, "Build preset unavailable: a build is in progress\n");
       else deferred_command_ = [this] { selectCMakeBuildPreset(); };
       return true;
-    case finalcut::FKey::Meta_t:
+    case finalcut::FKey::Ctrl_t:
       if (root_.empty()) publishEvent(EventSource::Build, EventSeverity::Warning, "Target selection unavailable: no project is open\n");
       else if (build_session_.running()) publishEvent(EventSource::Build, EventSeverity::Warning, "Target selection unavailable: a build is in progress\n");
       else deferred_command_ = [this] { selectCMakeTarget(); };
@@ -3314,11 +3401,11 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
           "Launch configuration unavailable while build, program, or debugger is running\n");
       else deferred_command_ = [this] { launchSettings(); };
       return true;
-    case finalcut::FKey::Meta_e:
+    case finalcut::FKey::Ctrl_k:
       if (root_.empty()) publishEvent(EventSource::Build, EventSeverity::Warning, "Problems unavailable: no project is open\n");
       else deferred_command_ = [this] { showProblems(); };
       return true;
-    case finalcut::FKey::Meta_r:
+    case finalcut::FKey::Ctrl_r:
       if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Registers unavailable: no project is open\n"); return true; }
       gdb_.setRegistersEnabled(!gdb_.registersEnabled());
       debug_state_dirty_ = true; saveDebugState();

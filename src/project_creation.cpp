@@ -128,7 +128,10 @@ auto createNewProject(const NewProjectOptions& options, std::string& error) -> b
   project_settings.build_directory = std::filesystem::absolute(options.build_directory);
   project_settings.generator = options.generator;
   project_settings.build_type = options.build_type;
-  if (cpp) project_settings.cpp_standard = options.language_standard;
+  if (cpp) {
+    project_settings.cpp_standard = options.language_standard;
+    project_settings.cpp_header_extension = options.cpp_header_extension;
+  }
   else project_settings.c_standard = options.language_standard;
   if (!saveProjectSettings(options.project_directory, project_settings, error)) return false;
   if (options.create_gitignore) {

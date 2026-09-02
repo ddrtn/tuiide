@@ -379,8 +379,10 @@ auto ProjectSettingsDialog::settings(ProjectSettings& result, std::string& error
 }
 
 struct ClassOptionsDialog::Impl {
-  explicit Impl(ClassOptionsDialog* dialog)
+  Impl(ClassOptionsDialog* dialog, std::string header_extension)
       : owner(dialog), class_label("Class name:", owner), class_name(owner),
+        header_file_label("Header file:", owner), header_file(owner),
+        source_file_label("Source file:", owner), source_file(owner),
         namespace_label("Namespace:", owner), namespace_name(owner),
         base_label("Base class:", owner), base_class(owner),
         base_header_label("Base header:", owner), base_header(owner),
@@ -388,32 +390,67 @@ struct ClassOptionsDialog::Impl {
         constructor("Generate constructor", owner), destructor("Generate destructor", owner),
         virtual_destructor("Virtual destructor", owner), final_class("Final class", owner),
         copy("Copy operations", owner), move("Move operations", owner),
-        next("&Next", owner), cancel("&Cancel", owner) {
-    class_label.setGeometry({2, 1}, {13, 1}); class_name.setGeometry({16, 1}, {39, 1});
-    namespace_label.setGeometry({2, 3}, {13, 1}); namespace_name.setGeometry({16, 3}, {39, 1});
-    base_label.setGeometry({2, 5}, {13, 1}); base_class.setGeometry({16, 5}, {18, 1});
-    base_header_label.setGeometry({35, 5}, {12, 1}); base_header.setGeometry({47, 5}, {8, 1});
-    access_label.setGeometry({2, 7}, {13, 1}); access.setGeometry({16, 7}, {18, 1});
+        next("&Next", owner), cancel("&Cancel", owner),
+        header_extension_(header_extension == "h" ? "h" : "hpp") {
+    class_label.setGeometry({2, 1}, {14, 1}); class_name.setGeometry({18, 1}, {50, 1});
+    header_file_label.setGeometry({2, 3}, {14, 1}); header_file.setGeometry({18, 3}, {50, 1});
+    source_file_label.setGeometry({2, 5}, {14, 1}); source_file.setGeometry({18, 5}, {50, 1});
+    header_suggestion_ = "NewClass." + header_extension_;
+    source_suggestion_ = "NewClass.cpp";
+    header_file.setText(finalcut::FString(header_suggestion_));
+    source_file.setText(finalcut::FString(source_suggestion_));
+    namespace_label.setGeometry({2, 7}, {14, 1}); namespace_name.setGeometry({18, 7}, {50, 1});
+    base_label.setGeometry({2, 9}, {14, 1}); base_class.setGeometry({18, 9}, {22, 1});
+    base_header_label.setGeometry({42, 9}, {13, 1}); base_header.setGeometry({56, 9}, {12, 1});
+    access_label.setGeometry({2, 11}, {14, 1}); access.setGeometry({18, 11}, {22, 1});
     access.insert("public"); access.insert("protected"); access.insert("private");
     access.setCurrentItem(1); access.unsetEditable();
-    constructor.setGeometry({2, 9}, {25, 1}); destructor.setGeometry({29, 9}, {25, 1});
-    virtual_destructor.setGeometry({2, 10}, {25, 1}); final_class.setGeometry({29, 10}, {20, 1});
-    copy.setGeometry({2, 11}, {25, 1}); move.setGeometry({29, 11}, {25, 1});
+    constructor.setGeometry({2, 13}, {28, 1}); destructor.setGeometry({34, 13}, {28, 1});
+    virtual_destructor.setGeometry({2, 14}, {28, 1}); final_class.setGeometry({34, 14}, {24, 1});
+    copy.setGeometry({2, 15}, {28, 1}); move.setGeometry({34, 15}, {28, 1});
     constructor.setChecked(); destructor.setChecked(); virtual_destructor.setChecked();
-    next.setGeometry({31, 13}, {10, 1}); cancel.setGeometry({44, 13}, {12, 1});
+    next.setGeometry({45, 18}, {10, 1}); cancel.setGeometry({57, 18}, {12, 1});
     next.addCallback("clicked", [this] {
       owner->done(finalcut::FDialog::ResultCode::Accept);
     });
     cancel.addCallback("clicked", [this] {
       owner->done(finalcut::FDialog::ResultCode::Reject);
     });
-    class_name.addCallback("activate", [this] { namespace_name.setFocus(); });
+    class_name.addCallback("activate", [this] {
+      header_file.moveCursorToEnd();
+      header_file.setFocus();
+    });
+    header_file.addCallback("activate", [this] {
+      source_file.moveCursorToEnd();
+      source_file.setFocus();
+    });
+    source_file.addCallback("activate", [this] { namespace_name.setFocus(); });
+    class_name.addCallback("changed", [this] { updateSuggestedNames(); });
     class_name.setFocus();
+  }
+
+  void updateSuggestedNames() {
+    auto base = class_name.getText().trim().toString();
+    if (base.empty()) base = "NewClass";
+    const auto next_header = base + "." + header_extension_;
+    const auto next_source = base + ".cpp";
+    if (header_file.getText().trim().toString() == header_suggestion_) {
+      header_file.setText(finalcut::FString(next_header));
+      header_file.redraw();
+    }
+    if (source_file.getText().trim().toString() == source_suggestion_) {
+      source_file.setText(finalcut::FString(next_source));
+      source_file.redraw();
+    }
+    header_suggestion_ = next_header;
+    source_suggestion_ = next_source;
   }
 
   auto options() const -> CppClassOptions {
     CppClassOptions result;
     result.class_name = class_name.getText().trim().toString();
+    result.header_file_name = header_file.getText().trim().toString();
+    result.source_file_name = source_file.getText().trim().toString();
     result.namespace_name = namespace_name.getText().trim().toString();
     result.base_class = base_class.getText().trim().toString();
     result.base_header = base_header.getText().trim().toString();
@@ -431,6 +468,8 @@ struct ClassOptionsDialog::Impl {
 
   ClassOptionsDialog* owner;
   finalcut::FLabel class_label; finalcut::FLineEdit class_name;
+  finalcut::FLabel header_file_label; finalcut::FLineEdit header_file;
+  finalcut::FLabel source_file_label; finalcut::FLineEdit source_file;
   finalcut::FLabel namespace_label; finalcut::FLineEdit namespace_name;
   finalcut::FLabel base_label; finalcut::FLineEdit base_class;
   finalcut::FLabel base_header_label; finalcut::FLineEdit base_header;
@@ -439,13 +478,16 @@ struct ClassOptionsDialog::Impl {
   finalcut::FCheckBox virtual_destructor; finalcut::FCheckBox final_class;
   finalcut::FCheckBox copy; finalcut::FCheckBox move;
   finalcut::FButton next; finalcut::FButton cancel;
+  std::string header_extension_;
+  std::string header_suggestion_;
+  std::string source_suggestion_;
 };
 
-ClassOptionsDialog::ClassOptionsDialog(finalcut::FWidget* parent)
+ClassOptionsDialog::ClassOptionsDialog(std::string header_extension, finalcut::FWidget* parent)
     : CenteredDialog("C++ class options", parent) {
-  setDialogSize({72, 20});
+  setDialogSize({78, 24});
   setModal();
-  impl_ = std::make_unique<Impl>(this);
+  impl_ = std::make_unique<Impl>(this, std::move(header_extension));
 }
 
 ClassOptionsDialog::~ClassOptionsDialog() = default;

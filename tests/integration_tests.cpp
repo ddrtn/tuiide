@@ -1375,10 +1375,50 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
   };
 
   const bool started = visible("Open files");
+  if (std::getenv("TUIIDE_MENU_MNEMONICS_ONLY") != nullptr) {
+    const auto openMnemonicMenu = [&](std::string_view key, std::string_view marker) {
+      screen.clear(); send(key);
+      const bool opened = visible(marker, 3s);
+      send("\033"); settle();
+      return opened;
+    };
+    const bool mnemonic_file = openMnemonicMenu("\033f", "New Project");
+    const bool mnemonic_edit = openMnemonicMenu("\033e", "Undo");
+    const bool mnemonic_search = openMnemonicMenu("\033s", "Find...");
+    const bool mnemonic_run = openMnemonicMenu("\033r", "Configure");
+    const bool mnemonic_project = openMnemonicMenu("\033p", "Refresh tree");
+    const bool mnemonic_debug = openMnemonicMenu("\033d", "Start / Continue");
+    const bool mnemonic_tools = openMnemonicMenu("\033t", "Completion");
+    const bool mnemonic_window = openMnemonicMenu("\033w", "Previous file");
+    const bool mnemonic_help = openMnemonicMenu("\033h", "Keyboard shortcuts");
+    screen.clear(); send("\033h");
+    (void)visible("Keyboard shortcuts", 3s);
+    send("k");
+    const bool item_mnemonic = visible("F10 or Alt", 5s);
+    screen.clear(); send("\r"); settle();
+    screen.clear(); send("\021");
+    int mnemonic_status{};
+    const auto exited = waitFor(pump, [&] {
+      return ::waitpid(child, &mnemonic_status, WNOHANG) == child;
+    }, 8s);
+    if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &mnemonic_status, 0); }
+    ::close(master);
+    const bool success = started && mnemonic_file && mnemonic_edit && mnemonic_search && mnemonic_run
+      && mnemonic_project && mnemonic_debug && mnemonic_tools && mnemonic_window && mnemonic_help
+      && item_mnemonic && exited && WIFEXITED(mnemonic_status) && WEXITSTATUS(mnemonic_status) == 0;
+    if (!success) {
+      std::cerr << "Menu mnemonics PTY: started=" << started << " file=" << mnemonic_file
+        << " edit=" << mnemonic_edit << " search=" << mnemonic_search << " run=" << mnemonic_run
+        << " project=" << mnemonic_project << " debug=" << mnemonic_debug << " tools=" << mnemonic_tools
+        << " window=" << mnemonic_window << " help=" << mnemonic_help << " item=" << item_mnemonic
+        << " exited=" << exited << " status=" << mnemonic_status << '\n';
+    }
+    return success;
+  }
 
   const bool keyboard_menu = openTopMenu(8, "Keyboard shortcuts");
   screen.clear(); send("\r");
-  const bool keyboard_dialog = visible("F10  Menu", 5s);
+  const bool keyboard_dialog = visible("F10 or Alt", 5s);
   screen.clear(); send("\033"); settle();
 
   const bool about_menu = openTopMenu(8, "Keyboard shortcuts");
@@ -1393,7 +1433,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
 
   const bool filter_cancel_menu = selectWindowFromEnd(6);
   const bool filter_cancel_dialog = visible("Filter Problems", 5s);
-  screen.clear(); send("\033c"); settle();
+  screen.clear(); send("\033"); settle();
   const bool filter_cancelled = waitFor(pump, [&] {
     return logged("Problems filter unchanged");
   }, 5s);
@@ -1491,7 +1531,13 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
     std::ofstream file(project / ".tuiide-project.json");
     file << "{\"version\":1,\"buildDirectory\":\"build\",\"buildJobs\":1}\n";
   }
-  const auto settings_file = project / ".tuiide-project.json";
+  const auto config = workspace / "tools-config";
+  const auto settings_file = config / "tuiide/settings.json";
+  std::filesystem::create_directories(settings_file.parent_path());
+  {
+    std::ofstream file(settings_file);
+    file << "{\"version\":1,\"theme\":\"Dark\",\"shortcuts\":{\"file.open\":\"Ctrl+B\"}}\n";
+  }
   const auto readFile = [](const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
@@ -1505,7 +1551,6 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
     ::setenv("TERM", "xterm-256color", 1);
     ::setenv("TUIIDE_CLIPBOARD_NATIVE", "0", 1);
     ::setenv("TUIIDE_OSC52", "0", 1);
-    const auto config = workspace / "tools-config";
     ::setenv("XDG_CONFIG_HOME", config.c_str(), 1);
     ::execl(tuiide.c_str(), tuiide.c_str(), "--log-file", log.c_str(), project.c_str(),
       static_cast<char*>(nullptr));
@@ -1552,44 +1597,75 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   };
 
   const bool started = visible("Open files");
+  screen.clear(); send("\033[6;3~");
+  const bool sidebar_shortcut = waitFor(pump, [&] { return logged("Sidebar tab: Project"); }, 5s);
+  screen.clear(); send("\033[6;4~");
+  const bool lower_shortcut = waitFor(pump, [&] { return logged("Lower panel tab: Problems"); }, 5s);
 
   const bool conflicts_menu = openToolsFromEnd(4);
   const bool conflicts_dialog = visible("Effective shortcut table", 5s);
-  screen.clear(); send("\033c"); settle();
+  screen.clear(); send("\033"); settle();
 
   const auto initial_settings = readFile(settings_file);
   const bool shortcut_cancel_menu = openToolsFromEnd(5);
-  const bool shortcut_cancel_dialog = visible("File: New", 5s);
-  screen.clear(); send("\033c"); settle();
+  const bool shortcut_cancel_dialog = visible("Configure shortcuts", 5s)
+    && visible("Default: Ctrl+N", 5s) && visible("Capture", 5s);
+  screen.clear(); send("\033"); settle();
   const bool shortcut_cancelled = readFile(settings_file) == initial_settings;
 
   const bool shortcut_error_menu = openToolsFromEnd(5);
   const bool shortcut_error_picker = visible("File: New", 5s);
-  screen.clear(); send("\r");
-  const bool shortcut_error_prompt = visible("Shortcut (or Default):", 5s);
-  settle(); screen.clear(); send("Alt+K\r");
-  const bool shortcut_error = visible("Alt+K is reserved for the command palette", 5s);
-  screen.clear(); send("o"); settle();
+  screen.clear(); send("\033c"); settle(); screen.clear();
+  send(std::string(1, static_cast<char>(2)));
+  const bool conflict_captured = visible("Ctrl+B", 5s);
+  const bool shortcut_error = conflict_captured && readFile(settings_file) == initial_settings;
+  screen.clear(); send("\033"); settle();
   const bool shortcut_error_safe = readFile(settings_file) == initial_settings;
 
   const bool shortcut_normal_menu = openToolsFromEnd(5);
   const bool shortcut_normal_picker = visible("File: New", 5s);
-  screen.clear(); send("\r");
-  const bool shortcut_normal_prompt = visible("Shortcut (or Default):", 5s);
-  settle(); screen.clear(); send("Ctrl+B\r");
+  screen.clear(); send("\033c"); settle(); screen.clear();
+  send(std::string(1, static_cast<char>(18)));
+  const bool shortcut_capture = visible("Ctrl+R", 5s);
+  send("\r");
   const bool shortcut_saved = waitFor(pump, [&] {
-    return logged("Shortcut updated: File: New");
+    return logged("Shortcut settings updated");
   }, 5s);
-  const bool shortcut_persisted = readFile(settings_file).find("\"file.new\": \"Ctrl+B\"")
+  const bool shortcut_persisted = readFile(settings_file).find("\"file.new\": \"Ctrl+R\"")
     != std::string::npos;
-  screen.clear(); send(std::string(1, static_cast<char>(2)));
+  screen.clear(); send(std::string(1, static_cast<char>(18)));
   const bool shortcut_active = visible("1 file(s)", 5s);
   screen.clear(); send(std::string(1, static_cast<char>(23))); settle();
+
+  if (std::getenv("TUIIDE_SHORTCUTS_ONLY") != nullptr) {
+    screen.clear(); send("\021");
+    int status{};
+    const auto exited = waitFor(pump, [&] {
+      return ::waitpid(child, &status, WNOHANG) == child;
+    }, 8s);
+    if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &status, 0); }
+    ::close(master);
+    const bool success = started && conflicts_dialog
+      && shortcut_cancelled && shortcut_error_picker && shortcut_error
+      && shortcut_error_safe && shortcut_normal_picker && shortcut_capture
+      && shortcut_saved && shortcut_persisted && shortcut_active && exited
+      && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (!success) {
+      std::cerr << "Shortcut PTY: started=" << started << " conflicts=" << conflicts_dialog
+        << " cancel_dialog=" << shortcut_cancel_dialog << " cancelled=" << shortcut_cancelled
+        << " error_picker=" << shortcut_error_picker << " conflict=" << shortcut_error
+        << " error_safe=" << shortcut_error_safe << " normal_picker=" << shortcut_normal_picker
+        << " capture=" << shortcut_capture << " saved=" << shortcut_saved
+        << " persisted=" << shortcut_persisted << " active=" << shortcut_active
+        << " exited=" << exited << " status=" << status << '\n';
+    }
+    return success;
+  }
 
   const auto before_theme = readFile(settings_file);
   const bool theme_cancel_menu = openToolsFromEnd(3);
   const bool theme_cancel_dialog = visible("High contrast", 5s);
-  screen.clear(); send("\033c"); settle();
+  screen.clear(); send("\033"); settle();
   const bool theme_cancelled = readFile(settings_file) == before_theme;
 
   const bool theme_normal_menu = openToolsFromEnd(3);
@@ -1602,16 +1678,16 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   const auto before_color = readFile(settings_file);
   const bool color_cancel_menu = openToolsFromEnd(2);
   const bool color_cancel_dialog = visible("foreground", 5s);
-  screen.clear(); send("\033c"); settle();
+  screen.clear(); send("\033"); settle();
   const bool color_cancelled = readFile(settings_file) == before_color;
 
   const bool color_normal_menu = openToolsFromEnd(2);
   const bool color_role_dialog = visible("foreground", 5s);
   settle(); screen.clear(); send("\r");
   const bool color_value_dialog = visible("Theme default", 5s);
-  settle(); screen.clear(); send("\033[B\r");
+  settle(); screen.clear(); send("\033[B\r"); settle(); send(std::string(1, static_cast<char>(19)));
   const bool color_saved = waitFor(pump, [&] {
-    return logged("Editor color updated: foreground");
+    return logged("Editor colors updated");
   }, 5s);
   const bool color_persisted = readFile(settings_file).find("\"foreground\": \"Black\"")
     != std::string::npos;
@@ -1620,19 +1696,6 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   const bool project_closed = waitFor(pump, [&] {
     return logged("Previous project state cleared");
   }, 5s);
-  const bool shortcut_unavailable_menu = openToolsFromEnd(4);
-  const bool shortcut_unavailable = waitFor(pump, [&] {
-    return logged("Shortcut configuration unavailable: no project is open");
-  }, 5s);
-  const bool theme_unavailable_menu = openToolsFromEnd(2);
-  const bool theme_unavailable = waitFor(pump, [&] {
-    return logged("Theme settings unavailable: no project is open");
-  }, 5s);
-  const bool color_unavailable_menu = openToolsFromEnd(1);
-  const bool color_unavailable = waitFor(pump, [&] {
-    return logged("Color settings unavailable: no project is open");
-  }, 5s);
-
   screen.clear(); send("\033f"); (void)visible("Exit", 3s); send("x");
   int status{};
   const auto exited = waitFor(pump, [&] {
@@ -1649,40 +1712,35 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   (void)theme_normal_menu;
   (void)color_cancel_menu;
   (void)color_normal_menu;
-  (void)shortcut_unavailable_menu;
-  (void)theme_unavailable_menu;
-  (void)color_unavailable_menu;
   (void)shortcut_cancel_dialog;
   (void)shortcut_error_picker;
-  (void)shortcut_error_prompt;
   (void)shortcut_normal_picker;
-  (void)shortcut_normal_prompt;
   (void)theme_cancel_dialog;
   (void)theme_normal_dialog;
   (void)color_cancel_dialog;
 
-  const bool success = started && conflicts_dialog
+  const bool success = started && sidebar_shortcut && lower_shortcut && conflicts_dialog
     && shortcut_cancelled
     && shortcut_error && shortcut_error_safe
-    && shortcut_saved && shortcut_persisted && shortcut_active
+    && shortcut_capture && shortcut_saved && shortcut_persisted && shortcut_active
     && theme_cancelled
     && theme_saved && theme_persisted
     && color_cancelled
     && color_role_dialog && color_value_dialog && color_saved && color_persisted
-    && project_closed && shortcut_unavailable
-    && theme_unavailable && color_unavailable
+    && project_closed
     && exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
   if (!success) {
-    std::cerr << "Tools PTY: started=" << started << " conflicts=" << conflicts_dialog
+    std::cerr << "Tools PTY: started=" << started << " sidebar_shortcut=" << sidebar_shortcut
+      << " lower_shortcut=" << lower_shortcut << " conflicts=" << conflicts_dialog
       << " shortcut_cancel=" << shortcut_cancelled << " shortcut_error=" << shortcut_error
       << " shortcut_error_safe=" << shortcut_error_safe << " shortcut_saved=" << shortcut_saved
-      << " shortcut_persisted=" << shortcut_persisted << " shortcut_active=" << shortcut_active
+      << " shortcut_capture=" << shortcut_capture << " shortcut_persisted=" << shortcut_persisted
+      << " shortcut_active=" << shortcut_active
       << " theme_cancel=" << theme_cancelled << " theme_saved=" << theme_saved
       << " theme_persisted=" << theme_persisted << " color_cancel=" << color_cancelled
       << " color_role=" << color_role_dialog << " color_value=" << color_value_dialog
       << " color_saved=" << color_saved << " color_persisted=" << color_persisted
-      << " project_closed=" << project_closed << " shortcut_unavailable=" << shortcut_unavailable
-      << " theme_unavailable=" << theme_unavailable << " color_unavailable=" << color_unavailable
+      << " project_closed=" << project_closed
       << " exited=" << exited << " status=" << status << '\n';
   }
   return success;
@@ -2665,6 +2723,176 @@ void exerciseCmakeGeneratorMatrix(std::string_view unique) {
       && runProcess({beta->artifact.string()}, project.path, output),
     "Ninja codemodel exposes multiple Release targets and the selected artifact runs");
 }
+
+auto exercisePresetDialogsPty(const std::filesystem::path& tuiide,
+    const std::filesystem::path& workspace) -> bool {
+  const auto project = workspace / "preset-dialog-project";
+  std::filesystem::create_directories(project);
+  { std::ofstream file(project / "CMakeLists.txt"); file
+      << "cmake_minimum_required(VERSION 3.20)\nproject(preset_dialog LANGUAGES CXX)\n"
+         "add_executable(preset_dialog main.cpp)\n"; }
+  { std::ofstream file(project / "main.cpp"); file << "int main() { return 0; }\n"; }
+  { std::ofstream file(project / "CMakePresets.json"); file << R"({
+    "version": 3,
+    "configurePresets": [{"name":"dev","displayName":"Development","generator":"Ninja",
+      "binaryDir":"${sourceDir}/build/${presetName}"}]
+  })"; }
+  { std::ofstream file(project / ".tuiide-project.json"); file
+      << "{\"version\":1,\"buildDirectory\":\"build\",\"buildJobs\":1}\n"; }
+
+  int master{-1};
+  winsize window{28, 110, 0, 0};
+  const auto child = ::forkpty(&master, nullptr, nullptr, &window);
+  if (child < 0) return false;
+  if (child == 0) {
+    ::setenv("TERM", "xterm-256color", 1);
+    ::setenv("TUIIDE_CLIPBOARD_NATIVE", "0", 1);
+    ::setenv("TUIIDE_OSC52", "0", 1);
+    const auto config = workspace / "preset-dialog-config";
+    const auto log = workspace / "preset-dialog.log";
+    ::setenv("XDG_CONFIG_HOME", config.c_str(), 1);
+    ::execl(tuiide.c_str(), tuiide.c_str(), "--log-file", log.c_str(), project.c_str(),
+      static_cast<char*>(nullptr));
+    _exit(127);
+  }
+  const auto flags = ::fcntl(master, F_GETFL, 0);
+  if (flags >= 0) (void)::fcntl(master, F_SETFL, flags | O_NONBLOCK);
+  std::string screen;
+  const auto pump = [&] {
+    char buffer[4096];
+    const auto count = ::read(master, buffer, sizeof(buffer));
+    if (count > 0) screen.append(buffer, static_cast<std::size_t>(count));
+  };
+  const auto send = [&](std::string_view value) {
+    screen.clear();
+    return ::write(master, value.data(), value.size()) == static_cast<ssize_t>(value.size());
+  };
+  const auto visible = [&](std::string_view value, std::chrono::milliseconds timeout = 5s) {
+    return waitFor(pump, [&] { return screen.find(value) != std::string::npos; }, timeout);
+  };
+  const auto fileContains = [&](const std::filesystem::path& path, std::string_view value) {
+    std::ifstream input(path);
+    const std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    return text.find(value) != std::string::npos;
+  };
+
+  const bool started = visible("Open files");
+  const bool configure_key = send("\033p");
+  const bool configure_manager = visible("CMake configure presets")
+    && visible("CMakePresets.json");
+  const bool add_key = send("\033a");
+  const bool add_form = visible("Binary directory:");
+  const bool name_entered = send("ui-debug");
+  const bool save_key = send("\033s");
+  const bool saved = waitFor(pump, [&] {
+    return std::filesystem::is_regular_file(project / "CMakeUserPresets.json")
+      && fileContains(project / "CMakeUserPresets.json", "ui-debug");
+  });
+  const bool manager_returned = visible("ui-debug");
+  const bool selected = send("\r") && waitFor(pump, [&] {
+    return fileContains(project / "build/.tuiide-session.json", "ui-debug")
+      && fileContains(workspace / "preset-dialog.log", "Selected configure preset: ui-debug");
+  });
+  const bool quit = send("\021");
+  int status{};
+  const bool exited = waitFor(pump, [&] {
+    return ::waitpid(child, &status, WNOHANG) == child;
+  }, 10s);
+  if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &status, 0); }
+  ::close(master);
+  const bool success = started && configure_key && configure_manager && add_key
+    && add_form && name_entered && save_key && saved && manager_returned && selected
+    && quit && exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  if (!success) {
+    std::cerr << "Preset dialog PTY: started=" << started
+      << " configure_key=" << configure_key << " manager=" << configure_manager
+      << " add_key=" << add_key << " add_form=" << add_form
+      << " name=" << name_entered << " save=" << save_key << " saved=" << saved
+      << " returned=" << manager_returned << " selected=" << selected
+      << " quit=" << quit << " exited=" << exited << " status=" << status << '\n';
+  }
+  return success;
+}
+
+auto exerciseClassTemplateDialogPty(const std::filesystem::path& tuiide,
+    const std::filesystem::path& workspace) -> bool {
+  const auto project = workspace / "class-template-project";
+  std::filesystem::create_directories(project);
+  { std::ofstream file(project / "CMakeLists.txt"); file
+      << "cmake_minimum_required(VERSION 3.20)\nproject(class_dialog LANGUAGES CXX)\n"
+         "add_executable(class_dialog main.cpp)\n"; }
+  { std::ofstream file(project / "main.cpp"); file << "int main() { return 0; }\n"; }
+  { std::ofstream file(project / ".tuiide-project.json"); file
+      << "{\"version\":1,\"buildDirectory\":\"build\",\"buildJobs\":1,"
+         "\"cppHeaderExtension\":\"h\"}\n"; }
+
+  int master{-1};
+  winsize window{30, 110, 0, 0};
+  const auto child = ::forkpty(&master, nullptr, nullptr, &window);
+  if (child < 0) return false;
+  if (child == 0) {
+    ::setenv("TERM", "xterm-256color", 1);
+    ::setenv("TUIIDE_CLIPBOARD_NATIVE", "0", 1);
+    ::setenv("TUIIDE_OSC52", "0", 1);
+    const auto config = workspace / "class-template-config";
+    ::setenv("XDG_CONFIG_HOME", config.c_str(), 1);
+    ::execl(tuiide.c_str(), tuiide.c_str(), project.c_str(), static_cast<char*>(nullptr));
+    _exit(127);
+  }
+  const auto flags = ::fcntl(master, F_GETFL, 0);
+  if (flags >= 0) (void)::fcntl(master, F_SETFL, flags | O_NONBLOCK);
+  std::string screen;
+  const auto pump = [&] {
+    char buffer[4096];
+    const auto count = ::read(master, buffer, sizeof(buffer));
+    if (count > 0) screen.append(buffer, static_cast<std::size_t>(count));
+  };
+  const auto send = [&](std::string_view value) {
+    screen.clear();
+    return ::write(master, value.data(), value.size()) == static_cast<ssize_t>(value.size());
+  };
+  const auto visible = [&](std::string_view value, std::chrono::milliseconds timeout = 5s) {
+    return waitFor(pump, [&] { return screen.find(value) != std::string::npos; }, timeout);
+  };
+  const bool started = visible("Open files");
+  const bool focused = send("\005") && visible("main.cpp");
+  const bool picker_key = send("\033[2~");
+  const bool picker = visible("C++ class");
+  const bool class_selected = send("\033[F") && send("\r");
+  const bool options = visible("C++ class options") && visible("NewClass.h")
+    && visible("NewClass.cpp");
+  const bool class_entered = send("Widget");
+  const std::string erase_default(32, '\177');
+  const bool header_focus = send("\r");
+  const bool header_entered = send(erase_default) && send("widget_api.hpp")
+    && visible("widget_api.hpp");
+  const bool source_focus = send("\r");
+  const bool source_entered = send(erase_default) && send("widget_impl.cpp")
+    && visible("widget_impl.cpp");
+  const bool cancelled = send("\033") && visible("TUI IDE");
+  const bool quit = send("\021");
+  int status{};
+  const bool exited = waitFor(pump, [&] {
+    return ::waitpid(child, &status, WNOHANG) == child;
+  }, 10s);
+  if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &status, 0); }
+  ::close(master);
+  const bool success = started && focused && picker_key && picker && class_selected
+    && options && class_entered && header_focus && header_entered && source_focus
+    && source_entered && cancelled && quit && exited
+    && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  if (!success) {
+    std::cerr << "Class template PTY: started=" << started << " focused=" << focused
+      << " picker_key=" << picker_key << " picker=" << picker
+      << " selected=" << class_selected << " options=" << options
+      << " class=" << class_entered << " header_focus=" << header_focus
+      << " header=" << header_entered << " source_focus=" << source_focus
+      << " source=" << source_entered << " cancelled=" << cancelled
+      << " quit=" << quit << " exited=" << exited
+      << " status=" << status << '\n';
+  }
+  return success;
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -2692,6 +2920,12 @@ int main(int argc, char** argv) {
     std::cout << "Tools dialog PTY tests passed\n";
     return 0;
   }
+  if (std::getenv("TUIIDE_SHORTCUTS_ONLY") != nullptr) {
+    expect(exerciseToolsDialogsPty(std::filesystem::absolute(argv[1]), project.path),
+      "shortcut editor captures, validates, saves, cancels, and applies bindings");
+    std::cout << "Shortcut editor PTY tests passed\n";
+    return 0;
+  }
   if (std::getenv("TUIIDE_SEARCH_DIALOGS_ONLY") != nullptr) {
     expect(exerciseSearchDialogsPty(std::filesystem::absolute(argv[1]), project.path),
       "Search dialogs cover navigation, project results, replacement, cancel, and error outcomes");
@@ -2709,6 +2943,18 @@ int main(int argc, char** argv) {
     expect(exerciseDebugDialogsPty(std::filesystem::absolute(argv[1]), project.path),
       "Debug dialogs cover breakpoint, watch, evaluation, assignment, disassembly, and memory outcomes");
     std::cout << "Debug dialog PTY tests passed\n";
+    return 0;
+  }
+  if (std::getenv("TUIIDE_PRESET_DIALOGS_ONLY") != nullptr) {
+    expect(exercisePresetDialogsPty(std::filesystem::absolute(argv[1]), project.path),
+      "CMake preset managers create, select, cancel, and persist user presets");
+    std::cout << "CMake preset dialog PTY tests passed\n";
+    return 0;
+  }
+  if (std::getenv("TUIIDE_CLASS_TEMPLATE_ONLY") != nullptr) {
+    expect(exerciseClassTemplateDialogPty(std::filesystem::absolute(argv[1]), project.path),
+      "C++ class dialog exposes editable header and implementation file names");
+    std::cout << "C++ class template dialog PTY tests passed\n";
     return 0;
   }
   std::string cli_output;

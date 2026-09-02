@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <initializer_list>
 #include <system_error>
 
 namespace tuiide {
@@ -74,6 +75,14 @@ auto safeBaseClass(std::string_view value) -> bool {
 
 auto safeInclude(std::string_view value) -> bool {
   return value.find_first_of("\r\n") == std::string_view::npos;
+}
+
+auto validFileName(std::string_view value, std::initializer_list<std::string_view> extensions) -> bool {
+  const std::filesystem::path path(value);
+  if (value.empty() || path != path.filename() || path == "." || path == ".."
+      || value.find_first_of("\r\n") != std::string_view::npos) return false;
+  const auto extension = path.extension().string();
+  return std::find(extensions.begin(), extensions.end(), extension) != extensions.end();
 }
 
 auto accessText(InheritanceAccess access) -> std::string_view {
@@ -260,6 +269,14 @@ auto validateCppClassSettings(const CppClassOptions& options, std::string& error
   if (!validNamespace(options.namespace_name)) { error = "Namespace must contain valid identifiers separated by '::'."; return false; }
   if (!safeBaseClass(options.base_class)) { error = "Base class contains unsupported characters."; return false; }
   if (!safeInclude(options.base_header)) { error = "Base header contains unsupported characters."; return false; }
+  if (!options.header_file_name.empty()
+      && !validFileName(options.header_file_name, {".h", ".hpp"})) {
+    error = "Header file name must be one .h or .hpp file without a directory."; return false;
+  }
+  if (!options.source_file_name.empty()
+      && !validFileName(options.source_file_name, {".cpp"})) {
+    error = "Implementation file name must be one .cpp file without a directory."; return false;
+  }
   return true;
 }
 

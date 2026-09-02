@@ -106,6 +106,7 @@ add_library(tuiide_core
   src/text_search.cpp
   src/terminal_buffer.cpp
   src/tool_discovery.cpp
+  src/user_settings.cpp
   src/process.cpp
   src/pseudo_terminal.cpp
   src/project_creation.cpp
@@ -190,14 +191,23 @@ if(BUILD_TESTING)
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_project_dialog_tests PROPERTIES
       ENVIRONMENT TUIIDE_PROJECT_DIALOGS_ONLY=1 TIMEOUT 120 RUN_SERIAL TRUE LABELS integration)
-    add_test(NAME tuiide_window_help_tests COMMAND tuiide_integration_tests
+  add_test(NAME tuiide_window_help_tests COMMAND tuiide_integration_tests
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_window_help_tests PROPERTIES
       ENVIRONMENT TUIIDE_WINDOW_HELP_ONLY=1 TIMEOUT 90 RUN_SERIAL TRUE LABELS integration)
+    add_test(NAME tuiide_menu_mnemonic_tests COMMAND tuiide_integration_tests
+      $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
+    set_tests_properties(tuiide_menu_mnemonic_tests PROPERTIES
+      ENVIRONMENT "TUIIDE_WINDOW_HELP_ONLY=1;TUIIDE_MENU_MNEMONICS_ONLY=1"
+      TIMEOUT 60 RUN_SERIAL TRUE LABELS integration)
     add_test(NAME tuiide_tools_dialog_tests COMMAND tuiide_integration_tests
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_tools_dialog_tests PROPERTIES
       ENVIRONMENT TUIIDE_TOOLS_DIALOGS_ONLY=1 TIMEOUT 120 RUN_SERIAL TRUE LABELS integration)
+    add_test(NAME tuiide_shortcut_dialog_tests COMMAND tuiide_integration_tests
+      $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
+    set_tests_properties(tuiide_shortcut_dialog_tests PROPERTIES
+      ENVIRONMENT TUIIDE_SHORTCUTS_ONLY=1 TIMEOUT 90 RUN_SERIAL TRUE LABELS integration)
     add_test(NAME tuiide_search_dialog_tests COMMAND tuiide_integration_tests
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_search_dialog_tests PROPERTIES
@@ -210,6 +220,14 @@ if(BUILD_TESTING)
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_debug_dialog_tests PROPERTIES
       ENVIRONMENT TUIIDE_DEBUG_DIALOGS_ONLY=1 TIMEOUT 180 RUN_SERIAL TRUE LABELS integration)
+    add_test(NAME tuiide_preset_dialog_tests COMMAND tuiide_integration_tests
+      $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
+    set_tests_properties(tuiide_preset_dialog_tests PROPERTIES
+      ENVIRONMENT TUIIDE_PRESET_DIALOGS_ONLY=1 TIMEOUT 60 RUN_SERIAL TRUE LABELS integration)
+    add_test(NAME tuiide_class_template_dialog_tests COMMAND tuiide_integration_tests
+      $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
+    set_tests_properties(tuiide_class_template_dialog_tests PROPERTIES
+      ENVIRONMENT TUIIDE_CLASS_TEMPLATE_ONLY=1 TIMEOUT 60 RUN_SERIAL TRUE LABELS integration)
   else()
     message(STATUS "Skipping integration test target: clangd, gdb, or libutil not found")
   endif()

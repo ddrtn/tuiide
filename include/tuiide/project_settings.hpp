@@ -18,6 +18,7 @@ struct ProjectSettings {
   std::filesystem::path cpp_compiler;
   std::string c_standard;
   std::string cpp_standard;
+  std::string cpp_header_extension{"hpp"};
   std::string build_type;
   unsigned build_jobs{1};
   unsigned tab_width{2};
@@ -26,6 +27,7 @@ struct ProjectSettings {
   std::vector<std::string> clangd_arguments;
   std::map<std::string, std::string> shortcuts;
   std::string theme{"Dark"};
+  std::map<std::string, std::string> custom_themes;
   std::map<std::string, std::string> colors;
   LaunchConfiguration launch;
 };
@@ -40,6 +42,7 @@ auto saveProjectSettings(const std::filesystem::path& project_directory,
   const ProjectSettings& settings, std::string& error) -> bool;
 auto updateProjectGitignore(const std::filesystem::path& project_directory,
   const ProjectSettings& settings, std::string& error) -> bool;
+[[nodiscard]] auto effectiveEditorTheme(const ProjectSettings& settings) -> std::string;
 [[nodiscard]] auto parseEnvironmentSettings(std::string_view text,
   std::map<std::string, std::string>& environment, std::string& error) -> bool;
 [[nodiscard]] auto formatEnvironmentSettings(const std::map<std::string, std::string>& environment)

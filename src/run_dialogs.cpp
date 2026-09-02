@@ -4,6 +4,8 @@
 #include "tuiide/project_dialogs.hpp"
 #include "tuiide/project_settings.hpp"
 
+#include <algorithm>
+#include <sstream>
 #include <utility>
 
 namespace tuiide {
@@ -126,6 +128,265 @@ LaunchSettingsDialog::~LaunchSettingsDialog() = default;
 auto LaunchSettingsDialog::configuration(LaunchConfiguration& result,
     std::string& error) const -> bool {
   return impl_->readConfiguration(result, error);
+}
+
+namespace {
+auto joinPresetValues(const std::vector<std::string>& values) -> std::string {
+  std::string result;
+  for (const auto& value : values) {
+    if (!result.empty()) result += "; ";
+    result += value;
+  }
+  return result;
+}
+
+auto splitPresetValues(std::string value) -> std::vector<std::string> {
+  std::vector<std::string> result;
+  std::stringstream stream(std::move(value));
+  std::string item;
+  while (std::getline(stream, item, ';')) {
+    const auto begin = item.find_first_not_of(" \t");
+    if (begin == std::string::npos) continue;
+    const auto end = item.find_last_not_of(" \t");
+    result.push_back(item.substr(begin, end - begin + 1));
+  }
+  return result;
+}
+}
+
+struct CMakePresetEditDialog::Impl {
+  Impl(CMakePresetEditDialog* dialog, CMakePresetEdit value)
+      : owner(dialog), value_(std::move(value)), name_label("Name:", owner), name(owner),
+        display_label("Display name:", owner), display(owner),
+        inherits_label("Inherits (; separated):", owner), inherits(owner),
+        generator_label("Generator:", owner), generator(owner),
+        binary_label("Binary directory:", owner), binary(owner),
+        configure_label("Configure preset:", owner), configure(owner),
+        configuration_label("Configuration:", owner), configuration(owner),
+        targets_label("Targets (; separated):", owner), targets(owner),
+        clean_first("Clean first", owner), verbose("Verbose build", owner),
+        save("&Save", owner), cancel("&Cancel", owner) {
+    name_label.setGeometry({2, 1}, {20, 1}); name.setGeometry({23, 1}, {48, 1});
+    display_label.setGeometry({2, 3}, {20, 1}); display.setGeometry({23, 3}, {48, 1});
+    inherits_label.setGeometry({2, 5}, {20, 1}); inherits.setGeometry({23, 5}, {48, 1});
+    name.setText(finalcut::FString(value_.name));
+    display.setText(finalcut::FString(value_.display_name));
+    inherits.setText(finalcut::FString(joinPresetValues(value_.inherits)));
+    if (value_.kind == CMakePresetKind::Configure) {
+      generator_label.setGeometry({2, 7}, {20, 1}); generator.setGeometry({23, 7}, {48, 1});
+      binary_label.setGeometry({2, 9}, {20, 1}); binary.setGeometry({23, 9}, {48, 1});
+      generator.setText(finalcut::FString(value_.generator));
+      binary.setText(finalcut::FString(value_.binary_directory));
+      configure_label.hide(); configure.hide(); configuration_label.hide(); configuration.hide();
+      targets_label.hide(); targets.hide(); clean_first.hide(); verbose.hide();
+    } else {
+      configure_label.setGeometry({2, 7}, {20, 1}); configure.setGeometry({23, 7}, {48, 1});
+      configuration_label.setGeometry({2, 9}, {20, 1}); configuration.setGeometry({23, 9}, {48, 1});
+      targets_label.setGeometry({2, 11}, {20, 1}); targets.setGeometry({23, 11}, {48, 1});
+      clean_first.setGeometry({23, 13}, {18, 1}); verbose.setGeometry({44, 13}, {20, 1});
+      configure.setText(finalcut::FString(value_.configure_preset));
+      configuration.setText(finalcut::FString(value_.configuration));
+      targets.setText(finalcut::FString(joinPresetValues(value_.targets)));
+      if (value_.clean_first) clean_first.setChecked();
+      if (value_.verbose) verbose.setChecked();
+      generator_label.hide(); generator.hide(); binary_label.hide(); binary.hide();
+    }
+    save.setGeometry({47, 16}, {10, 1}); cancel.setGeometry({59, 16}, {12, 1});
+    save.addCallback("clicked", [this] { owner->done(finalcut::FDialog::ResultCode::Accept); });
+    cancel.addCallback("clicked", [this] { owner->done(finalcut::FDialog::ResultCode::Reject); });
+    name.setFocus();
+  }
+
+  auto value() const -> CMakePresetEdit {
+    auto result = value_;
+    result.name = name.getText().trim().toString();
+    result.display_name = display.getText().trim().toString();
+    result.inherits = splitPresetValues(inherits.getText().toString());
+    result.generator = generator.getText().trim().toString();
+    result.binary_directory = binary.getText().trim().toString();
+    result.configure_preset = configure.getText().trim().toString();
+    result.configuration = configuration.getText().trim().toString();
+    result.targets = splitPresetValues(targets.getText().toString());
+    result.clean_first = clean_first.isChecked();
+    result.verbose = verbose.isChecked();
+    return result;
+  }
+
+  CMakePresetEditDialog* owner;
+  CMakePresetEdit value_;
+  finalcut::FLabel name_label; finalcut::FLineEdit name;
+  finalcut::FLabel display_label; finalcut::FLineEdit display;
+  finalcut::FLabel inherits_label; finalcut::FLineEdit inherits;
+  finalcut::FLabel generator_label; finalcut::FLineEdit generator;
+  finalcut::FLabel binary_label; finalcut::FLineEdit binary;
+  finalcut::FLabel configure_label; finalcut::FLineEdit configure;
+  finalcut::FLabel configuration_label; finalcut::FLineEdit configuration;
+  finalcut::FLabel targets_label; finalcut::FLineEdit targets;
+  finalcut::FCheckBox clean_first; finalcut::FCheckBox verbose;
+  finalcut::FButton save; finalcut::FButton cancel;
+};
+
+CMakePresetEditDialog::CMakePresetEditDialog(CMakePresetEdit preset,
+    finalcut::FWidget* parent)
+    : CenteredDialog(preset.kind == CMakePresetKind::Configure
+        ? "Configure preset" : "Build preset", parent) {
+  setDialogSize({78, 22});
+  setModal();
+  impl_ = std::make_unique<Impl>(this, std::move(preset));
+}
+
+CMakePresetEditDialog::~CMakePresetEditDialog() = default;
+
+auto CMakePresetEditDialog::preset() const -> CMakePresetEdit { return impl_->value(); }
+
+CMakePresetManagerDialog::CMakePresetManagerDialog(std::filesystem::path root,
+    CMakePresetKind kind, std::string selected, finalcut::FWidget* parent)
+    : CenteredDialog(kind == CMakePresetKind::Configure
+        ? "CMake configure presets" : "CMake build presets", parent),
+      root_(std::move(root)), kind_(kind), initial_selection_(std::move(selected)),
+      list_(this), add_("&Add", this), clone_("C&lone", this), edit_("&Edit", this),
+      remove_("&Delete", this), reload_("&Reload", this), select_("&Select", this),
+      cancel_("&Cancel", this) {
+  setDialogSize({92, 24});
+  setModal();
+  list_.setGeometry({2, 1}, {87, 16});
+  add_.setGeometry({2, 19}, {10, 1}); clone_.setGeometry({13, 19}, {10, 1});
+  edit_.setGeometry({24, 19}, {10, 1}); remove_.setGeometry({35, 19}, {10, 1});
+  reload_.setGeometry({46, 19}, {11, 1}); select_.setGeometry({65, 19}, {10, 1});
+  cancel_.setGeometry({77, 19}, {12, 1});
+  add_.addCallback("clicked", [this] { addPreset(); });
+  clone_.addCallback("clicked", [this] { clonePreset(); });
+  edit_.addCallback("clicked", [this] { editPreset(); });
+  remove_.addCallback("clicked", [this] { deletePreset(); });
+  reload_.addCallback("clicked", [this] { reload(); });
+  select_.addCallback("clicked", [this] { selectPreset(); });
+  cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
+  list_.setEnterHandler([this] { selectPreset(); });
+  reload(initial_selection_);
+  list_.setFocus();
+}
+
+auto CMakePresetManagerDialog::selectedPreset() const -> std::string { return selected_; }
+
+auto CMakePresetManagerDialog::currentPreset() -> CMakePresetEdit* {
+  const auto row = list_.currentItem();
+  if (row <= 1 || row - 2 >= presets_.size()) return nullptr;
+  return &presets_[row - 2];
+}
+
+void CMakePresetManagerDialog::reload(const std::string& preferred) {
+  std::string error;
+  auto loaded = loadCMakePresetsForEdit(root_, kind_, error);
+  if (!error.empty()) {
+    finalcut::FMessageBox::error(this, finalcut::FString(error));
+    return;
+  }
+  presets_ = std::move(loaded);
+  list_.clear();
+  list_.insert(kind_ == CMakePresetKind::Configure ? "No configure preset" : "No build preset");
+  std::size_t selected_row = 1;
+  for (std::size_t index = 0; index < presets_.size(); ++index) {
+    const auto& preset = presets_[index];
+    std::error_code relative_error;
+    const auto relative_source = std::filesystem::relative(preset.source_file, root_, relative_error);
+    auto origin = preset.user_editable ? std::string("CMakeUserPresets.json — editable")
+      : (relative_error ? preset.source_file.string() : relative_source.generic_string());
+    auto label = preset.name;
+    if (!preset.display_name.empty()) label += " — " + preset.display_name;
+    label += "  [" + origin + (preset.hidden ? ", hidden" : "") + "]";
+    list_.insert(finalcut::FString(label));
+    if (preset.name == (preferred.empty() ? initial_selection_ : preferred)) selected_row = index + 2;
+  }
+  list_.setCurrentItem(selected_row);
+  list_.redraw();
+  activateWindow();
+  raiseWindow();
+  setFocus();
+  setWindowFocusWidget(&list_);
+  list_.setFocus();
+}
+
+void CMakePresetManagerDialog::addPreset() {
+  CMakePresetEdit value;
+  value.kind = kind_;
+  if (kind_ == CMakePresetKind::Configure) {
+    value.generator = "Ninja";
+    value.binary_directory = "${sourceDir}/build/${presetName}";
+  }
+  CMakePresetEditDialog dialog(std::move(value), this);
+  if (dialog.exec() != ResultCode::Accept) return;
+  const auto preset = dialog.preset();
+  std::string error;
+  if (!saveCMakeUserPreset(root_, {}, preset, error)) {
+    finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
+  }
+  changed_ = true;
+  reload(preset.name);
+}
+
+void CMakePresetManagerDialog::clonePreset() {
+  auto* current = currentPreset();
+  if (!current) { finalcut::FMessageBox::info(this, "CMake presets", "Select a preset to clone."); return; }
+  PromptDialog prompt("Clone CMake preset", "New name:", this);
+  if (prompt.exec() != ResultCode::Accept || prompt.value().empty()) return;
+  std::string error;
+  if (!cloneCMakePresetToUser(root_, kind_, current->name, prompt.value(), error)) {
+    finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
+  }
+  changed_ = true;
+  reload(prompt.value());
+}
+
+void CMakePresetManagerDialog::editPreset() {
+  auto* current = currentPreset();
+  if (!current) { finalcut::FMessageBox::info(this, "CMake presets", "Select a preset to edit."); return; }
+  if (!current->user_editable) {
+    finalcut::FMessageBox::info(this, "Read-only preset",
+      "Project and included presets are read-only. Clone this preset to edit it.");
+    return;
+  }
+  const auto original = current->name;
+  CMakePresetEditDialog dialog(*current, this);
+  if (dialog.exec() != ResultCode::Accept) return;
+  const auto preset = dialog.preset();
+  std::string error;
+  if (!saveCMakeUserPreset(root_, original, preset, error)) {
+    finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
+  }
+  changed_ = true;
+  reload(preset.name);
+}
+
+void CMakePresetManagerDialog::deletePreset() {
+  auto* current = currentPreset();
+  if (!current) { finalcut::FMessageBox::info(this, "CMake presets", "Select a preset to delete."); return; }
+  if (!current->user_editable) {
+    finalcut::FMessageBox::info(this, "Read-only preset",
+      "Only presets from CMakeUserPresets.json can be deleted.");
+    return;
+  }
+  const auto name = current->name;
+  const auto answer = finalcut::FMessageBox::info(this, "Delete CMake preset",
+    finalcut::FString("Delete user preset '" + name + "'?"),
+    finalcut::FMessageBox::ButtonType::Yes, finalcut::FMessageBox::ButtonType::No,
+    finalcut::FMessageBox::ButtonType::Reject);
+  if (answer != finalcut::FMessageBox::ButtonType::Yes) return;
+  std::string error;
+  if (!deleteCMakeUserPreset(root_, kind_, name, error)) {
+    finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
+  }
+  changed_ = true;
+  reload();
+}
+
+void CMakePresetManagerDialog::selectPreset() {
+  auto* current = currentPreset();
+  if (current && current->hidden) {
+    finalcut::FMessageBox::info(this, "Hidden preset", "Hidden presets cannot be selected directly.");
+    return;
+  }
+  selected_ = current ? current->name : std::string{};
+  done(ResultCode::Accept);
 }
 
 }  // namespace tuiide

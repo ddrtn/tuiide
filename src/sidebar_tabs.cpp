@@ -36,6 +36,10 @@ void SidebarTabs::setCurrentIndex(std::size_t index, bool focus_page) {
 
 auto SidebarTabs::currentIndex() const -> std::size_t { return current_; }
 
+auto SidebarTabs::currentTitle() const -> std::string {
+  return current_ < tabs_.size() ? tabs_[current_].title : std::string{};
+}
+
 auto SidebarTabs::setTabVisible(std::size_t index, bool visible, bool focus_page) -> bool {
   if (index >= tabs_.size() || tabs_[index].visible == visible) return index < tabs_.size();
   if (!visible && visibleCount() == 1) return false;
@@ -126,13 +130,13 @@ void SidebarTabs::onMouseDown(finalcut::FMouseEvent* event) {
   }
 }
 
-void SidebarTabs::selectRelative(int direction) {
+void SidebarTabs::selectRelative(int direction, bool focus_page) {
   if (tabs_.empty() || visibleCount() == 0) return;
   auto next = current_;
   for (std::size_t attempt{}; attempt < tabs_.size(); ++attempt) {
     next = static_cast<std::size_t>((static_cast<int>(next) + direction + static_cast<int>(tabs_.size()))
       % static_cast<int>(tabs_.size()));
-    if (tabs_[next].visible) { setCurrentIndex(next); return; }
+    if (tabs_[next].visible) { setCurrentIndex(next, focus_page); return; }
   }
 }
 

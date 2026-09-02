@@ -41,6 +41,7 @@
 #include "tuiide/text_search.hpp"
 #include "tuiide/terminal_buffer.hpp"
 #include "tuiide/tool_discovery.hpp"
+#include "tuiide/user_settings.hpp"
 #include "tuiide/workspace_edit.hpp"
 #include "tuiide/workspace_file_transaction.hpp"
 
@@ -1382,6 +1383,8 @@ int main() {
     "header and implementation templates apply their requested language extensions");
   tuiide::CppClassOptions class_options;
   class_options.class_name = "Model";
+  class_options.header_file_name = "domain_model.hpp";
+  class_options.source_file_name = "domain_model.cpp";
   class_options.namespace_name = "demo::domain";
   class_options.base_class = "Entity";
   class_options.base_header = "domain/entity.hpp";
@@ -1411,6 +1414,14 @@ int main() {
   class_options.class_name = "bad-name";
   expect(!tuiide::validateCppClassSettings(class_options, session_error),
     "class settings reject invalid C++ identifiers before choosing paths");
+  class_options.class_name = "Model";
+  class_options.header_file_name = "../model.hpp";
+  expect(!tuiide::validateCppClassSettings(class_options, session_error),
+    "class settings reject a header file name containing a directory");
+  class_options.header_file_name = "model.hpp";
+  class_options.source_file_name = "model.c";
+  expect(!tuiide::validateCppClassSettings(class_options, session_error),
+    "class settings require a C++ implementation extension");
   expect(!tuiide::createProjectTemplate(template_project, tuiide::ProjectTemplate::CppClass,
       "src/sample_widget", "core", template_result, session_error), "templates never overwrite existing files");
   expect(!tuiide::createProjectTemplate(template_project, tuiide::ProjectTemplate::CppSource,
@@ -1452,8 +1463,9 @@ int main() {
   expect(tuiide::loadProjectSettings(new_project_path, generated_settings, session_error)
       && generated_settings.generator == "Ninja"
       && generated_settings.build_type == "Release"
-      && generated_settings.cpp_standard == "23",
-    "project wizard persists generator, build type, and selected language standard");
+      && generated_settings.cpp_standard == "23"
+      && generated_settings.cpp_header_extension == "h",
+    "project wizard persists generator, build type, language standard, and header style");
   expect(!tuiide::createNewProject(new_project, session_error), "project wizard refuses a non-empty project directory");
 
   tuiide::NewProjectOptions c_project;
@@ -1493,6 +1505,7 @@ int main() {
   project_settings.cpp_compiler = "/usr/bin/c++";
   project_settings.c_standard = "17";
   project_settings.cpp_standard = "23";
+  project_settings.cpp_header_extension = "h";
   project_settings.build_type = "RelWithDebInfo";
   project_settings.build_jobs = 3;
   project_settings.tab_width = 4;
@@ -1500,7 +1513,8 @@ int main() {
   project_settings.environment = {{"APP_MODE", "тест"}, {"TRACE", "1"}};
   project_settings.clangd_arguments = {"--header-insertion=never", "--query-driver=/opt/tool chain/*"};
   project_settings.shortcuts = {{"run.build", "Ctrl+B"}, {"search.find", "Alt+K"}};
-  project_settings.theme = "High contrast";
+  project_settings.theme = "Team dark";
+  project_settings.custom_themes = {{"Team dark", "Dark"}};
   project_settings.colors = {{"diagnosticError", "LightRed"}, {"keyword", "Yellow"}};
   project_settings.launch.executable = settings_project / "bin/custom app";
   project_settings.launch.target = "cmake_app";
@@ -1524,8 +1538,11 @@ int main() {
       && loaded_settings.tab_width == 4 && !loaded_settings.use_spaces
       && loaded_settings.environment == project_settings.environment
       && loaded_settings.clangd_arguments == project_settings.clangd_arguments
+      && loaded_settings.cpp_header_extension == project_settings.cpp_header_extension
       && loaded_settings.shortcuts == project_settings.shortcuts
       && loaded_settings.theme == project_settings.theme
+      && loaded_settings.custom_themes == project_settings.custom_themes
+      && tuiide::effectiveEditorTheme(loaded_settings) == "Dark"
       && loaded_settings.colors == project_settings.colors
       && loaded_settings.launch.executable == tuiide::normalizePath(settings_project / "bin/custom app")
       && loaded_settings.launch.target == "cmake_app"
@@ -1576,6 +1593,36 @@ int main() {
   expect(settings_text.find("\"version\": 1") != std::string::npos
       && settings_text.find("\"buildDirectory\": \"out/debug\"") != std::string::npos,
     "project settings file is versioned and keeps in-project paths portable");
+
+  const auto user_settings_path = settings_project / "config/tuiide/settings.json";
+  tuiide::UserSettings user_settings;
+  user_settings.shortcuts = {{"file.open", "Ctrl+B"}};
+  user_settings.theme = "Team dark";
+  user_settings.custom_themes = {{"Team dark", "Dark"}};
+  user_settings.colors = {{"keyword", "Yellow"}, {"diagnosticError", "LightRed"}};
+  expect(tuiide::saveUserSettings(user_settings_path, user_settings, session_error),
+    "user settings create their configuration directory and save atomically");
+  tuiide::UserSettings loaded_user_settings;
+  expect(tuiide::loadUserSettings(user_settings_path, loaded_user_settings, session_error)
+      && loaded_user_settings.shortcuts == user_settings.shortcuts
+      && loaded_user_settings.theme == user_settings.theme
+      && loaded_user_settings.custom_themes == user_settings.custom_themes
+      && loaded_user_settings.colors == user_settings.colors
+      && tuiide::effectiveEditorTheme(loaded_user_settings) == "Dark",
+    "user shortcuts, theme, custom themes, and colors round-trip independently of a project");
+  const auto saved_user_text = [&] {
+    std::ifstream input(user_settings_path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  }();
+  auto invalid_user_settings = user_settings;
+  invalid_user_settings.colors["keyword"] = "Invisible";
+  expect(!tuiide::saveUserSettings(user_settings_path, invalid_user_settings, session_error),
+    "invalid user color settings are rejected");
+  std::ifstream unchanged_user_file(user_settings_path, std::ios::binary);
+  const std::string unchanged_user_text((std::istreambuf_iterator<char>(unchanged_user_file)),
+    std::istreambuf_iterator<char>());
+  expect(unchanged_user_text == saved_user_text,
+    "a failed user settings update leaves the installed file unchanged");
   std::ifstream managed_gitignore(settings_project / ".gitignore");
   std::string managed_gitignore_text((std::istreambuf_iterator<char>(managed_gitignore)), std::istreambuf_iterator<char>());
   expect(managed_gitignore_text.find("*.user-cache") != std::string::npos
@@ -1655,6 +1702,10 @@ int main() {
   invalid_theme.theme = "Invisible";
   expect(!tuiide::validateProjectSettings(settings_project, invalid_theme, session_error),
     "unknown editor themes are rejected");
+  invalid_theme = project_settings;
+  invalid_theme.custom_themes["Broken"] = "Invisible";
+  expect(!tuiide::validateProjectSettings(settings_project, invalid_theme, session_error),
+    "custom editor themes require a supported base palette");
   invalid_theme = project_settings;
   invalid_theme.colors["keyword"] = "Invisible";
   expect(!tuiide::validateProjectSettings(settings_project, invalid_theme, session_error),
@@ -1769,6 +1820,67 @@ int main() {
   });
   expect(user_build != build_presets.end() && user_build->verbose && user_build->targets == std::vector<std::string>{"app"},
     "user build preset overrides inherited fields");
+  expect(dev_preset != presets.end() && !dev_preset->user_editable
+      && dev_preset->source_file.filename() == "CMakePresets.json"
+      && user_preset != presets.end() && user_preset->user_editable
+      && user_preset->source_file.filename() == "CMakeUserPresets.json",
+    "loaded presets retain their source and user editability");
+
+  auto editable_presets = tuiide::loadCMakePresetsForEdit(
+    preset_source, tuiide::CMakePresetKind::Configure, session_error);
+  expect(session_error.empty() && editable_presets.size() == 4,
+    "preset manager loads visible, hidden, and conditioned configure presets");
+  tuiide::CMakePresetEdit editable_user;
+  expect(tuiide::loadCMakePresetForEdit(preset_source,
+      tuiide::CMakePresetKind::Configure, "user", editable_user, session_error)
+      && editable_user.user_editable && editable_user.binary_directory == "relative-build",
+    "user preset is loaded with unexpanded editable values");
+  tuiide::CMakePresetEdit scratch;
+  scratch.kind = tuiide::CMakePresetKind::Configure;
+  scratch.name = "scratch"; scratch.display_name = "Scratch";
+  scratch.inherits = {"dev"}; scratch.binary_directory = "${sourceDir}/scratch";
+  expect(tuiide::saveCMakeUserPreset(preset_source, {}, scratch, session_error),
+    "new user configure preset is saved");
+  tuiide::CMakePresetEdit scratch_build;
+  scratch_build.kind = tuiide::CMakePresetKind::Build;
+  scratch_build.name = "scratch-build"; scratch_build.configure_preset = "scratch";
+  scratch_build.targets = {"app"};
+  expect(tuiide::saveCMakeUserPreset(preset_source, {}, scratch_build, session_error),
+    "new user build preset is saved");
+  expect(!tuiide::deleteCMakeUserPreset(preset_source,
+      tuiide::CMakePresetKind::Configure, "scratch", session_error)
+      && session_error.find("references unknown configure preset") != std::string::npos,
+    "configure preset deletion is rejected while a build preset references it");
+  scratch.name = "scratch-renamed";
+  expect(!tuiide::saveCMakeUserPreset(preset_source, "scratch", scratch, session_error),
+    "configure preset rename is rejected while references still use its old name");
+  expect(tuiide::deleteCMakeUserPreset(preset_source,
+      tuiide::CMakePresetKind::Build, "scratch-build", session_error)
+      && tuiide::saveCMakeUserPreset(preset_source, "scratch", scratch, session_error)
+      && tuiide::deleteCMakeUserPreset(preset_source,
+        tuiide::CMakePresetKind::Configure, "scratch-renamed", session_error),
+    "unreferenced user presets can be renamed and deleted");
+  expect(!tuiide::deleteCMakeUserPreset(preset_source,
+      tuiide::CMakePresetKind::Configure, "dev", session_error)
+      && session_error.find("read-only") != std::string::npos,
+    "project presets cannot be deleted through the user preset store");
+  expect(tuiide::cloneCMakePresetToUser(preset_source,
+      tuiide::CMakePresetKind::Configure, "base", "base-copy", session_error),
+    "an included preset can be cloned into the user file");
+  {
+    std::ifstream user_file(preset_source / "CMakeUserPresets.json");
+    const auto user_json = nlohmann::json::parse(user_file, nullptr, false);
+    const auto clone = std::find_if(user_json["configurePresets"].begin(),
+      user_json["configurePresets"].end(), [](const auto& item) {
+        return item.value("name", std::string{}) == "base-copy";
+      });
+    expect(clone != user_json["configurePresets"].end()
+        && clone->contains("condition") && clone->value("hidden", false),
+      "cloning preserves unknown and non-editor preset fields");
+  }
+  expect(tuiide::deleteCMakeUserPreset(preset_source,
+      tuiide::CMakePresetKind::Configure, "base-copy", session_error),
+    "cloned user preset can be removed");
 
   tuiide::CMakeSession cmake_session;
   const auto default_build = preset_source / "default-build";

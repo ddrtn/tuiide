@@ -3,6 +3,7 @@
 #include <final/final.h>
 
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -97,6 +98,130 @@ class ConfirmTextDialog final : public CenteredDialog {
 
  private:
   finalcut::FTextView text_;
+  finalcut::FButton apply_;
+  finalcut::FButton cancel_;
+};
+
+struct ShortcutEditorCommand {
+  std::string id;
+  std::string title;
+  std::string default_shortcut;
+};
+
+// A focused capture field consumes the next key press instead of inserting its
+// text, allowing terminal users to bind function and modifier keys directly.
+class ShortcutCaptureEdit final : public finalcut::FLineEdit {
+ public:
+  explicit ShortcutCaptureEdit(finalcut::FWidget* parent = nullptr) : FLineEdit(parent) {}
+  void setCaptureHandler(std::function<bool(finalcut::FKey)> handler) { capture_handler_ = std::move(handler); }
+  void setAcceptHandler(std::function<void()> handler) { accept_handler_ = std::move(handler); }
+ protected:
+  void onKeyPress(finalcut::FKeyEvent* event) override;
+ private:
+  std::function<bool(finalcut::FKey)> capture_handler_;
+  std::function<void()> accept_handler_;
+};
+
+class ShortcutEditorDialog final : public CenteredDialog {
+ public:
+  ShortcutEditorDialog(std::vector<ShortcutEditorCommand> commands,
+    std::map<std::string, std::string> overrides, finalcut::FWidget* parent = nullptr);
+  [[nodiscard]] auto overrides() const -> const std::map<std::string, std::string>&;
+
+ private:
+  void refreshList();
+  void selectCurrent();
+  void updateCurrentValue();
+  void capture();
+  auto captureKey(finalcut::FKey key) -> bool;
+  void clearSelected();
+  void resetSelected();
+  void resetAll();
+  void validate();
+  auto selectedCommand() -> const ShortcutEditorCommand*;
+
+  std::vector<ShortcutEditorCommand> commands_;
+  std::vector<std::size_t> visible_;
+  std::map<std::string, std::string> overrides_;
+  std::size_t selected_{};
+  bool updating_{};
+  bool capturing_{};
+  finalcut::FLabel filter_label_;
+  finalcut::FLineEdit filter_;
+  EnterListBox list_;
+  finalcut::FLabel default_label_;
+  finalcut::FLabel current_label_;
+  ShortcutCaptureEdit current_;
+  finalcut::FLabel validation_;
+  finalcut::FButton capture_;
+  finalcut::FButton clear_;
+  finalcut::FButton reset_selected_;
+  finalcut::FButton reset_all_;
+  finalcut::FButton apply_;
+  finalcut::FButton cancel_;
+};
+
+class ThemeEditorDialog final : public CenteredDialog {
+ public:
+  ThemeEditorDialog(std::string selected, std::map<std::string, std::string> custom_themes,
+    std::function<void(const std::string&)> preview_handler,
+    finalcut::FWidget* parent = nullptr);
+  [[nodiscard]] auto selectedTheme() const -> std::string;
+  [[nodiscard]] auto customThemes() const -> const std::map<std::string, std::string>&;
+
+ private:
+  void refresh();
+  void preview();
+  void createCopy();
+  void reset();
+  void apply();
+  [[nodiscard]] auto currentTheme() const -> std::string;
+  [[nodiscard]] auto currentBase() const -> std::string;
+
+  std::string selected_;
+  std::map<std::string, std::string> custom_themes_;
+  std::vector<std::string> names_;
+  std::function<void(const std::string&)> preview_handler_;
+  EnterListBox list_;
+  finalcut::FLabel kind_;
+  finalcut::FTextView preview_;
+  finalcut::FButton copy_;
+  finalcut::FButton reset_;
+  finalcut::FButton apply_;
+  finalcut::FButton cancel_;
+};
+
+class ColorEditorDialog final : public CenteredDialog {
+ public:
+  ColorEditorDialog(std::string theme, std::map<std::string, std::string> overrides,
+    std::function<void(const std::map<std::string, std::string>&)> preview_handler,
+    finalcut::FWidget* parent = nullptr);
+  [[nodiscard]] auto overrides() const -> const std::map<std::string, std::string>&;
+
+ private:
+  void refreshRoles();
+  void refreshPalette();
+  void selectColor();
+  void resetRole();
+  void resetAll();
+  void apply();
+  [[nodiscard]] auto currentRole() const -> std::string;
+  [[nodiscard]] auto effectiveColor(const std::string& role) const -> std::string;
+
+  std::string theme_;
+  std::map<std::string, std::string> overrides_;
+  std::vector<std::string> roles_;
+  std::vector<std::string> colors_;
+  std::function<void(const std::map<std::string, std::string>&)> preview_handler_;
+  bool updating_{};
+  int terminal_colors_{16};
+  finalcut::FLabel terminal_info_;
+  EnterListBox roles_list_;
+  finalcut::FLabel palette_label_;
+  EnterListBox palette_list_;
+  finalcut::FTextView preview_;
+  finalcut::FButton reset_role_;
+  finalcut::FButton reset_all_;
   finalcut::FButton apply_;
   finalcut::FButton cancel_;
 };

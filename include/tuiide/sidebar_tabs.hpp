@@ -18,6 +18,8 @@ class SidebarTabs final : public finalcut::FWidget {
   [[nodiscard]] auto isTabVisible(std::size_t index) const -> bool;
   [[nodiscard]] auto visibleCount() const -> std::size_t;
   [[nodiscard]] auto currentIndex() const -> std::size_t;
+  [[nodiscard]] auto currentTitle() const -> std::string;
+  void selectRelative(int direction, bool focus_page = false);
   void layoutPages();
 
  protected:
@@ -34,7 +36,6 @@ class SidebarTabs final : public finalcut::FWidget {
     bool visible{true};
   };
 
-  void selectRelative(int direction);
   void scrollRelative(int direction);
   std::vector<Tab> tabs_;
   std::size_t current_{};

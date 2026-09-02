@@ -94,6 +94,9 @@ auto validateProjectSettings(const std::filesystem::path& project_directory,
   if (std::find(cpp_standards.begin(), cpp_standards.end(), settings.cpp_standard) == cpp_standards.end()) {
     error = "Unsupported C++ language standard."; return false;
   }
+  if (settings.cpp_header_extension != "h" && settings.cpp_header_extension != "hpp") {
+    error = "C++ header extension must be h or hpp."; return false;
+  }
   if (std::find(build_types.begin(), build_types.end(), settings.build_type) == build_types.end()) {
     error = "Unsupported CMake build type."; return false;
   }
@@ -104,7 +107,14 @@ auto validateProjectSettings(const std::filesystem::path& project_directory,
     error = "Tab width must be between 1 and 16."; return false;
   }
   static const std::vector<std::string> themes{"Dark", "Light", "High contrast"};
-  if (std::find(themes.begin(), themes.end(), settings.theme) == themes.end()) {
+  for (const auto& [name, base] : settings.custom_themes) {
+    if (name.empty() || std::find(themes.begin(), themes.end(), name) != themes.end()
+        || std::find(themes.begin(), themes.end(), base) == themes.end()) {
+      error = "Invalid custom editor theme: " + name; return false;
+    }
+  }
+  if (std::find(themes.begin(), themes.end(), settings.theme) == themes.end()
+      && !settings.custom_themes.contains(settings.theme)) {
     error = "Unsupported editor theme."; return false;
   }
   static const std::vector<std::string> color_roles{"foreground", "background", "gutter", "breakpoint",
@@ -156,6 +166,7 @@ auto loadProjectSettings(const std::filesystem::path& project_directory,
     settings.cpp_compiler = resolvePath(root, json.value("cppCompiler", std::string{}));
     settings.c_standard = json.value("cStandard", std::string{});
     settings.cpp_standard = json.value("cppStandard", std::string{});
+    settings.cpp_header_extension = json.value("cppHeaderExtension", std::string("hpp"));
     settings.build_type = json.value("buildType", std::string{});
     settings.build_jobs = json.value("buildJobs", settings.build_jobs);
     settings.tab_width = json.value("tabWidth", settings.tab_width);
@@ -164,6 +175,7 @@ auto loadProjectSettings(const std::filesystem::path& project_directory,
     settings.clangd_arguments = json.value("clangdArguments", std::vector<std::string>{});
     settings.shortcuts = json.value("shortcuts", std::map<std::string, std::string>{});
     settings.theme = json.value("theme", std::string("Dark"));
+    settings.custom_themes = json.value("customThemes", std::map<std::string, std::string>{});
     settings.colors = json.value("colors", std::map<std::string, std::string>{});
     if (json.contains("launch") && json["launch"].is_object()) {
       const auto& launch = json["launch"];
@@ -193,12 +205,13 @@ auto saveProjectSettings(const std::filesystem::path& project_directory,
     {"generator", settings.generator}, {"toolchain", portablePath(root, settings.toolchain)},
     {"cCompiler", portablePath(root, settings.c_compiler)},
     {"cppCompiler", portablePath(root, settings.cpp_compiler)}, {"cStandard", settings.c_standard},
-    {"cppStandard", settings.cpp_standard}, {"buildType", settings.build_type},
+    {"cppStandard", settings.cpp_standard}, {"cppHeaderExtension", settings.cpp_header_extension},
+    {"buildType", settings.build_type},
     {"buildJobs", settings.build_jobs}, {"tabWidth", settings.tab_width},
     {"useSpaces", settings.use_spaces},
     {"environment", settings.environment}, {"clangdArguments", settings.clangd_arguments},
     {"shortcuts", settings.shortcuts},
-    {"theme", settings.theme}, {"colors", settings.colors},
+    {"theme", settings.theme}, {"customThemes", settings.custom_themes}, {"colors", settings.colors},
     {"launch", {{"executable", portablePath(root, settings.launch.executable)}, {"target", settings.launch.target},
       {"workingDirectory", portablePath(root, settings.launch.working_directory)},
       {"arguments", settings.launch.arguments}, {"environment", settings.launch.environment},
@@ -209,6 +222,11 @@ auto saveProjectSettings(const std::filesystem::path& project_directory,
   if (!writeAtomically(root / ".tuiide-project.json", json.dump(2) + "\n", error)) return false;
   error.clear();
   return true;
+}
+
+auto effectiveEditorTheme(const ProjectSettings& settings) -> std::string {
+  const auto custom = settings.custom_themes.find(settings.theme);
+  return custom == settings.custom_themes.end() ? settings.theme : custom->second;
 }
 
 auto updateProjectGitignore(const std::filesystem::path& project_directory,
