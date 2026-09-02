@@ -7,6 +7,7 @@
 
 namespace tuiide {
 
+/** Формы значений MI: строка, именованный tuple или список значений. */
 enum class MiValueKind { String, Tuple, List };
 
 struct MiValue {
@@ -20,6 +21,7 @@ struct MiValue {
   [[nodiscard]] auto string(std::string_view name) const -> std::string;
 };
 
+/** Одна синтаксически разобранная строка протокола GDB/MI. */
 struct MiRecord {
   std::optional<int> token;
   char prefix{};
@@ -33,6 +35,7 @@ struct MiRecord {
   [[nodiscard]] auto string(std::string_view name) const -> std::string { return results.string(name); }
 };
 
+/** Синтаксические ошибки записываются в поле `error`, а не выбрасываются наружу. */
 auto parseMiRecord(std::string_view line) -> MiRecord;
 
 }  // namespace tuiide

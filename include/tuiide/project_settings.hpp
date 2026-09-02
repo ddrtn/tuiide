@@ -9,6 +9,11 @@
 
 namespace tuiide {
 
+/**
+ * Версионируемые настройки конкретного CMake-проекта.
+ * Пути внутри проекта сохраняются относительными; проверка не даёт build-каталогу
+ * совпасть с исходным деревом.
+ */
 struct ProjectSettings {
   int version{1};
   std::filesystem::path build_directory;
@@ -36,8 +41,10 @@ struct ProjectSettings {
   -> ProjectSettings;
 [[nodiscard]] auto validateProjectSettings(const std::filesystem::path& project_directory,
   const ProjectSettings& settings, std::string& error) -> bool;
+/** Загружает настройки либо возвращает безопасные defaults с предупреждением. */
 [[nodiscard]] auto loadProjectSettings(const std::filesystem::path& project_directory,
   ProjectSettings& settings, std::string& error) -> bool;
+/** Валидирует и атомарно сохраняет настройки в `.tuiide-project.json`. */
 auto saveProjectSettings(const std::filesystem::path& project_directory,
   const ProjectSettings& settings, std::string& error) -> bool;
 auto updateProjectGitignore(const std::filesystem::path& project_directory,

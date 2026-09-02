@@ -216,9 +216,8 @@ auto LspClient::start(const std::filesystem::path& root,
 void LspClient::stop() {
   process_started_ = false;
   if (process_.running()) {
-    // clangd expects every didOpen notification to be paired with didClose.
-    // Leaving documents open can keep background indexing and pipe writers
-    // alive while the application is trying to shut down.
+    // clangd ожидает didClose для каждого didOpen. Открытые документы способны
+    // удерживать фоновую индексацию и writer pipe, пока приложение завершает работу.
     for (const auto& [path, state] : open_documents_)
       if (state.announced) notify("textDocument/didClose", {{"textDocument", {{"uri", uri(path)}}}});
     open_documents_.clear();

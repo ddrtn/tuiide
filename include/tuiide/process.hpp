@@ -12,6 +12,11 @@
 
 namespace tuiide {
 
+/**
+ * Асинхронный POSIX-процесс с отдельным reader-потоком stdout/stderr.
+ * Потомок запускается в собственной process group, поэтому stop() завершает и
+ * инструменты, порождённые CMake, clangd или shell-обёрткой.
+ */
 class AsyncProcess {
  public:
   AsyncProcess() = default;
@@ -27,6 +32,7 @@ class AsyncProcess {
   auto drain() -> std::vector<std::string>;
   [[nodiscard]] auto running() const -> bool;
   [[nodiscard]] auto exitCode() const -> std::optional<int>;
+  /** Посылает SIGTERM группе и использует ограниченный SIGKILL fallback. */
   void stop();
 
  private:

@@ -6,6 +6,7 @@
 
 namespace tuiide {
 
+/** Тип CMake preset, поддерживаемый менеджером IDE. */
 enum class CMakePresetKind { Configure, Build };
 
 struct CMakeConfigurePreset {
@@ -29,6 +30,7 @@ struct CMakeBuildPreset {
   bool user_editable{};
 };
 
+/** Редактируемая форма пользовательского preset перед сериализацией JSON. */
 struct CMakePresetEdit {
   CMakePresetKind kind{CMakePresetKind::Configure};
   std::string name;
@@ -46,6 +48,7 @@ struct CMakePresetEdit {
   bool user_editable{};
 };
 
+/** Загружает project/user/include configure presets и отмечает источник каждого элемента. */
 auto loadCMakeConfigurePresets(const std::filesystem::path& source_directory, std::string& error)
   -> std::vector<CMakeConfigurePreset>;
 auto loadCMakeBuildPresets(const std::filesystem::path& source_directory, std::string& error)
@@ -55,6 +58,7 @@ auto loadCMakePresetForEdit(const std::filesystem::path& source_directory,
   std::string& error) -> bool;
 auto loadCMakePresetsForEdit(const std::filesystem::path& source_directory,
   CMakePresetKind kind, std::string& error) -> std::vector<CMakePresetEdit>;
+/** Атомарно сохраняет только пользовательский preset после проверки inherits. */
 auto saveCMakeUserPreset(const std::filesystem::path& source_directory,
   const std::string& original_name, const CMakePresetEdit& preset,
   std::string& error) -> bool;

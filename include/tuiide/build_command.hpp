@@ -11,12 +11,14 @@
 
 namespace tuiide {
 
+/** Полностью подготовленная команда CMake без запуска процесса. */
 struct BuildCommand {
   std::vector<std::string> arguments;
   std::filesystem::path working_directory;
   std::string display;
 };
 
+/** Формирует воспроизводимые команды configure/build из настроек, preset и target. */
 class BuildCommandService {
  public:
   [[nodiscard]] static auto configure(const std::filesystem::path& project_directory,

@@ -24,8 +24,8 @@ auto AsyncProcess::start(const std::vector<std::string>& arguments, bool merge_s
   const pid_t child = ::fork();
   if (child < 0) return false;
   if (child == 0) {
-    // Give the command and every process it spawns a private process group so
-    // stop() can also terminate descendants that inherited our output pipe.
+    // Команда и все её потомки получают отдельную process group. Поэтому stop()
+    // завершает также процессы, унаследовавшие pipe (например, worker CMake).
     (void)::setpgid(0, 0);
     if (!working_directory.empty() && ::chdir(working_directory.c_str()) != 0) _exit(126);
     for (const auto& [name, value] : environment)
@@ -96,15 +96,15 @@ void AsyncProcess::stop() {
     if (input_fd_ >= 0) { ::close(input_fd_); input_fd_ = -1; }
   }
   if (child > 0) {
-    // The leader may already have exited while a descendant still holds the
-    // output pipe open. Killing the group guarantees readerLoop can reach EOF.
+    // Лидер мог завершиться, пока потомок удерживает output pipe. Убийство всей
+    // группы гарантирует EOF для readerLoop и не оставляет поток ожидания висеть.
     if (::kill(-child, SIGTERM) != 0 && errno != ESRCH) (void)::kill(child, SIGTERM);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
     while (running_ && std::chrono::steady_clock::now() < deadline)
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    // clangd and build tools may delay SIGTERM while workers are active. A
-    // bounded fallback prevents shutdown from waiting forever on inherited
-    // pipes; sending it to a vanished group is harmless (ESRCH).
+    // clangd и сборочные утилиты могут отложить SIGTERM из-за worker-процессов.
+    // Ограниченный fallback не даёт shutdown ждать pipe бесконечно; ESRCH для
+    // уже исчезнувшей группы безопасен.
     (void)::kill(-child, SIGKILL);
     if (running_) (void)::kill(child, SIGKILL);
   }

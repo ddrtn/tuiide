@@ -49,6 +49,8 @@ auto LspUiController::collect(LspClient& client) const -> LspEventBatch {
 
 auto LspUiController::route(LspEventBatch events,
     const std::optional<LspDocumentIdentity>& active_document) -> LspEventBatch {
+  // Completion и code action меняют текст, поэтому ответ другой версии опаснее
+  // обычного navigation-ответа: удаляем его ещё до показа какого-либо диалога.
   const auto completion_size = events.completions.size();
   std::erase_if(events.completions, [&active_document](const auto& item) {
     return !responseMatches({item.source_path, item.source_version}, active_document);

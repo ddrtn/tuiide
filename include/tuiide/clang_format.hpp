@@ -7,11 +7,13 @@
 
 namespace tuiide {
 
+/** Диапазон строк форматирования clang-format: границы включительны и нулевые. */
 struct FormatLineRange {
   std::size_t first{};  // zero-based, inclusive
   std::size_t last{};   // zero-based, inclusive
 };
 
+/** Итог запуска форматтера: текст меняется только при `success == true`. */
 struct FormatResult {
   bool success{};
   std::string text;

@@ -6,6 +6,10 @@
 
 namespace tuiide {
 
+/**
+ * Читает compile_commands.json и отвечает, входит ли открытый файл в базу.
+ * Это позволяет честно сообщить, когда clangd не получит параметры компиляции.
+ */
 class CompilationDatabase {
  public:
   auto load(const std::filesystem::path& build_directory, std::string& error) -> bool;

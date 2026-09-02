@@ -11,6 +11,7 @@
 
 namespace tuiide {
 
+/** Ошибки загрузки и взаимной проверки configure/build presets. */
 struct CMakePresetRefreshResult {
   bool valid{true};
   std::string configure_error;
@@ -18,6 +19,10 @@ struct CMakePresetRefreshResult {
   std::string validation_error;
 };
 
+/**
+ * Хранит выбранные CMake presets, build-каталог и target текущего проекта.
+ * При обновлении File API сохраняет выбор по имени и конфигурации, а не индексу.
+ */
 class CMakeSession {
  public:
   void reset(std::filesystem::path default_build_directory = {});
@@ -31,6 +36,7 @@ class CMakeSession {
   [[nodiscard]] auto selectBuildPreset(std::string name,
     const std::filesystem::path& default_build_directory) -> bool;
 
+  /** Заменяет данные CMake File API, пытаясь восстановить выбранный target. */
   void replaceTargets(std::vector<CMakeTarget> targets);
   [[nodiscard]] auto selectTarget(std::size_t index) -> bool;
   [[nodiscard]] auto selectedTarget() const noexcept -> const CMakeTarget*;

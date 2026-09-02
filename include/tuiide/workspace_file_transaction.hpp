@@ -8,8 +8,14 @@
 
 namespace tuiide {
 
+/**
+ * Обратимая файловая часть workspace/applyEdit от clangd.
+ * До commit() сохраняет backup удаляемых и перезаписываемых файлов, поэтому UI
+ * может откатить частично применённую операцию при ошибке.
+ */
 class WorkspaceFileTransaction {
  public:
+  /** Проверяет, что все пути и операции остаются внутри project_root. */
   auto prepare(const std::filesystem::path& project_root,
     std::vector<WorkspaceFileOperation> operations, std::string& error) -> bool;
   auto apply(std::string& error) -> bool;

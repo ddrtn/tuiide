@@ -23,6 +23,7 @@ namespace tuiide {
 [[nodiscard]] auto lspResponseError(const nlohmann::json& message)
   -> std::optional<std::string>;
 
+/** Диагностика clangd; диапазон использует строки и UTF-16 колонки протокола LSP. */
 struct Diagnostic {
   std::filesystem::path path;
   Position position;
@@ -30,6 +31,7 @@ struct Diagnostic {
   std::string message;
 };
 
+/** Семантический токен LSP. `column` и `length` измеряются в кодовых единицах UTF-16. */
 struct SemanticToken {
   std::filesystem::path path;
   std::size_t line{};
@@ -71,6 +73,7 @@ struct WorkspaceFileOperation {
   bool ignore_if_not_exists{};
 };
 
+/** Набор текстовых и файловых изменений, присланный сервером как одна транзакция. */
 struct WorkspaceEdit {
   std::vector<WorkspaceFileEdit> files;
   std::vector<WorkspaceFileOperation> file_operations;
@@ -154,6 +157,12 @@ struct LspFeedback {
   std::string message;
 };
 
+/**
+ * Клиент JSON-RPC для clangd, работающий поверх AsyncProcess.
+ * Отправляет изменения документов с revision, хранит ответы до опроса UI и
+ * отделяет ошибки протокола от пустых, но успешных результатов. Фильтрация
+ * устаревших ответов принадлежит LspUiController.
+ */
 class LspClient {
  public:
   auto start(const std::filesystem::path& root,
@@ -161,7 +170,9 @@ class LspClient {
     const std::map<std::string, std::string>& environment = {},
     const std::filesystem::path& compilation_database_directory = {}) -> bool;
   void stop();
+  /** Регистрирует документ в clangd; каждой отправке соответствует close(). */
   void open(const Document& document);
+  /** Ставит изменение в очередь; отправка объединяется debounce-механизмом. */
   void change(const Document& document);
   void close(const Document& document);
   void setActiveDocument(const Document* document);

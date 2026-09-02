@@ -12,6 +12,7 @@
 
 namespace tuiide {
 
+/** Один кадр стека GDB; строка имеет привычную для пользователя нумерацию с 1. */
 struct DebugFrame {
   int level{};
   std::string function;
@@ -19,6 +20,7 @@ struct DebugFrame {
   std::size_t line{};
 };
 
+/** Локальная переменная или дочерний элемент compound-значения GDB. */
 struct DebugVariable {
   std::string name;
   std::string value;
@@ -56,6 +58,7 @@ struct DebugResult {
   std::string error;
 };
 
+/** Состояние breakpoint/logpoint, синхронизируемое с GDB и проектной сессией. */
 struct DebugBreakpoint {
   std::filesystem::path file;
   std::size_t line{};
@@ -73,14 +76,21 @@ struct DebugBreakpoint {
 [[nodiscard]] auto gdbReadMemoryCommand(std::string_view address,
   std::size_t bytes) -> std::string;
 
+/**
+ * Асинхронный клиент GDB/MI.
+ * Управляет процессом GDB, маркирует запросы токенами и превращает MI-ответы в
+ * типизированные данные для панелей отладки; raw-протокол не выходит в UI.
+ */
 class GdbClient {
  public:
+  /** Запускает GDB с выбранным executable и необязательным PTY для inferior. */
   auto start(const std::filesystem::path& executable,
     const std::filesystem::path& working_directory = {},
     const std::map<std::string, std::string>& environment = {},
     const std::vector<std::string>& arguments = {},
     const std::filesystem::path& stdin_file = {},
     const std::filesystem::path& inferior_tty = {}) -> bool;
+  /** Останавливает GDB и сбрасывает запросы, не оставляя фонового процесса. */
   void stop();
   void clearSessionState();
   void run();

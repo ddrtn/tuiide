@@ -8,12 +8,14 @@
 
 namespace tuiide {
 
+/** Опции поиска: регистр, целое слово и регулярное выражение. */
 struct SearchOptions {
   bool case_sensitive{};
   bool whole_word{};
   bool regular_expression{};
 };
 
+/** Найденный полуоткрытый диапазон в строке документа. */
 struct SearchMatch {
   Position start;
   Position end;

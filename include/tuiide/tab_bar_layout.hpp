@@ -13,6 +13,7 @@ struct TabBarItemLayout {
   std::string label;
 };
 
+/** Результат размещения вкладок с учётом прокрутки и кнопок `<`/`>`. */
 struct TabBarLayout {
   std::vector<TabBarItemLayout> items;
   std::size_t first_index{};

@@ -10,6 +10,7 @@
 
 namespace tuiide {
 
+/** Выбирает или создаёт путь файла строго внутри корня открытого проекта. */
 class ProjectPathDialog final : public CenteredDialog {
  public:
   ProjectPathDialog(std::string title, std::filesystem::path root,
@@ -38,6 +39,7 @@ class ProjectPathDialog final : public CenteredDialog {
   finalcut::FButton cancel_;
 };
 
+/** Навигатор по каталогам проекта с безопасным созданием подкаталогов. */
 class ProjectDirectoryDialog final : public CenteredDialog {
  public:
   ProjectDirectoryDialog(std::string title, std::filesystem::path start,
@@ -59,6 +61,7 @@ class ProjectDirectoryDialog final : public CenteredDialog {
   finalcut::FButton cancel_;
 };
 
+/** UI-обёртка валидируемых ProjectSettings с адаптивной раскладкой. */
 class ProjectSettingsDialog final : public CenteredDialog {
  public:
   ProjectSettingsDialog(std::filesystem::path root, const ProjectSettings& settings,
@@ -71,6 +74,7 @@ class ProjectSettingsDialog final : public CenteredDialog {
   std::unique_ptr<Impl> impl_;
 };
 
+/** Wizard параметров C++ класса; имена header и source редактируются независимо. */
 class ClassOptionsDialog final : public CenteredDialog {
  public:
   explicit ClassOptionsDialog(std::string header_extension = "hpp",
@@ -83,6 +87,7 @@ class ClassOptionsDialog final : public CenteredDialog {
   std::unique_ptr<Impl> impl_;
 };
 
+/** Первый экран wizard создания CMake-проекта. */
 class NewProjectDialog final : public CenteredDialog {
  public:
   explicit NewProjectDialog(finalcut::FWidget* parent = nullptr);
@@ -115,6 +120,7 @@ class NewProjectDialog final : public CenteredDialog {
   finalcut::FButton cancel_;
 };
 
+/** Собирает параметры преобразования существующего дерева исходников в CMake-проект. */
 class ImportProjectDialog final : public CenteredDialog {
  public:
   ImportProjectDialog(std::string suggested_name,

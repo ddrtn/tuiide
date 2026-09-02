@@ -8,6 +8,7 @@
 
 namespace tuiide {
 
+/** Диалог condition, ignore count и log message одного breakpoint/logpoint. */
 class BreakpointSettingsDialog final : public CenteredDialog {
  public:
   BreakpointSettingsDialog(const DebugBreakpoint& breakpoint,

@@ -4,6 +4,7 @@
 
 namespace tuiide {
 
+/** Снимок доступности проекта, документа и внешних сервисов для меню/shortcut. */
 struct CommandContext {
   bool has_project{};
   bool has_document{};
@@ -25,6 +26,7 @@ struct CommandContext {
   std::size_t document_count{};
 };
 
+/** Набор признаков для menu items; недоступность поясняется в Output. */
 struct CommandAvailability {
   bool close_project{};
   bool project_file{};

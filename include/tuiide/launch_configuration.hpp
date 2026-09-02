@@ -9,6 +9,7 @@
 
 namespace tuiide {
 
+/** Настройки запуска target: executable, аргументы, среда, stdin и pre-launch build. */
 struct LaunchConfiguration {
   std::filesystem::path executable;
   std::string target;
@@ -21,6 +22,7 @@ struct LaunchConfiguration {
   std::string terminal{"x-terminal-emulator"};
 };
 
+/** Разрешённая конфигурация, готовая для передачи RunSession или GdbClient. */
 struct LaunchCommand {
   std::filesystem::path executable;
   std::filesystem::path working_directory;

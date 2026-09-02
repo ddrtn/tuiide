@@ -12,6 +12,7 @@
 
 namespace tuiide {
 
+/** Собирает и валидирует параметры Run/Debug для выбранного CMake target. */
 class LaunchSettingsDialog final : public CenteredDialog {
  public:
   LaunchSettingsDialog(std::filesystem::path root,
@@ -27,6 +28,7 @@ class LaunchSettingsDialog final : public CenteredDialog {
   std::unique_ptr<Impl> impl_;
 };
 
+/** Редактирует один user preset; project presets открываются только для чтения. */
 class CMakePresetEditDialog final : public CenteredDialog {
  public:
   explicit CMakePresetEditDialog(CMakePresetEdit preset,
@@ -39,6 +41,7 @@ class CMakePresetEditDialog final : public CenteredDialog {
   std::unique_ptr<Impl> impl_;
 };
 
+/** Управляет созданием, клонированием и удалением configure/build user presets. */
 class CMakePresetManagerDialog final : public CenteredDialog {
  public:
   CMakePresetManagerDialog(std::filesystem::path root, CMakePresetKind kind,

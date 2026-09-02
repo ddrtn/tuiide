@@ -7,8 +7,10 @@
 
 namespace tuiide {
 
+/** Уровень сообщения компилятора для Problems и EventLog. */
 enum class DiagnosticSeverity { Note, Warning, Error };
 
+/** Нормализованная диагностика CMake/компилятора с нулевыми индексами. */
 struct BuildDiagnostic {
   std::filesystem::path path;
   std::size_t line{};    // zero-based

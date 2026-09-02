@@ -9,10 +9,12 @@
 
 namespace tuiide {
 
+/** Независимые ленты, отображаемые нижними панелями Output и Build. */
 enum class EventChannel { Output, Build };
 enum class EventSource { Ide, Project, Editor, Build, Run, Debug, Lsp, System };
 enum class EventSeverity { Information, Success, Warning, Error };
 
+/** Структурированное сообщение IDE с монотонным номером и источником. */
 struct IdeEvent {
   std::uint64_t sequence{};
   EventChannel channel{EventChannel::Output};
@@ -21,9 +23,15 @@ struct IdeEvent {
   std::string message;
 };
 
+/**
+ * Ограниченный по размеру журнал событий для UI и опционального файла TSV.
+ * Текстовая проекция остаётся совместимой с виджетами, а типизированные записи
+ * позволяют фильтровать источник и severity без разбора строк.
+ */
 class EventLog {
  public:
   auto openFile(const std::filesystem::path& path, std::string& error) -> bool;
+  /** Добавляет событие в канал, увеличивает revision и при необходимости пишет в файл. */
   void publish(EventChannel channel, EventSource source, EventSeverity severity,
     std::string message);
   void clear(EventChannel channel);

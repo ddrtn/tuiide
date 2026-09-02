@@ -10,15 +10,22 @@
 
 namespace tuiide {
 
+/** Изменения, извлечённые из очередного фрагмента stdout/stderr сборки. */
 struct BuildOutputUpdate {
   std::optional<unsigned> progress;
   std::size_t diagnostics_added{};
 };
 
+/**
+ * Собирает разорванный поток вывода CMake/компилятора в строки, распознаёт
+ * индикаторы прогресса и диагностические сообщения. Неполная строка хранится
+ * до следующего фрагмента, поэтому диагностика не теряется на границе read().
+ */
 class BuildOutputCollector {
  public:
   [[nodiscard]] auto append(std::string_view chunk,
     const std::filesystem::path& project_root) -> BuildOutputUpdate;
+  /** Обрабатывает хвост без завершающего перевода строки при окончании процесса. */
   [[nodiscard]] auto finish(const std::filesystem::path& project_root) -> BuildOutputUpdate;
   void reset();
   void clearDiagnostics() { diagnostics_.clear(); }

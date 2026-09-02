@@ -8,6 +8,10 @@
 
 namespace tuiide {
 
+/**
+ * Переключаемая боковая панель. Прокручивает tab bar, если все названия не
+ * помещаются, и не позволяет скрыть последнюю видимую страницу.
+ */
 class SidebarTabs final : public finalcut::FWidget {
  public:
   explicit SidebarTabs(finalcut::FWidget* parent = nullptr);

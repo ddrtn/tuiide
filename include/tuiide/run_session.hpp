@@ -12,6 +12,7 @@
 
 namespace tuiide {
 
+/** Способ запуска: захваченный stdout/stderr либо интерактивный псевдотерминал. */
 enum class RunTransport { Process, Terminal };
 
 struct RunPollResult {
@@ -20,8 +21,11 @@ struct RunPollResult {
   std::optional<int> completion;
 };
 
-// Owns the mutually exclusive process/PTY lifecycle used by Run and the PTY
-// session used as the GDB inferior's integrated console.
+/**
+ * Владеет взаимоисключающими жизненными циклами Run-процесса и PTY, а также
+ * отдельным PTY для консоли inferior в GDB. Это не позволяет смешать вывод
+ * обычного запуска с отладочной консолью.
+ */
 class RunSession {
  public:
   [[nodiscard]] auto start(std::vector<std::string> arguments,
@@ -33,6 +37,7 @@ class RunSession {
   void activateDebugConsole();
   [[nodiscard]] auto debugTerminal() const -> std::filesystem::path;
 
+  /** Возвращает накопленный вывод и однократно сообщает код завершения. */
   [[nodiscard]] auto poll() -> RunPollResult;
   [[nodiscard]] auto writeConsole(std::string_view data) -> bool;
   [[nodiscard]] auto resizeConsole(unsigned columns, unsigned rows) -> bool;

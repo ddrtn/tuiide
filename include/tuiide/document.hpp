@@ -7,14 +7,17 @@
 
 namespace tuiide {
 
+/** Приводит путь к абсолютной нормализованной форме для дедупликации документов. */
 [[nodiscard]] auto normalizePath(const std::filesystem::path& path) -> std::filesystem::path;
 
+/** Координата в документе: строка и смещение в байтах UTF-8. */
 struct Position {
   std::size_t line{};
   std::size_t column{};  // UTF-8 byte offset within the line
   auto operator==(const Position&) const -> bool = default;
 };
 
+/** Замена полуоткрытого диапазона `start..end`; применяется атомарно с другими заменами. */
 struct TextReplacement {
   Position start;
   Position end;
@@ -24,15 +27,24 @@ struct TextReplacement {
 enum class LineEnding { Lf, CrLf };
 enum class DiskChange { Unchanged, Modified, Deleted, Unreadable };
 
+/**
+ * Модель одного открытого текстового документа.
+ *
+ * Хранит текст построчно, положение курсора, формат файла на диске и обратимую
+ * историю редактирования. Все публичные операции сохраняют корректные границы
+ * UTF-8; позиции LSP преобразуются отдельными методами между байтами и UTF-16.
+ */
 class Document {
  public:
   Document();
 
+  /** Загружает файл, запоминая BOM, тип перевода строк и fingerprint диска. */
   auto load(const std::filesystem::path& path, std::string& error) -> bool;
   auto save(std::string& error) -> bool;
   auto saveAs(const std::filesystem::path& path, std::string& error) -> bool;
   void relocate(const std::filesystem::path& path);
   void setText(std::string text);
+  /** Восстанавливает аварийную копию как несохранённый буфер без изменения пути. */
   void restoreText(std::string text);
 
   [[nodiscard]] auto text() const -> std::string;
@@ -48,6 +60,7 @@ class Document {
   [[nodiscard]] auto hasUtf8Bom() const -> bool;
   [[nodiscard]] auto lineEnding() const -> LineEnding;
   [[nodiscard]] auto hasFinalNewline() const -> bool;
+  /** Сравнивает сохранённый fingerprint с файлом, не изменяя документ. */
   [[nodiscard]] auto diskChange(std::string& error) const -> DiskChange;
   void acknowledgeDiskState();
   [[nodiscard]] auto utf16Column(std::size_t line, std::size_t byte_column) const -> std::size_t;
@@ -57,6 +70,7 @@ class Document {
   void setCursor(Position position);
   void insert(std::string_view utf8);
   void replaceIdentifierBeforeCursor(std::string_view replacement);
+  /** Применяет набор замен одним шагом undo/redo, начиная с конца документа. */
   void applyReplacements(std::vector<TextReplacement> replacements);
   void replaceRange(Position start, Position end, std::string_view replacement);
   void replaceTextPreservingCursor(std::string_view replacement);

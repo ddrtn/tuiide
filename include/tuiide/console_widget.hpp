@@ -10,6 +10,7 @@
 
 namespace tuiide {
 
+/** Строка ввода терминала, передающая Ctrl+C и Ctrl+D владельцу консоли. */
 class ConsoleInput final : public finalcut::FLineEdit {
  public:
   explicit ConsoleInput(finalcut::FWidget* parent = nullptr) : FLineEdit(parent) {}
@@ -22,6 +23,7 @@ class ConsoleInput final : public finalcut::FLineEdit {
   bool control_enabled_{};
 };
 
+/** Виджет истории PTY-вывода и строки `stdin>` для Run/GDB inferior. */
 class ConsoleWidget final : public finalcut::FWidget {
  public:
   explicit ConsoleWidget(finalcut::FWidget* parent = nullptr);

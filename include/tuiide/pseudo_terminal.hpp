@@ -12,6 +12,11 @@
 
 namespace tuiide {
 
+/**
+ * Linux PTY с потоками чтения и ожидания дочернего процесса.
+ * Методы drain() и resize() связывают видимый размер консоли UI с процессом,
+ * а stop() завершает жизненный цикл без утечки дескрипторов.
+ */
 class PseudoTerminal {
  public:
   PseudoTerminal() = default;
@@ -23,6 +28,7 @@ class PseudoTerminal {
     const std::filesystem::path& working_directory = {},
     const std::map<std::string, std::string>& environment = {},
     unsigned columns = 80, unsigned rows = 24) -> bool;
+  /** Создаёт PTY без процесса: slave передаётся GDB как tty inferior. */
   auto openSession(unsigned columns = 80, unsigned rows = 24) -> bool;
   void activateSession();
   [[nodiscard]] auto slaveName() const -> std::filesystem::path;

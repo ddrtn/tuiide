@@ -6,16 +6,23 @@
 
 namespace tuiide {
 
+/** Намерение пользователя; одна операция может состоять из нескольких стадий CMake. */
 enum class BuildOperation { None, Configure, Build, Rebuild, Clean };
 enum class BuildStage { Idle, Configure, Clean, Build };
 enum class BuildContinuation { None, Run, Debug };
 
+/**
+ * Чистая машина состояний сборки без процессов и UI.
+ * Определяет цепочки Configure→Build и Clean→Build, хранит progress и отложенный
+ * запуск Run/Debug, который разрешён только после успешной сборки.
+ */
 class BuildWorkflow {
  public:
   void begin(BuildOperation operation, bool configured,
     BuildContinuation continuation = BuildContinuation::None);
   void enterStage(BuildStage stage) noexcept;
   void setProgress(std::optional<unsigned> progress) noexcept { progress_ = progress; }
+  /** Возвращает следующую стадию либо Idle, если сценарий завершён. */
   [[nodiscard]] auto nextStageAfterSuccess() -> BuildStage;
   [[nodiscard]] auto takeContinuation() noexcept -> BuildContinuation;
   void reset() noexcept;

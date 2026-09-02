@@ -19,6 +19,11 @@
 
 namespace tuiide {
 
+/**
+ * Виджет отображения и ввода для Document.
+ * Преобразует UTF-8 байтовые позиции модели в терминальные display columns,
+ * учитывая табы, wide glyphs и combining marks.
+ */
 class CodeEditor final : public finalcut::FWidget {
  public:
   explicit CodeEditor(finalcut::FWidget* parent = nullptr);

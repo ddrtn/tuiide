@@ -7,6 +7,10 @@
 
 namespace tuiide {
 
+/**
+ * Лёгкий буфер терминального текста: удаляет ANSI SGR и обрабатывает CR как
+ * перерисовку текущей строки, что делает progress-команды читаемыми в UI.
+ */
 class TerminalBuffer {
  public:
   explicit TerminalBuffer(std::size_t maximum_lines = 2000);

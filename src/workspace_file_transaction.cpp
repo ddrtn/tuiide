@@ -54,6 +54,8 @@ auto WorkspaceFileTransaction::backupPath(const std::filesystem::path& path) -> 
 
 auto WorkspaceFileTransaction::apply(std::string& error) -> bool {
   error.clear();
+  // Никакая операция не уничтожает прежний файл сразу: overwrite/delete сначала
+  // переименовывают его в backup. При ошибке порядок applied_ разворачивается.
   for (std::size_t index = 0; index < operations_.size(); ++index) {
     const auto& operation = operations_[index];
     std::error_code filesystem_error;
@@ -123,6 +125,8 @@ auto WorkspaceFileTransaction::apply(std::string& error) -> bool {
 
 auto WorkspaceFileTransaction::rollback(std::string& error) -> bool {
   error.clear();
+  // Откат обратен применению: rename возвращается в исходный путь до восстановления
+  // прежнего destination, иначе можно потерять файл при overwrite.
   for (auto iterator = applied_.rbegin(); iterator != applied_.rend(); ++iterator) {
     const auto& operation = operations_[iterator->index];
     std::error_code filesystem_error;

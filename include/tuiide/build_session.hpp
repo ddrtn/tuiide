@@ -32,6 +32,7 @@ struct BuildStageCompletion {
   double elapsed{};
 };
 
+/** Данные одного poll: новый вывод и, при завершении, статус стадии. */
 struct BuildPollResult : BuildDrainResult {
   std::optional<BuildStageCompletion> completion;
 };
@@ -43,8 +44,13 @@ struct BuildCancelResult {
   std::string stage;
 };
 
+/**
+ * Координирует процесс CMake, BuildWorkflow и BuildOutputCollector.
+ * Владелец гарантирует финальный drain вывода при успехе, ошибке и отмене.
+ */
 class BuildSession {
  public:
+  /** Очищает остатки предыдущей операции перед началом новой. */
   void prepare();
   void begin(BuildOperation operation, bool configured,
     BuildContinuation continuation = BuildContinuation::None);
@@ -57,6 +63,7 @@ class BuildSession {
   [[nodiscard]] auto ingest(std::string_view chunk,
     const std::filesystem::path& project_root) -> BuildOutputUpdate;
   [[nodiscard]] auto finish(const std::filesystem::path& project_root) -> BuildFinishResult;
+  /** Останавливает группу процессов и возвращает ещё не показанный вывод. */
   [[nodiscard]] auto cancel(const std::filesystem::path& project_root) -> BuildCancelResult;
   void reset();
 

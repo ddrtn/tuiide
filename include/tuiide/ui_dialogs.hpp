@@ -9,6 +9,10 @@
 
 namespace tuiide {
 
+/**
+ * Базовый диалог Final Cut: центрирует себя в главном окне и пересчитывает
+ * расположение дочерних виджетов после изменения размера терминала.
+ */
 class CenteredDialog : public finalcut::FDialog {
  protected:
   using finalcut::FDialog::FDialog;
@@ -61,6 +65,7 @@ class SelectionDialog final : public CenteredDialog {
   finalcut::FButton cancel_;
 };
 
+/** Поисковая палитра команд с сопоставлением подстроки без учёта регистра. */
 class CommandPaletteDialog final : public CenteredDialog {
  public:
   CommandPaletteDialog(std::vector<std::string> items,
@@ -108,8 +113,10 @@ struct ShortcutEditorCommand {
   std::string default_shortcut;
 };
 
-// A focused capture field consumes the next key press instead of inserting its
-// text, allowing terminal users to bind function and modifier keys directly.
+/**
+ * Поле захвата shortcut: следующее нажатие передаётся обработчику, а не вставляется
+ * в текст. Это позволяет назначать F-клавиши и модификаторы из терминала.
+ */
 class ShortcutCaptureEdit final : public finalcut::FLineEdit {
  public:
   explicit ShortcutCaptureEdit(finalcut::FWidget* parent = nullptr) : FLineEdit(parent) {}
@@ -122,6 +129,7 @@ class ShortcutCaptureEdit final : public finalcut::FLineEdit {
   std::function<void()> accept_handler_;
 };
 
+/** Редактор команд, defaults и пользовательских shortcut с проверкой конфликтов. */
 class ShortcutEditorDialog final : public CenteredDialog {
  public:
   ShortcutEditorDialog(std::vector<ShortcutEditorCommand> commands,
@@ -161,6 +169,7 @@ class ShortcutEditorDialog final : public CenteredDialog {
   finalcut::FButton cancel_;
 };
 
+/** Выбирает тему с preview; Cancel откатывает preview, не меняя настройки. */
 class ThemeEditorDialog final : public CenteredDialog {
  public:
   ThemeEditorDialog(std::string selected, std::map<std::string, std::string> custom_themes,
@@ -191,6 +200,7 @@ class ThemeEditorDialog final : public CenteredDialog {
   finalcut::FButton cancel_;
 };
 
+/** Редактирует override цветов ролей и применяет preview до подтверждения. */
 class ColorEditorDialog final : public CenteredDialog {
  public:
   ColorEditorDialog(std::string theme, std::map<std::string, std::string> overrides,

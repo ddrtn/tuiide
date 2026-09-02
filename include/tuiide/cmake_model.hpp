@@ -6,6 +6,7 @@
 
 namespace tuiide {
 
+/** Executable/library из CMake File API, доступный для Build/Run/Debug. */
 struct CMakeTarget {
   std::string name;
   std::string configuration;

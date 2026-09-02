@@ -219,6 +219,8 @@ auto CppSyntaxCache::update(const std::vector<std::string>& lines) -> std::size_
   entries_.clear();
   entries_.reserve(lines.size());
   const auto prefix = std::min({dirty_line_, previous.size(), lines.size()});
+  // Нетронутый prefix уже имеет верное входное состояние block comment и может
+  // быть перемещён без повторной подсветки даже в очень большом документе.
   entries_.insert(entries_.end(), std::make_move_iterator(previous.begin()),
     std::make_move_iterator(previous.begin() + static_cast<std::ptrdiff_t>(prefix)));
   bool in_comment = prefix > 0 && entries_[prefix - 1].ends_in_comment;
@@ -230,6 +232,8 @@ auto CppSyntaxCache::update(const std::vector<std::string>& lines) -> std::size_
     if (mapped >= static_cast<std::ptrdiff_t>(prefix) && mapped < static_cast<std::ptrdiff_t>(previous.size())) {
       const auto& cached = previous[static_cast<std::size_t>(mapped)];
       if (cached.length == lines[line].size() && cached.fingerprint == hash && cached.starts_in_comment == in_comment) {
+        // Совпали строка и состояние из предыдущей строки — оставшийся suffix
+        // также не меняется, его можно взять из старого кэша целиком.
         entries_.insert(entries_.end(),
           std::make_move_iterator(previous.begin() + mapped), std::make_move_iterator(previous.end()));
         break;

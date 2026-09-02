@@ -7,17 +7,23 @@
 
 namespace tuiide {
 
+/** Дополнительное сообщение об открытии, не являющееся фатальной ошибкой. */
 struct ProjectOpenResult {
   bool used_default_settings{};
   std::string warning;
 };
 
+/**
+ * Владеет корнем проекта, настройками и производными путями сессии/recovery.
+ * Закрытие очищает состояние целиком, чтобы следующий проект не наследовал его.
+ */
 class ProjectSession {
  public:
   [[nodiscard]] auto open(std::filesystem::path project_directory,
     std::filesystem::path build_directory, ProjectOpenResult& result,
     std::string& error) -> bool;
   void close();
+  /** Принимает уже проверенные настройки и пересчитывает производные пути. */
   void applySettings(ProjectSettings settings);
 
   [[nodiscard]] auto open() const noexcept -> bool { return !root_.empty(); }

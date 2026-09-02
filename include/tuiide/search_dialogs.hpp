@@ -8,8 +8,10 @@
 
 namespace tuiide {
 
+/** Действие, выбранное пользователем в едином Find/Replace диалоге. */
 enum class SearchAction { None, Next, Previous, Replace, ReplaceAll, FindAll };
 
+/** Полный запрос поиска, включая область и режимы регулярного выражения. */
 struct SearchRequest {
   SearchAction action{SearchAction::None};
   std::string query;
@@ -18,6 +20,7 @@ struct SearchRequest {
   bool project{};
 };
 
+/** Модальный интерфейс поиска/замены, не выполняющий файловые операции сам. */
 class SearchDialog final : public CenteredDialog {
  public:
   SearchDialog(const SearchRequest& initial, bool has_project,

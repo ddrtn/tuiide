@@ -310,6 +310,8 @@ void Document::replaceRaw(Position start, Position end, std::string_view replace
 }
 
 void Document::commit(HistoryEntry entry) {
+  // Идентификатор состояния, а не размер undo-стека, определяет modified().
+  // Поэтому undo ровно до сохранения корректно убирает маркер несохранённости.
   entry.state_before = current_state_;
   entry.state_after = ++next_state_;
   current_state_ = entry.state_after;
@@ -341,6 +343,8 @@ void Document::replaceSingle(Position start, Position end, std::string_view repl
 
   if (group_open_ && !undo_.empty() && undo_.back().group == group
       && undo_.back().atoms.size() == 1) {
+    // Последовательный ввод и удаление объединяются, но только пока курсор идёт
+    // непрерывно. Перемещение курсора/структурная правка предварительно разрывает группу.
     auto& entry = undo_.back();
     auto& atom = entry.atoms.front();
     bool merged{};
@@ -399,6 +403,8 @@ void Document::replaceIdentifierBeforeCursor(std::string_view replacement) {
 
 void Document::applyReplacements(std::vector<TextReplacement> replacements) {
   if (replacements.empty()) return;
+  // Замены идут с конца: ранняя правка не сдвигает byte-позиции следующей.
+  // Вся пачка остаётся одним действием undo, как того требует workspace edit LSP.
   std::sort(replacements.begin(), replacements.end(), [](const auto& left, const auto& right) {
     return left.start.line > right.start.line || (left.start.line == right.start.line && left.start.column > right.start.column);
   });

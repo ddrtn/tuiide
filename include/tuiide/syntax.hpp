@@ -8,6 +8,7 @@
 
 namespace tuiide {
 
+/** Роль фрагмента исходного текста для лексической и семантической подсветки. */
 enum class TokenKind { Plain, Keyword, Type, String, Number, Comment, Preprocessor,
   Namespace, Function, Variable, Parameter, Property, Macro, EnumMember };
 struct Token { std::size_t begin{}; std::size_t length{}; TokenKind kind{}; };
@@ -19,6 +20,10 @@ auto highlightCMake(std::string_view line, int& bracket_equals,
 auto completeCMake(const std::vector<std::string>& lines, std::size_t line,
                    std::size_t column) -> std::vector<std::string>;
 
+/**
+ * Построчный кэш лексической C/C++-подсветки. После правки пересчитывает только
+ * изменённый участок и суффикс, на который повлияло состояние block comment.
+ */
 class CppSyntaxCache {
  public:
   void clear();
@@ -41,6 +46,7 @@ class CppSyntaxCache {
   bool dirty_{true};
 };
 
+/** Аналогичный кэш для CMake с состоянием bracket comments и bracket strings. */
 class CMakeSyntaxCache {
  public:
   void clear();

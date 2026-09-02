@@ -9,6 +9,7 @@ enum class ProjectLanguage { C, Cpp };
 enum class ProjectTargetType { Executable, StaticLibrary, SharedLibrary };
 enum class ProjectInstallLayout { None, Gnu };
 
+/** Входные данные wizard создания проекта до генерации файлов. */
 struct NewProjectOptions {
   std::string name;
   std::filesystem::path project_directory;
@@ -26,6 +27,7 @@ struct NewProjectOptions {
   bool enable_testing{};
 };
 
+/** Создаёт каталог, CMakeLists и стартовые файлы; не перезаписывает существующий проект. */
 auto createNewProject(const NewProjectOptions& options, std::string& error) -> bool;
 auto loadProjectBuildDirectory(const std::filesystem::path& project_directory)
   -> std::filesystem::path;

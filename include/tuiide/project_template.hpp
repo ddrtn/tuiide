@@ -7,9 +7,11 @@
 
 namespace tuiide {
 
+/** Поддерживаемые шаблоны, создаваемые из Project tree и меню File. */
 enum class ProjectTemplate { CHeader, CppHeader, CSource, CppSource, CppClass };
 enum class InheritanceAccess { Public, Protected, Private };
 
+/** Параметры генерации пары файлов C++ класса. */
 struct CppClassOptions {
   std::string class_name;
   std::string header_file_name;
@@ -28,12 +30,14 @@ struct CppClassOptions {
   bool generate_move_operations{};
 };
 
+/** Набор новых файлов и CMake-добавлений, подготовленный до записи на диск. */
 struct ProjectTemplateResult {
   std::vector<std::filesystem::path> created_files;
   std::filesystem::path changed_cmake_file;
   std::size_t cmake_references_added{};
 };
 
+/** Создаёт файл из шаблона и вносит ссылку в подходящую CMake target. */
 auto createProjectTemplate(const std::filesystem::path& project_root,
                            ProjectTemplate type,
                            const std::filesystem::path& relative_path,
@@ -41,6 +45,7 @@ auto createProjectTemplate(const std::filesystem::path& project_root,
                            ProjectTemplateResult& result,
                            std::string& error) -> bool;
 
+/** Создаёт согласованную header/source пару; имена файлов могут отличаться от имени класса. */
 auto createCppClassTemplate(const std::filesystem::path& project_root,
                             const CppClassOptions& options,
                             std::string_view preferred_target,

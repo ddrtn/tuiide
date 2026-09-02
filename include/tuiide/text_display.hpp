@@ -8,6 +8,7 @@ namespace tuiide {
 
 inline constexpr std::size_t defaultTabWidth = 2;
 
+/** Один UTF-8 code point и его ширина в терминальных колонках. */
 struct DisplayUnit {
   std::size_t byte_begin{};
   std::size_t byte_end{};
@@ -22,6 +23,7 @@ struct DisplayUnit {
   std::size_t tab_width = defaultTabWidth) -> std::size_t;
 [[nodiscard]] auto byteColumnAtDisplay(std::string_view text, std::size_t display_column,
   std::size_t tab_width = defaultTabWidth) -> std::size_t;
+/** Вычисляет terminal columns, не разрезая wide glyph или combining sequence. */
 [[nodiscard]] auto displayWidth(std::string_view text, std::size_t tab_width = defaultTabWidth)
   -> std::size_t;
 

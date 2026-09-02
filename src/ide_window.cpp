@@ -187,8 +187,8 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   for (const auto& [name, menu] : menus) {
     if (const auto error = menuMnemonicError(name, *menu); !error.empty()) throw std::logic_error(error);
   }
-  // Top-level Meta keys are routed by IdeWindow::onKeyPress so they work
-  // consistently when focus is inside a child widget or a terminal sends ESC prefixes.
+  // Верхнеуровневые Meta-клавиши проходят через IdeWindow::onKeyPress, чтобы
+  // работать при фокусе дочернего виджета и в терминалах, кодирующих Alt как ESC-prefix.
   menu_bar_.delAccelerator();
   menu_bar_.addAccelerator(finalcut::FKey::F10, &menu_bar_);
   menu_bar_.addAccelerator(finalcut::FKey::Menu, &menu_bar_);
@@ -1979,9 +1979,9 @@ void IdeWindow::navigateTo(const LspNavigationItem& item) {
 }
 
 void IdeWindow::exitIde() {
-  // FWidget::close() only quits automatically while Final Cut still considers
-  // this widget the main widget. Modal dialogs can disturb that bookkeeping,
-  // so explicitly stop the application loop after an accepted close event.
+  // FWidget::close() завершает приложение автоматически только пока Final Cut
+  // считает этот виджет главным. Модальные окна могут нарушить это состояние,
+  // поэтому после подтверждённого закрытия явно останавливаем event loop.
   if (!close()) return;
   lsp_.stop();
   gdb_.stop();
@@ -3358,9 +3358,9 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       };
       return true;
     case finalcut::FKey::Ctrl_q:
-      // A focused child widget can be in the middle of dispatching this key.
-      // Closing the main window synchronously from that callback leaves Final
-      // Cut's event loop active. Close on the next timer tick instead.
+      // Дочерний виджет с фокусом ещё может обрабатывать эту клавишу. Синхронное
+      // закрытие главного окна из callback оставляет event loop Final Cut активным;
+      // переносим закрытие на следующий timer tick.
       deferred_command_ = [this] { exitIde(); };
       return true;
     case finalcut::FKey::Meta_x:

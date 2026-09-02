@@ -8,12 +8,14 @@
 
 namespace tuiide {
 
+/** Доступность внешней утилиты и диагностическое сообщение для Output. */
 struct ExternalToolStatus {
   std::string name;
   std::optional<std::filesystem::path> executable;
   std::string purpose;
 };
 
+/** Результат одной проверки CMake, clangd, GDB и clipboard helper. */
 struct ExternalTools {
   std::optional<std::filesystem::path> cmake;
   std::optional<std::filesystem::path> clangd;

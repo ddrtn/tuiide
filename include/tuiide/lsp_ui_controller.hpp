@@ -9,6 +9,7 @@
 
 namespace tuiide {
 
+/** Идентификатор ответа LSP: нормализованный путь и версия конкретного текста. */
 struct LspDocumentIdentity {
   std::filesystem::path path;
   int version{-1};
@@ -22,6 +23,7 @@ struct LspUiChanges {
   bool semantic_tokens_changed{};
 };
 
+/** Снимок всех готовых ответов clangd за один проход UI-цикла. */
 struct LspEventBatch {
   std::vector<LspCompletionItem> completions;
   std::vector<LspSignature> signatures;
@@ -43,12 +45,18 @@ struct LspEventBatch {
 
 enum class OutlineDecision { None, Clear, Request };
 
+/**
+ * Преобразует состояние LspClient в безопасные для интерфейса события.
+ * Отбрасывает ответы другого документа/версии и debounce-ит запрос Outline,
+ * чтобы старый clangd-ответ никогда не перерисовал новый текст.
+ */
 class LspUiController {
  public:
   void reset() noexcept;
   [[nodiscard]] auto observe(bool ready, std::uint64_t diagnostics_revision,
     std::uint64_t semantic_tokens_revision) noexcept -> LspUiChanges;
   [[nodiscard]] auto collect(LspClient& client) const -> LspEventBatch;
+  /** Оставляет в пачке только ответы, применимые к активному документу. */
   [[nodiscard]] static auto route(LspEventBatch events,
     const std::optional<LspDocumentIdentity>& active_document) -> LspEventBatch;
   [[nodiscard]] auto updateOutline(std::optional<LspDocumentIdentity> document,

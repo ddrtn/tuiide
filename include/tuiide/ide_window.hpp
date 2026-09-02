@@ -110,6 +110,13 @@ class CommandListView final : public finalcut::FListView {
   std::function<void(finalcut::FPoint)> context_handler_;
 };
 
+/**
+ * Главное окно IDE и точка сборки UI-контроллеров.
+ *
+ * Само окно отвечает за маршрутизацию команд, фокус и виджеты Final Cut;
+ * долговременное состояние документов, проекта, CMake, LSP, запуска и отладки
+ * остаётся в выделенных сервисах. Это правило важно при добавлении функций.
+ */
 class IdeWindow final : public finalcut::FDialog {
  public:
   explicit IdeWindow(std::filesystem::path root, std::filesystem::path log_file = {},
@@ -127,6 +134,7 @@ class IdeWindow final : public finalcut::FDialog {
   void resizeSidebar(int delta);
   void resizeLowerPanel(int delta);
   void resetPanelSizes();
+  /** Создаёт меню, подключает команды и проверяет уникальность mnemonics. */
   void setupMenus();
   void applyShortcutAccelerators(bool enabled = true);
   void queueMenuCommand(finalcut::FKey key);

@@ -9,6 +9,7 @@
 
 namespace tuiide {
 
+/** Снимок данных GdbClient, используемый для подавления лишних перерисовок. */
 struct DebugSnapshot {
   bool running{};
   bool stopped{};
@@ -37,6 +38,10 @@ struct BreakpointPanelRow {
   DebugBreakpoint breakpoint;
 };
 
+/**
+ * Преобразует сырые debug-данные в строки панелей Debug и Breakpoints и хранит
+ * сигнатуру последней отрисовки. UI не должен дублировать это состояние.
+ */
 class DebugUiController {
  public:
   [[nodiscard]] static auto capture(const GdbClient& client) -> DebugSnapshot;
