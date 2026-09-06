@@ -18,6 +18,7 @@ foreach(installed_file
     bin/tuiide
     share/man/man1/tuiide.1
     share/doc/tuiide/README.md
+    share/doc/tuiide/README.en.md
     share/doc/tuiide/LICENSE.finalcut
     share/bash-completion/completions/tuiide)
   if(NOT EXISTS "${STAGE_DIR}/${installed_file}")
