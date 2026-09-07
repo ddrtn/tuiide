@@ -2,6 +2,7 @@
 
 [Русский](README.md) | [English](README.en.md)
 
+
 **TUI IDE** — полноэкранная IDE для разработки на C и C++ в терминале Linux/amd64.
 Она написана на C++20 и использует [Final Cut](https://github.com/gansm/finalcut),
 CMake, clangd и GDB/MI. Исходный текст и интерфейс работают в UTF-8.
