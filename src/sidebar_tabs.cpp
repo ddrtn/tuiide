@@ -27,7 +27,7 @@ void SidebarTabs::setCurrentIndex(std::size_t index, bool focus_page) {
   }
   tabs_[current_].page->setVisible();
   if (isShown()) tabs_[current_].page->show();
-  redraw();
+  redrawCurrentPage();
   if (focus_page) {
     tabs_[current_].page->setFocus();
     finalcut::FWidget::setFocusWidget(tabs_[current_].page);
@@ -73,6 +73,13 @@ void SidebarTabs::layoutPages() {
   const auto height = getHeight();
   for (auto& tab : tabs_)
     if (tab.visible) tab.page->setGeometry({1, 2}, {width, height > 1 ? height - 1 : 1});
+}
+
+void SidebarTabs::redrawCurrentPage() {
+  redraw();
+  if (current_ < tabs_.size() && tabs_[current_].visible
+      && tabs_[current_].page->isShown())
+    tabs_[current_].page->redraw();
 }
 
 void SidebarTabs::draw() {

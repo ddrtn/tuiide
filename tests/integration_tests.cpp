@@ -1380,6 +1380,33 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
   };
 
   const bool started = visible("Open files");
+  if (std::getenv("TUIIDE_PANEL_REDRAW_ONLY") != nullptr) {
+    constexpr std::string_view f7{"\033[18~"};
+    screen.clear(); send(f7);
+    const bool build_streamed = waitFor(pump, [&] {
+      return screen.find("Built target window_help") != std::string::npos;
+    }, 45s);
+    const bool build_finished = waitFor(pump, [&] {
+      return screen.find("Build finished with exit code 0") != std::string::npos;
+    }, 10s);
+    screen.clear(); send("\021");
+    int panel_status{};
+    const auto exited = waitFor(pump, [&] {
+      return ::waitpid(child, &panel_status, WNOHANG) == child;
+    }, 8s);
+    if (!exited) {
+      ::kill(child, SIGKILL);
+      (void)::waitpid(child, &panel_status, 0);
+    }
+    ::close(master);
+    const bool success = started && build_streamed && build_finished && exited
+      && WIFEXITED(panel_status) && WEXITSTATUS(panel_status) == 0;
+    if (!success)
+      std::cerr << "Panel redraw PTY: started=" << started
+        << " streamed=" << build_streamed << " finished=" << build_finished
+        << " exited=" << exited << " status=" << panel_status << '\n';
+    return success;
+  }
   if (std::getenv("TUIIDE_MENU_MNEMONICS_ONLY") != nullptr) {
     const auto openMnemonicMenu = [&](std::string_view key, std::string_view marker) {
       screen.clear(); send(key);

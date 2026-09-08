@@ -195,6 +195,11 @@ if(BUILD_TESTING)
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_window_help_tests PROPERTIES
       ENVIRONMENT TUIIDE_WINDOW_HELP_ONLY=1 TIMEOUT 90 RUN_SERIAL TRUE LABELS integration)
+    add_test(NAME tuiide_panel_redraw_tests COMMAND tuiide_integration_tests
+      $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
+    set_tests_properties(tuiide_panel_redraw_tests PROPERTIES
+      ENVIRONMENT "TUIIDE_WINDOW_HELP_ONLY=1;TUIIDE_PANEL_REDRAW_ONLY=1"
+      TIMEOUT 90 RUN_SERIAL TRUE LABELS integration)
     add_test(NAME tuiide_menu_mnemonic_tests COMMAND tuiide_integration_tests
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_menu_mnemonic_tests PROPERTIES

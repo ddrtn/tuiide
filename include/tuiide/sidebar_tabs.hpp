@@ -25,6 +25,8 @@ class SidebarTabs final : public finalcut::FWidget {
   [[nodiscard]] auto currentTitle() const -> std::string;
   void selectRelative(int direction, bool focus_page = false);
   void layoutPages();
+  /** Перерисовывает строку вкладок и только текущую видимую страницу. */
+  void redrawCurrentPage();
 
  protected:
   void draw() override;

@@ -988,11 +988,12 @@ void IdeWindow::resetPanelSizes() {
 
 void IdeWindow::refreshFiles() {
   files_.clear(); file_paths_.clear(); project_item_paths_.clear();
-  if (root_.empty()) { files_.redraw(); return; }
+  if (root_.empty()) { sidebar_tabs_.redrawCurrentPage(); return; }
   ProjectTreeSnapshot snapshot;
   std::string scan_error;
   if (!scanProjectTree(root_, build_dir_, project_filter_, snapshot, scan_error)) {
-    publishEvent(EventSource::Project, EventSeverity::Error, "Project tree: " + scan_error + "\n"); files_.redraw(); return;
+    publishEvent(EventSource::Project, EventSeverity::Error, "Project tree: " + scan_error + "\n");
+    sidebar_tabs_.redrawCurrentPage(); return;
   }
   file_paths_ = std::move(snapshot.editable_files);
   ProjectNode tree{root_, false, {}};
@@ -1032,7 +1033,7 @@ void IdeWindow::refreshFiles() {
   project_menu_.clear_filter.setEnable(!project_filter_.empty());
   if (snapshot.skipped_errors != 0)
     publishEvent(EventSource::Project, EventSeverity::Warning, "Project tree: skipped " + std::to_string(snapshot.skipped_errors) + " inaccessible entries\n");
-  files_.redraw();
+  sidebar_tabs_.redrawCurrentPage();
 }
 
 void IdeWindow::openSelected() {
@@ -1225,14 +1226,14 @@ void IdeWindow::refreshTabs() {
     tabs_.insert(finalcut::FString(label));
   }
   if (!documents_.empty() && active_document_ < documents_.size()) tabs_.setCurrentItem(active_document_ + 1);
-  tabs_.redraw();
+  sidebar_tabs_.redrawCurrentPage();
 }
 
 void IdeWindow::refreshDebugPanel() {
   if (!debug_ui_.updateDebug(DebugUiController::capture(gdb_))) return;
   debug_.clear();
   for (const auto& row : debug_ui_.debugRows()) debug_.insert(finalcut::FString(row.label));
-  debug_.redraw();
+  sidebar_tabs_.redrawCurrentPage();
 }
 
 void IdeWindow::refreshBreakpointsPanel() {
@@ -1243,7 +1244,7 @@ void IdeWindow::refreshBreakpointsPanel() {
   for (const auto& row : debug_ui_.breakpointRows()) breakpoints_.insert(finalcut::FString(row.label));
   if (!debug_ui_.breakpointRows().empty())
     breakpoints_.setCurrentItem(std::clamp<std::size_t>(current, 1, debug_ui_.breakpointRows().size()));
-  breakpoints_.redraw();
+  sidebar_tabs_.redrawCurrentPage();
 }
 
 void IdeWindow::openSelectedBreakpoint() {
@@ -1327,7 +1328,7 @@ void IdeWindow::refreshOutline(std::optional<LspDocumentSymbols> response) {
         outline_.insert(finalcut::FString(label)); outline_positions_.push_back(symbol.position);
       }
       if (outline_positions_.empty()) outline_.insert("No symbols in this document");
-      outline_.redraw();
+      sidebar_tabs_.redrawCurrentPage();
     }
   }
   const auto decision = lsp_ui_.updateOutline(active, lsp_.ready(), maintenance_ticks_);
@@ -1335,9 +1336,10 @@ void IdeWindow::refreshOutline(std::optional<LspDocumentSymbols> response) {
     outline_.clear();
     outline_.insert(active ? "Waiting for outline..." : "Open a C/C++ file for outline");
     outline_positions_.clear();
-    outline_.redraw();
+    sidebar_tabs_.redrawCurrentPage();
   } else if (decision == OutlineDecision::Request && document_) {
-    outline_.clear(); outline_.insert("Loading outline..."); outline_positions_.clear(); outline_.redraw();
+    outline_.clear(); outline_.insert("Loading outline..."); outline_positions_.clear();
+    sidebar_tabs_.redrawCurrentPage();
     lsp_.requestDocumentSymbols(*document_);
   }
 }
@@ -2426,7 +2428,7 @@ void IdeWindow::refreshProblemsPanel() {
     problem_rows_.push_back({diagnostic.path, diagnostic.position, true, diagnostic.message});
   }
   if (problem_rows_.empty()) problems_.insert(problems_filter_.empty() ? "No problems" : "No matching problems");
-  problems_.redraw();
+  lower_tabs_.redrawCurrentPage();
 }
 
 void IdeWindow::openSelectedProblem() {
@@ -2998,7 +3000,8 @@ void IdeWindow::publishEvent(EventSource source, EventSeverity severity, std::st
   event_log_.publish(channel, source, severity, std::move(message));
   auto& view = channel == EventChannel::Build ? build_output_ : output_;
   view.setText(finalcut::FString(event_log_.text(channel)));
-  view.scrollToX(0); view.scrollToEnd(); view.redraw();
+  view.scrollToX(0); view.scrollToEnd();
+  lower_tabs_.redrawCurrentPage();
 }
 
 void IdeWindow::showNotification(std::string message, NotificationKind kind,
@@ -3695,7 +3698,10 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
   auto run_poll = run_session_.poll();
   for (auto& chunk : run_poll.output)
     publishEvent(EventSource::Run, EventSeverity::Information, std::move(chunk));
-  for (auto& chunk : run_poll.console_output) console_.append(chunk);
+  for (auto& chunk : run_poll.console_output) {
+    console_.append(chunk);
+    lower_tabs_.redrawCurrentPage();
+  }
   if (run_poll.completion) {
     const auto code = *run_poll.completion;
     console_.setControlEnabled(false);
