@@ -216,6 +216,11 @@ if(BUILD_TESTING)
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_lsp_dialog_tests PROPERTIES
       ENVIRONMENT TUIIDE_LSP_DIALOGS_ONLY=1 TIMEOUT 150 RUN_SERIAL TRUE LABELS integration)
+    add_test(NAME tuiide_lsp_protocol_tests COMMAND tuiide_integration_tests
+      $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
+    set_tests_properties(tuiide_lsp_protocol_tests PROPERTIES
+      ENVIRONMENT TUIIDE_LSP_MATRIX_ONLY=1 TIMEOUT 60 RUN_SERIAL TRUE
+      LABELS integration)
     add_test(NAME tuiide_debug_dialog_tests COMMAND tuiide_integration_tests
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_debug_dialog_tests PROPERTIES

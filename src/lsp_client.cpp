@@ -1,12 +1,36 @@
 #include "tuiide/lsp_client.hpp"
 
+#include "tuiide/json_utils.hpp"
+
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <iterator>
 #include <sstream>
 
 namespace tuiide {
 using json = nlohmann::json;
+
+namespace {
+
+auto contentLength(std::string_view header) -> std::optional<std::size_t> {
+  const auto begin = header.find("Content-Length:");
+  if (begin == std::string_view::npos) return std::nullopt;
+  auto value = header.substr(begin + 15);
+  const auto first = value.find_first_not_of(" \t");
+  if (first == std::string_view::npos) return std::nullopt;
+  value.remove_prefix(first);
+  const auto end = value.find_first_of("\r\n \t");
+  value = value.substr(0, end);
+  std::size_t result{};
+  const auto parsed = std::from_chars(value.data(), value.data() + value.size(),
+    result);
+  if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
+    return std::nullopt;
+  return result;
+}
+
+}  // namespace
 
 auto lspLanguageId(const std::filesystem::path& path) -> std::string {
   return path.extension() == ".c" ? "c" : "cpp";
@@ -87,8 +111,10 @@ auto parseWorkspaceEdit(const json& value) -> WorkspaceEdit {
       if (!range.contains("start") || !range.contains("end")) continue;
       const auto& start = range["start"];
       const auto& end = range["end"];
-      file.edits.push_back({{start.value("line", 0U), start.value("character", 0U)},
-        {end.value("line", 0U), end.value("character", 0U)}, edit.value("newText", std::string{})});
+      file.edits.push_back({{jsonValueOr(start, "line", 0U),
+          jsonValueOr(start, "character", 0U)},
+        {jsonValueOr(end, "line", 0U), jsonValueOr(end, "character", 0U)},
+        jsonValueOr(edit, "newText", std::string{})});
     }
     if (!file.edits.empty()) workspace.files.push_back(std::move(file));
   };
@@ -104,24 +130,28 @@ auto parseWorkspaceEdit(const json& value) -> WorkspaceEdit {
         std::optional<int> version;
         if (text_document.contains("version") && text_document["version"].is_number_integer())
           version = text_document["version"].get<int>();
-        addEdits(lspPathFromFileUri(text_document.value("uri", std::string{})), change["edits"], version);
+        addEdits(lspPathFromFileUri(jsonValueOr(text_document, "uri",
+          std::string{})), change["edits"], version);
         continue;
       }
-      const auto kind = change.value("kind", std::string{});
-      const auto options = change.value("options", json::object());
+      const auto kind = jsonValueOr(change, "kind", std::string{});
+      const auto options = jsonValueOr(change, "options", json::object());
       if (kind == "create") {
         workspace.file_operations.push_back({WorkspaceFileOperationKind::Create,
-          lspPathFromFileUri(change.value("uri", std::string{})), {},
-          options.value("overwrite", false), options.value("ignoreIfExists", false), false, false});
+          lspPathFromFileUri(jsonValueOr(change, "uri", std::string{})), {},
+          jsonValueOr(options, "overwrite", false),
+          jsonValueOr(options, "ignoreIfExists", false), false, false});
       } else if (kind == "rename") {
         workspace.file_operations.push_back({WorkspaceFileOperationKind::Rename,
-          lspPathFromFileUri(change.value("oldUri", std::string{})),
-          lspPathFromFileUri(change.value("newUri", std::string{})),
-          options.value("overwrite", false), options.value("ignoreIfExists", false), false, false});
+          lspPathFromFileUri(jsonValueOr(change, "oldUri", std::string{})),
+          lspPathFromFileUri(jsonValueOr(change, "newUri", std::string{})),
+          jsonValueOr(options, "overwrite", false),
+          jsonValueOr(options, "ignoreIfExists", false), false, false});
       } else if (kind == "delete") {
         workspace.file_operations.push_back({WorkspaceFileOperationKind::Delete,
-          lspPathFromFileUri(change.value("uri", std::string{})), {}, false, false,
-          options.value("recursive", false), options.value("ignoreIfNotExists", false)});
+          lspPathFromFileUri(jsonValueOr(change, "uri", std::string{})), {},
+          false, false, jsonValueOr(options, "recursive", false),
+          jsonValueOr(options, "ignoreIfNotExists", false)});
       }
     }
   }
@@ -131,17 +161,19 @@ auto parseWorkspaceEdit(const json& value) -> WorkspaceEdit {
 namespace {
 auto parseNavigationItem(const json& item, std::string relation = {}) -> std::optional<LspNavigationItem> {
   if (!item.is_object()) return std::nullopt;
-  auto location = item.value("location", json{});
-  const auto uri = location.is_object() ? location.value("uri", std::string{})
-    : item.value("uri", std::string{});
-  auto range = location.is_object() ? location.value("range", json{})
-    : item.value("selectionRange", item.value("range", json{}));
+  auto location = jsonValueOr(item, "location", json{});
+  const auto uri = location.is_object()
+    ? jsonValueOr(location, "uri", std::string{})
+    : jsonValueOr(item, "uri", std::string{});
+  auto range = location.is_object() ? jsonValueOr(location, "range", json{})
+    : jsonValueOr(item, "selectionRange", jsonValueOr(item, "range", json{}));
   if (uri.empty() || !range.is_object() || !range.contains("start")) return std::nullopt;
   const auto& start = range["start"];
-  return LspNavigationItem{item.value("name", std::string{}),
-    item.value("detail", item.value("containerName", std::string{})), std::move(relation),
-    item.value("kind", 0), lspPathFromFileUri(uri),
-    {start.value("line", 0U), start.value("character", 0U)}};
+  return LspNavigationItem{jsonValueOr(item, "name", std::string{}),
+    jsonValueOr(item, "detail", jsonValueOr(item, "containerName",
+      std::string{})), std::move(relation), jsonValueOr(item, "kind", 0),
+    lspPathFromFileUri(uri), {jsonValueOr(start, "line", 0U),
+      jsonValueOr(start, "character", 0U)}};
 }
 }  // namespace
 
@@ -166,23 +198,26 @@ auto parseDocumentSymbols(const json& result, const std::filesystem::path& reque
   if (!result.is_array()) return symbols;
   const auto append = [&](const auto& self, const json& item, std::size_t depth) -> void {
     if (!item.is_object()) return;
-    const auto name = item.value("name", std::string{});
-    auto range = item.value("selectionRange", json{});
-    if (!range.is_object()) range = item.value("range", json{});
+    const auto name = jsonValueOr(item, "name", std::string{});
+    auto range = jsonValueOr(item, "selectionRange", json{});
+    if (!range.is_object()) range = jsonValueOr(item, "range", json{});
     if (name.empty() || !range.contains("start")) return;
     const auto& start = range["start"];
-    symbols.push_back({name, item.value("detail", item.value("containerName", std::string{})),
-      item.value("kind", 0), {start.value("line", 0U), start.value("character", 0U)}, depth});
+    symbols.push_back({name, jsonValueOr(item, "detail",
+      jsonValueOr(item, "containerName", std::string{})),
+      jsonValueOr(item, "kind", 0), {jsonValueOr(start, "line", 0U),
+        jsonValueOr(start, "character", 0U)}, depth});
     if (item.contains("children") && item["children"].is_array())
       for (const auto& child : item["children"]) self(self, child, depth + 1);
   };
   for (const auto& item : result) {
     if (item.contains("location")) {
       const auto& location = item["location"];
-      const auto path = lspPathFromFileUri(location.value("uri", std::string{}));
+      const auto path = lspPathFromFileUri(jsonValueOr(location, "uri",
+        std::string{}));
       if (!path.empty() && normalizePath(path) != normalizePath(requested_path)) continue;
       auto normalized = item;
-      normalized["range"] = location.value("range", json{});
+      normalized["range"] = jsonValueOr(location, "range", json{});
       append(append, normalized, 0);
     } else append(append, item, 0);
   }
@@ -419,14 +454,23 @@ void LspClient::poll() {
   for (;;) {
     const auto header_end = receive_buffer_.find("\r\n\r\n");
     if (header_end == std::string::npos) break;
-    const auto length_at = receive_buffer_.find("Content-Length:");
-    if (length_at == std::string::npos || length_at > header_end) { receive_buffer_.erase(0, header_end + 4); continue; }
-    const auto number_at = length_at + 15;
-    const auto length = static_cast<std::size_t>(std::stoul(receive_buffer_.substr(number_at, header_end - number_at)));
-    if (receive_buffer_.size() < header_end + 4 + length) break;
-    const auto payload = receive_buffer_.substr(header_end + 4, length);
-    receive_buffer_.erase(0, header_end + 4 + length);
-    try { handle(json::parse(payload)); } catch (const json::exception&) {}
+    const auto length = contentLength(
+      std::string_view(receive_buffer_).substr(0, header_end));
+    if (!length) {
+      receive_buffer_.erase(0, header_end + 4);
+      feedback_.push_back({LspOperation::Server, true,
+        "clangd sent an invalid Content-Length header"});
+      continue;
+    }
+    if (receive_buffer_.size() < header_end + 4 + *length) break;
+    const auto payload = receive_buffer_.substr(header_end + 4, *length);
+    receive_buffer_.erase(0, header_end + 4 + *length);
+    try {
+      handle(json::parse(payload));
+    } catch (const std::exception& exception) {
+      feedback_.push_back({LspOperation::Server, true,
+        "clangd sent an invalid response: " + std::string(exception.what())});
+    }
   }
   if (process_started_ && !process_.running() && process_.exitCode().has_value() && !exit_reported_) {
     exit_reported_ = true; initialized_ = false;
@@ -533,13 +577,14 @@ void LspClient::queueSemanticTokens(const std::filesystem::path& path) {
 }
 
 void LspClient::handle(const json& message) {
-  if (message.value("method", std::string{}) == "workspace/applyEdit"
+  if (jsonValueOr(message, "method", std::string{}) == "workspace/applyEdit"
       && message.contains("id")
       && (message["id"].is_number_integer() || message["id"].is_string())) {
-    const auto params = message.value("params", json::object());
-    auto edit = parseWorkspaceEdit(params.value("edit", json{}));
+    const auto params = jsonValueOr(message, "params", json::object());
+    auto edit = parseWorkspaceEdit(jsonValueOr(params, "edit", json{}));
     workspace_apply_requests_.push_back({message["id"],
-      params.value("label", std::string("Language server edit")), std::move(edit)});
+      jsonValueOr(params, "label", std::string("Language server edit")),
+      std::move(edit)});
     return;
   }
   if (message.contains("id") && message["id"].is_number_integer()) {
@@ -583,9 +628,11 @@ void LspClient::handle(const json& message) {
         return;
       }
       if (message["result"].contains("capabilities")) {
-        const auto& provider = message["result"]["capabilities"].value("semanticTokensProvider", json::object());
+        const auto provider = jsonValueOr(message["result"]["capabilities"],
+          "semanticTokensProvider", json::object());
         if (provider.is_object() && provider.contains("legend"))
-          semantic_token_types_ = provider["legend"].value("tokenTypes", std::vector<std::string>{});
+          semantic_token_types_ = jsonValueOr(provider["legend"], "tokenTypes",
+            std::vector<std::string>{});
       }
       initialized_ = true;
       notify("initialized", json::object());
@@ -622,7 +669,8 @@ void LspClient::handle(const json& message) {
       semantic_requests_.erase(semantic);
       if (open_documents_.contains(path) && open_documents_.at(path).version == request_state.version
           && message.contains("result") && message["result"].is_object()) {
-        const auto data = message["result"].value("data", std::vector<std::uint32_t>{});
+        const auto data = jsonValueOr(message["result"], "data",
+          std::vector<std::uint32_t>{});
         auto decoded = decodeSemanticTokens(path, data, semantic_token_types_);
         semantic_tokens_.erase(std::remove_if(semantic_tokens_.begin(), semantic_tokens_.end(), [&path](const auto& token) {
           return token.path == path;
@@ -632,55 +680,68 @@ void LspClient::handle(const json& message) {
       } else semantic_dirty_.insert(path);
       queueSemanticTokens(path);
     } else if (id == completion_id_) {
-      const auto result = message.value("result", json{});
+      const auto result = jsonValueOr(message, "result", json{});
       const auto items = result.is_array() ? result
-        : (result.is_object() ? result.value("items", json::array()) : json::array());
+        : (result.is_object() ? jsonValueOr(result, "items", json::array())
+          : json::array());
       for (const auto& item : items) {
         if (completions_.size() >= 100) break;
         if (!item.is_object()) continue;
         LspCompletionItem completion;
-        completion.label = item.value("label", std::string{});
-        completion.insertion = item.value("insertText", completion.label);
-        completion.detail = item.value("detail", std::string{});
-        completion.kind = item.value("kind", 0);
+        completion.label = jsonValueOr(item, "label", std::string{});
+        completion.insertion = jsonValueOr(item, "insertText",
+          completion.label);
+        completion.detail = jsonValueOr(item, "detail", std::string{});
+        completion.kind = jsonValueOr(item, "kind", 0);
         if (item.contains("textEdit") && item["textEdit"].is_object()) {
-          completion.insertion = item["textEdit"].value("newText", completion.insertion);
+          completion.insertion = jsonValueOr(item["textEdit"], "newText",
+            completion.insertion);
           const auto& text_edit = item["textEdit"];
-          const auto range = text_edit.contains("range") ? text_edit["range"] : text_edit.value("replace", json{});
+          const auto range = text_edit.contains("range") ? text_edit["range"]
+            : jsonValueOr(text_edit, "replace", json{});
           if (range.is_object() && range.contains("start") && range.contains("end")) {
             const auto& start = range["start"];
             const auto& end = range["end"];
-            completion.edit = LspTextEdit{{start.value("line", 0U), start.value("character", 0U)},
-              {end.value("line", 0U), end.value("character", 0U)}, completion.insertion};
+            completion.edit = LspTextEdit{{jsonValueOr(start, "line", 0U),
+              jsonValueOr(start, "character", 0U)},
+              {jsonValueOr(end, "line", 0U),
+                jsonValueOr(end, "character", 0U)}, completion.insertion};
           }
         }
         if (item.contains("documentation")) {
           const auto& documentation = item["documentation"];
-          completion.documentation = documentation.is_string() ? documentation.get<std::string>()
-            : documentation.value("value", std::string{});
+          completion.documentation = documentation.is_string()
+            ? documentation.get<std::string>()
+            : jsonValueOr(documentation, "value", std::string{});
         }
         completion.source_path = completion_path_; completion.source_version = completion_version_;
         if (!completion.label.empty()) completions_.push_back(std::move(completion));
       }
       if (completions_.empty()) feedback_.push_back({LspOperation::Completion, false, "no completion items"});
     } else if (id == signature_id_) {
-      const auto result = message.value("result", json{});
-      const auto items = result.is_object() ? result.value("signatures", json::array()) : json::array();
-      const auto active_signature = result.is_object() ? result.value("activeSignature", 0U) : 0U;
-      const auto active_parameter = result.is_object() ? result.value("activeParameter", 0U) : 0U;
+      const auto result = jsonValueOr(message, "result", json{});
+      const auto items = result.is_object()
+        ? jsonValueOr(result, "signatures", json::array()) : json::array();
+      const auto active_signature = result.is_object()
+        ? jsonValueOr(result, "activeSignature", 0U) : 0U;
+      const auto active_parameter = result.is_object()
+        ? jsonValueOr(result, "activeParameter", 0U) : 0U;
       for (std::size_t index = 0; index < items.size(); ++index) {
         const auto& item = items[index];
         if (!item.is_object()) continue;
         LspSignature signature;
-        signature.label = item.value("label", std::string{});
+        signature.label = jsonValueOr(item, "label", std::string{});
         if (item.contains("documentation")) {
           const auto& documentation = item["documentation"];
-          signature.documentation = documentation.is_string() ? documentation.get<std::string>()
-            : documentation.value("value", std::string{});
+          signature.documentation = documentation.is_string()
+            ? documentation.get<std::string>()
+            : jsonValueOr(documentation, "value", std::string{});
         }
         signature.active = index == active_signature;
-        signature.active_parameter = signature.active ? active_parameter : item.value("activeParameter", 0U);
-        for (const auto& parameter : item.value("parameters", json::array())) {
+        signature.active_parameter = signature.active ? active_parameter
+          : jsonValueOr(item, "activeParameter", 0U);
+        for (const auto& parameter : jsonValueOr(item, "parameters",
+            json::array())) {
           if (!parameter.is_object() || !parameter.contains("label")) continue;
           const auto& label = parameter["label"];
           if (label.is_string()) signature.parameters.push_back(label.get<std::string>());
@@ -695,44 +756,54 @@ void LspClient::handle(const json& message) {
       }
       if (signatures_.empty()) feedback_.push_back({LspOperation::SignatureHelp, false, "no signature information"});
     } else if (id == hover_id_) {
-      const auto result = message.value("result", json{});
-      const auto contents = result.is_object() ? result.value("contents", json{}) : json{};
+      const auto result = jsonValueOr(message, "result", json{});
+      const auto contents = result.is_object()
+        ? jsonValueOr(result, "contents", json{}) : json{};
       if (contents.is_string()) hover_ = contents.get<std::string>();
-      else if (contents.is_object()) hover_ = contents.value("value", std::string{});
-      else if (contents.is_array()) for (const auto& part : contents) hover_ += part.is_string() ? part.get<std::string>() : part.value("value", std::string{});
+      else if (contents.is_object())
+        hover_ = jsonValueOr(contents, "value", std::string{});
+      else if (contents.is_array())
+        for (const auto& part : contents)
+          hover_ += part.is_string() ? part.get<std::string>()
+            : jsonValueOr(part, "value", std::string{});
       if (hover_.empty()) feedback_.push_back({LspOperation::Hover, false, "no symbol information"});
     } else if (id == definition_id_ || id == references_id_) {
       auto& destination = id == definition_id_ ? definitions_ : references_;
       destination.clear();
-      const auto result = message.value("result", json{});
+      const auto result = jsonValueOr(message, "result", json{});
       auto items = result.is_array() ? result : (result.is_object() ? json::array({result}) : json::array());
       for (const auto& item : items) {
-        const auto location_uri = item.value("uri", item.value("targetUri", std::string{}));
-        const auto range = item.contains("range") ? item["range"] : item.value("targetSelectionRange", json{});
+        const auto location_uri = jsonValueOr(item, "uri",
+          jsonValueOr(item, "targetUri", std::string{}));
+        const auto range = item.contains("range") ? item["range"]
+          : jsonValueOr(item, "targetSelectionRange", json{});
         if (location_uri.empty() || !range.contains("start")) continue;
         const auto& start = range["start"];
-        destination.push_back({pathFromUri(location_uri), {start.value("line", 0U), start.value("character", 0U)}});
+        destination.push_back({pathFromUri(location_uri),
+          {jsonValueOr(start, "line", 0U),
+            jsonValueOr(start, "character", 0U)}});
       }
       if (destination.empty()) feedback_.push_back({id == definition_id_ ? LspOperation::Definition : LspOperation::References,
         false, id == definition_id_ ? "definition not found" : "no references found"});
     } else if (id == document_symbols_id_) {
-      const auto result = message.value("result", json::array());
+      const auto result = jsonValueOr(message, "result", json::array());
       document_symbols_ = LspDocumentSymbols{document_symbols_path_, document_symbols_version_,
         parseDocumentSymbols(result, document_symbols_path_)};
     } else if (id == workspace_symbols_id_) {
-      for (const auto& item : message.value("result", json::array())) {
+      for (const auto& item : jsonValueOr(message, "result", json::array())) {
         if (workspace_symbols_.size() >= 200) break;
         if (auto symbol = parseNavigationItem(item)) workspace_symbols_.push_back(std::move(*symbol));
       }
       if (workspace_symbols_.empty())
         feedback_.push_back({LspOperation::WorkspaceSymbols, false, "no matching workspace symbols"});
     } else if (id == call_prepare_id_) {
-      const auto result = message.value("result", json::array());
+      const auto result = jsonValueOr(message, "result", json::array());
       if (!result.is_array() || result.empty() || !result.front().is_object()) {
         feedback_.push_back({LspOperation::CallHierarchy, false, "call hierarchy is unavailable at the cursor"});
       } else {
         const auto item = result.front();
-        call_hierarchy_.root = item.value("name", std::string("symbol")); call_pending_ = 2;
+        call_hierarchy_.root = jsonValueOr(item, "name",
+          std::string("symbol")); call_pending_ = 2;
         call_incoming_id_ = request("callHierarchy/incomingCalls", {{"item", item}});
         call_outgoing_id_ = request("callHierarchy/outgoingCalls", {{"item", item}});
         if (response_context) {
@@ -742,8 +813,8 @@ void LspClient::handle(const json& message) {
       }
     } else if (id == call_incoming_id_ || id == call_outgoing_id_) {
       const bool incoming = id == call_incoming_id_;
-      for (const auto& call : message.value("result", json::array())) {
-        const auto item = call.value(incoming ? "from" : "to", json{});
+      for (const auto& call : jsonValueOr(message, "result", json::array())) {
+        const auto item = jsonValueOr(call, incoming ? "from" : "to", json{});
         if (auto entry = parseNavigationItem(item, incoming ? "incoming" : "outgoing"))
           call_hierarchy_.items.push_back(std::move(*entry));
       }
@@ -753,12 +824,13 @@ void LspClient::handle(const json& message) {
           feedback_.push_back({LspOperation::CallHierarchy, false, "no incoming or outgoing calls"});
       }
     } else if (id == type_prepare_id_) {
-      const auto result = message.value("result", json::array());
+      const auto result = jsonValueOr(message, "result", json::array());
       if (!result.is_array() || result.empty() || !result.front().is_object()) {
         feedback_.push_back({LspOperation::TypeHierarchy, false, "type hierarchy is unavailable at the cursor"});
       } else {
         const auto item = result.front();
-        type_hierarchy_.root = item.value("name", std::string("type")); type_pending_ = 2;
+        type_hierarchy_.root = jsonValueOr(item, "name",
+          std::string("type")); type_pending_ = 2;
         type_supertypes_id_ = request("typeHierarchy/supertypes", {{"item", item}});
         type_subtypes_id_ = request("typeHierarchy/subtypes", {{"item", item}});
         if (response_context) {
@@ -768,7 +840,7 @@ void LspClient::handle(const json& message) {
       }
     } else if (id == type_supertypes_id_ || id == type_subtypes_id_) {
       const bool supertype = id == type_supertypes_id_;
-      for (const auto& item : message.value("result", json::array()))
+      for (const auto& item : jsonValueOr(message, "result", json::array()))
         if (auto entry = parseNavigationItem(item, supertype ? "supertype" : "subtype"))
           type_hierarchy_.items.push_back(std::move(*entry));
       if (type_pending_ > 0 && --type_pending_ == 0) {
@@ -778,40 +850,59 @@ void LspClient::handle(const json& message) {
       }
     } else if (id == code_actions_id_) {
       const bool automatic = organize_includes_request_;
-      for (const auto& item : message.value("result", json::array())) {
+      for (const auto& item : jsonValueOr(message, "result", json::array())) {
         if (!item.is_object()) continue;
-        auto edit = parseWorkspaceEdit(item.value("edit", json{}));
+        auto edit = parseWorkspaceEdit(jsonValueOr(item, "edit", json{}));
         if (edit.files.empty() && edit.file_operations.empty()) continue;
-        code_actions_.push_back({item.value("title", std::string("clangd action")),
-          item.value("kind", std::string{}), std::move(edit), code_actions_path_, code_actions_version_, automatic});
+        code_actions_.push_back({jsonValueOr(item, "title",
+          std::string("clangd action")), jsonValueOr(item, "kind",
+          std::string{}), std::move(edit), code_actions_path_,
+          code_actions_version_, automatic});
       }
       if (code_actions_.empty()) feedback_.push_back({automatic ? LspOperation::OrganizeIncludes
         : LspOperation::CodeActions, false, automatic ? "no include changes available" : "no applicable code actions"});
     } else if (id == switch_source_header_id_) {
-      const auto response = message.value("result", json{});
+      const auto response = jsonValueOr(message, "result", json{});
       const auto result = response.is_string() ? response.get<std::string>() : std::string{};
       if (result.empty()) feedback_.push_back({LspOperation::SwitchSourceHeader, false, "counterpart not found"});
       else switched_source_header_ = pathFromUri(result);
     } else if (id == rename_id_) {
-      auto workspace = parseWorkspaceEdit(message.value("result", json{}));
+      auto workspace = parseWorkspaceEdit(jsonValueOr(message, "result", json{}));
       if (workspace.files.empty() && workspace.file_operations.empty())
         feedback_.push_back({LspOperation::Rename, false, "rename produced no edits"});
       else rename_edit_ = std::move(workspace);
     }
     return;
   }
-  if (message.value("method", std::string{}) == "textDocument/publishDiagnostics") {
-    const auto diagnostic_path = pathFromUri(message["params"].value("uri", std::string{}));
-    if (message["params"].contains("version") && message["params"]["version"].is_number_integer()
+  if (jsonValueOr(message, "method", std::string{})
+      == "textDocument/publishDiagnostics") {
+    const auto& parameters = jsonFieldOrNull(message, "params");
+    if (!parameters.is_object()) {
+      feedback_.push_back({LspOperation::Server, true,
+        "clangd sent diagnostics without an object params field"});
+      return;
+    }
+    const auto diagnostic_path = pathFromUri(jsonValueOr(parameters, "uri",
+      std::string{}));
+    if (parameters.contains("version") && parameters["version"].is_number_integer()
         && open_documents_.contains(diagnostic_path)
-        && open_documents_.at(diagnostic_path).version != message["params"]["version"].get<int>()) return;
-    diagnostic_payloads_[diagnostic_path] = message["params"].value("diagnostics", json::array());
+        && open_documents_.at(diagnostic_path).version
+          != parameters["version"].get<int>()) return;
+    const auto payload = jsonValueOr(parameters, "diagnostics", json::array());
+    diagnostic_payloads_[diagnostic_path] = payload;
     diagnostics_.erase(std::remove_if(diagnostics_.begin(), diagnostics_.end(), [&diagnostic_path](const Diagnostic& diagnostic) {
       return diagnostic.path == diagnostic_path;
     }), diagnostics_.end());
-    for (const auto& item : message["params"].value("diagnostics", json::array())) {
-      const auto& start = item["range"]["start"];
-      diagnostics_.push_back({diagnostic_path, {start.value("line", 0U), start.value("character", 0U)}, item.value("severity", 0), item.value("message", std::string{})});
+    for (const auto& item : payload) {
+      if (!item.is_object()) continue;
+      const auto range = jsonValueOr(item, "range", json{});
+      const auto start = jsonValueOr(range, "start", json{});
+      if (!start.is_object()) continue;
+      diagnostics_.push_back({diagnostic_path,
+        {jsonValueOr(start, "line", 0U),
+          jsonValueOr(start, "character", 0U)},
+        jsonValueOr(item, "severity", 0),
+        jsonValueOr(item, "message", std::string{})});
     }
     ++diagnostics_revision_;
   }

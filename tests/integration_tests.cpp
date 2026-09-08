@@ -82,12 +82,17 @@ void exerciseLspOutcomeMatrix(const std::filesystem::path& fake_server,
   std::string error;
   expect(document.load(project / "main.cpp", error), "LSP response matrix document loads");
   tuiide::LspClient lsp;
-  expect(lsp.start(project, {}, {{"PATH", fake_bin.string()}}),
+  expect(lsp.start(project, {}, {{"PATH", fake_bin.string()},
+      {"TUIIDE_FAKE_NULLABLE_DIAGNOSTICS", "1"}}),
     "deterministic LSP response endpoint starts");
   lsp.open(document);
   lsp.setActiveDocument(&document);
   expect(waitFor([&] { lsp.poll(); }, [&] { return lsp.ready(); }),
     "deterministic LSP response endpoint initializes");
+  expect(waitFor([&] { lsp.poll(); }, [&] { return !lsp.diagnostics().empty(); })
+      && lsp.diagnostics().front().severity == 0
+      && lsp.diagnostics().front().message.empty(),
+    "nullable diagnostic fields use safe defaults without dropping the message");
 
   const auto expectFeedback = [&](tuiide::LspOperation operation, bool is_error) {
     std::vector<tuiide::LspFeedback> feedback;
@@ -3010,6 +3015,10 @@ int main(int argc, char** argv) {
 
   expect(argc >= 3, "integration test receives the deterministic LSP endpoint");
   exerciseLspOutcomeMatrix(std::filesystem::absolute(argv[2]), project.path);
+  if (std::getenv("TUIIDE_LSP_MATRIX_ONLY") != nullptr) {
+    std::cout << "LSP response matrix passed\n";
+    return 0;
+  }
 
   if (std::getenv("TUIIDE_PTY_ONLY") != nullptr) {
     expect(exercisePty(std::filesystem::absolute(argv[1]), project.path, true),

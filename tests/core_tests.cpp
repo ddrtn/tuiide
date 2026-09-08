@@ -21,6 +21,7 @@
 #include "tuiide/debug_ui_controller.hpp"
 #include "tuiide/gdb_client.hpp"
 #include "tuiide/gdb_mi.hpp"
+#include "tuiide/json_utils.hpp"
 #include "tuiide/lsp_client.hpp"
 #include "tuiide/lsp_ui_controller.hpp"
 #include "tuiide/launch_configuration.hpp"
@@ -692,6 +693,16 @@ int main() {
       && tuiide::lspResponseError({{"error", "broken"}})
         == "Malformed JSON-RPC error response",
     "LSP JSON-RPC errors are parsed without throwing on missing or malformed messages");
+  const nlohmann::json nullable_fields{{"text", nullptr}, {"count", nullptr},
+    {"wrong", nlohmann::json::object()}, {"result", nlohmann::json::object()}};
+  expect(tuiide::jsonValueOr(nullable_fields, "text", std::string("fallback"))
+        == "fallback"
+      && tuiide::jsonValueOr(nullable_fields, "count", 17) == 17
+      && tuiide::jsonValueOr(nullable_fields, "wrong", std::string("safe"))
+        == "safe"
+      && tuiide::jsonFieldOrNull(nullable_fields, "result").is_object()
+      && tuiide::jsonFieldOrNull(nullable_fields, "missing").is_null(),
+    "external JSON fields accept null, missing, and mismatched types safely");
 
   const auto hierarchical_symbols = tuiide::parseDocumentSymbols(nlohmann::json::array({
     {{"name", "Widget"}, {"detail", "class Widget"}, {"kind", 5},
@@ -706,6 +717,16 @@ int main() {
       && hierarchical_symbols[0].depth == 0 && hierarchical_symbols[0].position == tuiide::Position{2, 6}
       && hierarchical_symbols[1].name == "draw" && hierarchical_symbols[1].depth == 1,
     "documentSymbol parser preserves hierarchical classes and methods with UTF-16 positions");
+  auto nullable_symbols = nlohmann::json::array({
+    {{"name", "Nullable"}, {"detail", nullptr}, {"kind", nullptr},
+      {"selectionRange", {{"start", {{"line", 1}, {"character", 2}}},
+        {"end", {{"line", 1}, {"character", 10}}}}}}
+  });
+  const auto safe_symbols = tuiide::parseDocumentSymbols(nullable_symbols,
+    "/tmp/nullable.cpp");
+  expect(safe_symbols.size() == 1 && safe_symbols.front().detail.empty()
+      && safe_symbols.front().kind == 0,
+    "documentSymbol parser tolerates nullable optional fields");
   const auto flat_symbol_path = std::filesystem::absolute("flat.cpp");
   const auto flat_symbols = tuiide::parseDocumentSymbols(nlohmann::json::array({
     {{"name", "main"}, {"containerName", "global"}, {"kind", 12}, {"location", {

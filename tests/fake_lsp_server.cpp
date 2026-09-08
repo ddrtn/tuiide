@@ -1,6 +1,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstddef>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
@@ -53,6 +54,15 @@ int main() {
     if (method == "textDocument/didOpen") {
       active_uri = request.value("params", json::object()).value("textDocument", json::object())
         .value("uri", std::string{});
+      if (std::getenv("TUIIDE_FAKE_NULLABLE_DIAGNOSTICS") != nullptr) {
+        send({{"jsonrpc", "2.0"},
+          {"method", "textDocument/publishDiagnostics"},
+          {"params", {{"uri", active_uri}, {"diagnostics", json::array({
+            {{"range", {{"start", {{"line", 0}, {"character", 0}}},
+              {"end", {{"line", 0}, {"character", 1}}}}},
+              {"severity", nullptr}, {"message", nullptr}}
+          })}}}});
+      }
       continue;
     }
     if (!request.contains("id")) continue;
@@ -98,14 +108,16 @@ int main() {
     json result = nullptr;
     if (line == 0) {
       if (method == "textDocument/completion")
-        result = json::array({{{"label", "matrixItem"}, {"insertText", "matrixItem"}, {"kind", 3}}});
+        result = json::array({{{"label", "matrixItem"}, {"insertText", nullptr},
+          {"detail", nullptr}, {"documentation", nullptr}, {"kind", 3}}});
       else if (method == "textDocument/signatureHelp")
         result = {{"activeSignature", 0}, {"activeParameter", 0}, {"signatures", json::array({
           {{"label", "int matrix(int value)"}, {"documentation", "matrix signature"},
             {"parameters", json::array({{{"label", "int value"}}})}}
         })}};
       else if (method == "textDocument/hover")
-        result = {{"contents", {{"kind", "markdown"}, {"value", "matrix hover"}}}};
+        result = {{"contents", json::array({
+          {{"kind", "markdown"}, {"value", nullptr}}, "matrix hover"})}};
       else if (method == "textDocument/definition" || method == "textDocument/references")
         result = json::array({{{"uri", uri}, {"range", {{"start", {{"line", 0}, {"character", 0}}},
           {"end", {{"line", 0}, {"character", 6}}}}}}});
