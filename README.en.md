@@ -118,10 +118,29 @@ README languages, and the Final Cut license.
 ## Licenses
 
 TUI IDE uses a vendored copy of Final Cut. Its license is available at
-[`third_party/finalcut/LICENSE`](third_party/finalcut/LICENSE). Verify the pinned
-revision before updating the dependency:
+[`third_party/finalcut/LICENSE`](third_party/finalcut/LICENSE). Verification
+requires a clean checkout, the expected `origin`, and a pinned commit reachable
+from the previously fetched `refs/remotes/origin/main`:
 
 ```sh
 cmake --build tuiide-build --target check-finalcut-vendor --parallel 1
 ctest --test-dir tuiide-build --output-on-failure -L vendor
 ```
+
+For a reproducible update, fetch the upstream branch first and then detach the
+submodule at the reviewed commit without applying local patches:
+
+```sh
+git -C tuiide submodule update --init --recursive third_party/finalcut
+git -C tuiide/third_party/finalcut fetch --prune origin main
+git -C tuiide/third_party/finalcut switch --detach <commit>
+git -C tuiide/third_party/finalcut status --short
+git -C tuiide/third_party/finalcut merge-base --is-ancestor \
+  <commit> refs/remotes/origin/main
+```
+
+The last two commands must produce no output and return status `0`. After
+review, update `TUIIDE_FINALCUT_VERSION` and `TUIIDE_FINALCUT_COMMIT` in
+`cmake/FinalCutVendor.cmake`, run both checks above, and commit the submodule
+gitlink together with the pin file. Do not edit files under
+`third_party/finalcut/` directly.

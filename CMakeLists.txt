@@ -159,9 +159,17 @@ if(BUILD_TESTING)
         -DEXPECTED_COMMIT=${TUIIDE_FINALCUT_COMMIT}
         -DEXPECTED_VERSION=${TUIIDE_FINALCUT_VERSION}
         -DEXPECTED_UPSTREAM=${TUIIDE_FINALCUT_UPSTREAM}
+        -DEXPECTED_UPSTREAM_REF=${TUIIDE_FINALCUT_UPSTREAM_REF}
         -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyFinalCut.cmake)
     set_tests_properties(tuiide_finalcut_vendor_clean PROPERTIES LABELS vendor)
+    add_test(NAME tuiide_finalcut_vendor_provenance_tests
+      COMMAND ${CMAKE_COMMAND}
+        -DTEST_DIR=${CMAKE_BINARY_DIR}/finalcut-provenance-test
+        -DVERIFY_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyFinalCut.cmake
+        -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/finalcut_vendor_test.cmake)
+    set_tests_properties(tuiide_finalcut_vendor_provenance_tests PROPERTIES LABELS vendor)
   endif()
 
   if(TUIIDE_ENABLE_LONG_TESTS)
@@ -251,6 +259,7 @@ if(Git_FOUND)
       -DEXPECTED_COMMIT=${TUIIDE_FINALCUT_COMMIT}
       -DEXPECTED_VERSION=${TUIIDE_FINALCUT_VERSION}
       -DEXPECTED_UPSTREAM=${TUIIDE_FINALCUT_UPSTREAM}
+      -DEXPECTED_UPSTREAM_REF=${TUIIDE_FINALCUT_UPSTREAM_REF}
       -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyFinalCut.cmake
     COMMENT "Checking that vendored Final Cut is an unmodified pinned checkout")

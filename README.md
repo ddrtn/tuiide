@@ -115,10 +115,29 @@ cmake --install tuiide-build --prefix /opt/tuiide
 ## Лицензии
 
 TUI IDE использует vendored-копию Final Cut. Её лицензия находится в
-[`third_party/finalcut/LICENSE`](third_party/finalcut/LICENSE). Перед обновлением
-зависимости проверьте её закреплённую ревизию командой:
+[`third_party/finalcut/LICENSE`](third_party/finalcut/LICENSE). Проверка требует
+чистый checkout, правильный `origin` и доступность закреплённого commit из ранее
+полученной `refs/remotes/origin/main`:
 
 ```sh
 cmake --build tuiide-build --target check-finalcut-vendor --parallel 1
 ctest --test-dir tuiide-build --output-on-failure -L vendor
 ```
+
+Для воспроизводимого обновления сначала получите upstream-ветку, затем
+переключите submodule на проверенный commit без локальных патчей:
+
+```sh
+git -C tuiide submodule update --init --recursive third_party/finalcut
+git -C tuiide/third_party/finalcut fetch --prune origin main
+git -C tuiide/third_party/finalcut switch --detach <commit>
+git -C tuiide/third_party/finalcut status --short
+git -C tuiide/third_party/finalcut merge-base --is-ancestor \
+  <commit> refs/remotes/origin/main
+```
+
+Последние две команды должны завершиться без вывода и с кодом `0`. После ревью
+обновите `TUIIDE_FINALCUT_VERSION` и `TUIIDE_FINALCUT_COMMIT` в
+`cmake/FinalCutVendor.cmake`, запустите обе проверки выше и закоммитьте gitlink
+submodule вместе с файлом pin. Не вносите изменения непосредственно в исходники
+`third_party/finalcut/`.
