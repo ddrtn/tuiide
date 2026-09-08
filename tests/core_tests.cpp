@@ -54,8 +54,12 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <nlohmann/json.hpp>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #include <thread>
+#include <unistd.h>
 
 namespace {
 void expect(bool condition, const char* message) {
@@ -1018,6 +1022,110 @@ int main() {
   expect(terminal_exit && *terminal_exit == 0 && terminal_output.find("10 40") != std::string::npos
       && terminal_output.find("received:интерактивный ввод") != std::string::npos,
     "PTY exposes dimensions and transports terminal input and output");
+
+  tuiide::PseudoTerminal bounded_terminal;
+  expect(bounded_terminal.start({"sh", "-c", "stty size; IFS= read -r line; stty size"},
+      {}, {}, std::numeric_limits<unsigned>::max(), 0),
+    "PTY clamps out-of-range initial dimensions");
+  std::string bounded_output;
+  for (int attempt = 0; attempt < 200
+      && bounded_output.find("1 65535") == std::string::npos; ++attempt) {
+    for (const auto& chunk : bounded_terminal.drain()) bounded_output += chunk;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  expect(bounded_terminal.resize(0, std::numeric_limits<unsigned>::max()),
+    "PTY clamps out-of-range resize dimensions");
+  expect(bounded_terminal.write("continue\n"), "resized PTY accepts input");
+  for (int attempt = 0; attempt < 200 && bounded_terminal.running(); ++attempt) {
+    for (const auto& chunk : bounded_terminal.drain()) bounded_output += chunk;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  bounded_terminal.stop();
+  for (const auto& chunk : bounded_terminal.drain()) bounded_output += chunk;
+  expect(bounded_output.find("1 65535") != std::string::npos
+      && bounded_output.find("65535 1") != std::string::npos,
+    "PTY applies clamped initial and resized terminal dimensions");
+
+  tuiide::PseudoTerminal reusable_terminal;
+  for (int run = 1; run <= 3; ++run) {
+    expect(reusable_terminal.start({"sh", "-c", "printf 'pty-%s\\n' \"$1\"", "sh",
+        std::to_string(run)}), "completed PTY can start again");
+    for (int attempt = 0; attempt < 200 && reusable_terminal.running(); ++attempt)
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    const auto code = reusable_terminal.exitCode();
+    reusable_terminal.stop();
+    std::string output;
+    for (const auto& chunk : reusable_terminal.drain()) output += chunk;
+    expect(code && *code == 0 && output.find("pty-" + std::to_string(run)) != std::string::npos,
+      "repeated PTY start/stop keeps process state and output isolated");
+  }
+
+  tuiide::PseudoTerminal orphan_terminal;
+  expect(orphan_terminal.start({"sh", "-c", "sleep 30 & printf '%s\\n' \"$!\""}),
+    "PTY process with a background descendant starts");
+  for (int attempt = 0; attempt < 200 && orphan_terminal.running(); ++attempt)
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  std::string orphan_terminal_output;
+  for (int attempt = 0; attempt < 200 && orphan_terminal_output.empty(); ++attempt) {
+    for (const auto& chunk : orphan_terminal.drain()) orphan_terminal_output += chunk;
+    if (orphan_terminal_output.empty())
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  expect(!orphan_terminal_output.empty(),
+    "PTY drains leader output while a descendant holds the slave");
+  const auto orphan_terminal_pid = static_cast<pid_t>(std::stol(orphan_terminal_output));
+  expect(!orphan_terminal.running() && ::kill(orphan_terminal_pid, 0) == 0,
+    "PTY retains its process group after the leader exits");
+  orphan_terminal.stop();
+  bool orphan_terminal_terminated{};
+  for (int attempt = 0; attempt < 100 && !orphan_terminal_terminated; ++attempt) {
+    errno = 0;
+    if (::kill(orphan_terminal_pid, 0) != 0 && errno == ESRCH)
+      orphan_terminal_terminated = true;
+    else {
+      std::ifstream status("/proc/" + std::to_string(orphan_terminal_pid) + "/stat");
+      std::string pid_field; std::string command_field; char state{};
+      if (status >> pid_field >> command_field >> state && state == 'Z')
+        orphan_terminal_terminated = true;
+    }
+    if (!orphan_terminal_terminated)
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  expect(orphan_terminal_terminated,
+    "PTY stop terminates descendants after the process-group leader exits");
+
+  const auto missing_directory = std::filesystem::temp_directory_path()
+    / ("tuiide-missing-pty-directory-" + std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count()));
+  const auto descriptorCount = [] {
+    return static_cast<std::size_t>(std::distance(
+      std::filesystem::directory_iterator("/proc/self/fd"),
+      std::filesystem::directory_iterator{}));
+  };
+  const auto descriptors_before = descriptorCount();
+  for (int attempt = 0; attempt < 16; ++attempt)
+    expect(!reusable_terminal.start({"sh", "-c", "true"}, missing_directory),
+      "PTY reports a spawn failure for a missing working directory");
+  expect(descriptorCount() == descriptors_before && !reusable_terminal.running()
+      && reusable_terminal.slaveName().empty(),
+    "failed PTY spawn attempts release master, slave, actions, and attributes");
+
+  tuiide::PseudoTerminal debug_session;
+  expect(debug_session.openSession(0, std::numeric_limits<unsigned>::max()),
+    "standalone PTY session clamps dimensions and opens");
+  const auto session_slave = ::open(debug_session.slaveName().c_str(), O_RDWR | O_NOCTTY);
+  winsize session_size{};
+  const bool session_sized = session_slave >= 0
+    && ::ioctl(session_slave, TIOCGWINSZ, &session_size) == 0;
+  if (session_slave >= 0) (void)::close(session_slave);
+  expect(session_sized && session_size.ws_col == 1
+      && session_size.ws_row == std::numeric_limits<unsigned short>::max(),
+    "standalone PTY session exposes clamped dimensions on its slave");
+  debug_session.stop();
+  expect(debug_session.openSession(32, 8), "standalone PTY session can reopen after stop");
+  debug_session.stop();
+  expect(!debug_session.running() && debug_session.slaveName().empty(),
+    "repeated standalone PTY sessions release their descriptors");
 
   tuiide::RunSession run_session;
   expect(run_session.start({"sh", "-c", "printf 'run-session-output'"},

@@ -41,8 +41,8 @@ class PseudoTerminal {
   void stop();
 
  private:
-  void startReader();
-  void readerLoop();
+  auto startReader() -> bool;
+  void readerLoop(int fd);
   void waiterLoop(int pid);
 
   mutable std::mutex fd_mutex_;
@@ -50,6 +50,7 @@ class PseudoTerminal {
   int held_slave_fd_{-1};
   std::filesystem::path slave_name_;
   std::atomic<int> pid_{-1};
+  std::atomic<int> process_group_{-1};
   std::atomic<bool> running_{false};
   std::atomic<bool> session_{false};
   std::atomic<int> exit_code_{-1};

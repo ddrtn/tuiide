@@ -1,10 +1,12 @@
 #include "tuiide/pseudo_terminal.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <fcntl.h>
+#include <limits>
 #include <map>
 #include <poll.h>
 #include <pty.h>
@@ -18,8 +20,30 @@ extern char** environ;
 
 namespace tuiide {
 namespace {
+void closeDescriptor(int& fd) noexcept {
+  if (fd < 0) return;
+  (void)::close(fd);
+  fd = -1;
+}
+
+auto terminalDimension(unsigned value) -> unsigned short {
+  return static_cast<unsigned short>(std::clamp(value, 1U,
+    static_cast<unsigned>(std::numeric_limits<unsigned short>::max())));
+}
+
 auto windowSize(unsigned columns, unsigned rows) -> winsize {
-  return {static_cast<unsigned short>(rows), static_cast<unsigned short>(columns), 0, 0};
+  return {terminalDimension(rows), terminalDimension(columns), 0, 0};
+}
+
+auto processGroupExists(int process_group) noexcept -> bool {
+  if (process_group <= 0) return false;
+  if (::kill(-process_group, 0) == 0) return true;
+  return errno == EPERM;
+}
+
+void signalProcessGroup(int process_group, int leader, int signal) noexcept {
+  if (process_group > 0 && ::kill(-process_group, signal) == 0) return;
+  if (leader > 0) (void)::kill(leader, signal);
 }
 
 auto mergedEnvironment(const std::map<std::string, std::string>& overrides)
@@ -76,7 +100,9 @@ auto PseudoTerminal::start(const std::vector<std::string>& arguments,
     const std::filesystem::path& working_directory,
     const std::map<std::string, std::string>& environment,
     unsigned columns, unsigned rows) -> bool {
-  if (arguments.empty() || running_) return false;
+  if (running_ || session_) return false;
+  stop();
+  if (arguments.empty()) return false;
   auto environment_values = mergedEnvironment(environment);
   const auto executable = resolveExecutable(arguments.front(), working_directory, environment_values);
   if (executable.empty()) return false;
@@ -93,49 +119,78 @@ auto PseudoTerminal::start(const std::vector<std::string>& arguments,
   int slave{-1};
   char slave_name[256]{};
   if (::openpty(&master, &slave, slave_name, nullptr, &size) != 0) return false;
-  posix_spawn_file_actions_t actions;
-  posix_spawnattr_t attributes;
-  if (::posix_spawn_file_actions_init(&actions) != 0 || ::posix_spawnattr_init(&attributes) != 0) {
-    ::close(master); ::close(slave); return false;
+  if (::fcntl(master, F_SETFD, FD_CLOEXEC) != 0
+      || ::fcntl(slave, F_SETFD, FD_CLOEXEC) != 0) {
+    closeDescriptor(master); closeDescriptor(slave); return false;
   }
-  (void)::posix_spawn_file_actions_adddup2(&actions, slave, STDIN_FILENO);
-  (void)::posix_spawn_file_actions_adddup2(&actions, slave, STDOUT_FILENO);
-  (void)::posix_spawn_file_actions_adddup2(&actions, slave, STDERR_FILENO);
-  (void)::posix_spawn_file_actions_addclose(&actions, master);
-  if (slave > STDERR_FILENO) (void)::posix_spawn_file_actions_addclose(&actions, slave);
-  if (!working_directory.empty())
-    (void)::posix_spawn_file_actions_addchdir_np(&actions, working_directory.c_str());
-  (void)::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
-  (void)::posix_spawnattr_setpgroup(&attributes, 0);
+  posix_spawn_file_actions_t actions;
+  if (::posix_spawn_file_actions_init(&actions) != 0) {
+    closeDescriptor(master); closeDescriptor(slave); return false;
+  }
+  posix_spawnattr_t attributes;
+  if (::posix_spawnattr_init(&attributes) != 0) {
+    (void)::posix_spawn_file_actions_destroy(&actions);
+    closeDescriptor(master); closeDescriptor(slave); return false;
+  }
+  int setup_error = ::posix_spawn_file_actions_adddup2(&actions, slave, STDIN_FILENO);
+  if (setup_error == 0) setup_error = ::posix_spawn_file_actions_adddup2(&actions, slave, STDOUT_FILENO);
+  if (setup_error == 0) setup_error = ::posix_spawn_file_actions_adddup2(&actions, slave, STDERR_FILENO);
+  if (setup_error == 0) setup_error = ::posix_spawn_file_actions_addclose(&actions, master);
+  if (setup_error == 0 && slave > STDERR_FILENO)
+    setup_error = ::posix_spawn_file_actions_addclose(&actions, slave);
+  if (setup_error == 0 && !working_directory.empty())
+    setup_error = ::posix_spawn_file_actions_addchdir_np(&actions, working_directory.c_str());
+  if (setup_error == 0)
+    setup_error = ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+  if (setup_error == 0) setup_error = ::posix_spawnattr_setpgroup(&attributes, 0);
   pid_t child{-1};
-  const auto spawn_error = ::posix_spawn(&child, executable.c_str(), &actions, &attributes,
-    argv.data(), envp.data());
+  const auto spawn_error = setup_error == 0
+    ? ::posix_spawn(&child, executable.c_str(), &actions, &attributes,
+        argv.data(), envp.data())
+    : setup_error;
   (void)::posix_spawn_file_actions_destroy(&actions);
   (void)::posix_spawnattr_destroy(&attributes);
-  ::close(slave);
-  if (spawn_error != 0) { ::close(master); return false; }
+  closeDescriptor(slave);
+  if (spawn_error != 0) { closeDescriptor(master); return false; }
   {
     std::lock_guard lock(fd_mutex_);
     master_fd_ = master; slave_name_ = slave_name;
   }
-  pid_ = child; exit_code_ = -1; session_ = false; running_ = true;
-  startReader();
-  waiter_ = std::jthread([this, child] { waiterLoop(child); });
+  pid_ = child; process_group_ = child; exit_code_ = -1; session_ = false; running_ = true;
+  try {
+    waiter_ = std::jthread([this, child] { waiterLoop(child); });
+  } catch (...) {
+    signalProcessGroup(child, child, SIGKILL);
+    int status{};
+    while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+    {
+      std::lock_guard lock(fd_mutex_);
+      closeDescriptor(master_fd_); slave_name_.clear();
+    }
+    pid_ = -1; process_group_ = -1; running_ = false; exit_code_ = -1;
+    return false;
+  }
+  if (!startReader()) { stop(); return false; }
   return true;
 }
 
 auto PseudoTerminal::openSession(unsigned columns, unsigned rows) -> bool {
-  if (running_) return false;
+  if (running_ || session_) return false;
+  stop();
   int master{-1};
   int slave{-1};
   char name[256]{};
   auto size = windowSize(columns, rows);
   if (::openpty(&master, &slave, name, nullptr, &size) != 0) return false;
+  if (::fcntl(master, F_SETFD, FD_CLOEXEC) != 0
+      || ::fcntl(slave, F_SETFD, FD_CLOEXEC) != 0) {
+    closeDescriptor(master); closeDescriptor(slave); return false;
+  }
   {
     std::lock_guard lock(fd_mutex_);
     master_fd_ = master; held_slave_fd_ = slave; slave_name_ = name;
   }
-  pid_ = -1; exit_code_ = -1; session_ = true; running_ = true;
+  pid_ = -1; process_group_ = -1; exit_code_ = -1; session_ = true; running_ = true;
   return true;
 }
 
@@ -143,9 +198,13 @@ void PseudoTerminal::activateSession() {
   if (!running_ || !session_) return;
   {
     std::lock_guard lock(fd_mutex_);
+    if (held_slave_fd_ < 0) return;
+  }
+  if (!startReader()) { stop(); return; }
+  {
+    std::lock_guard lock(fd_mutex_);
     if (held_slave_fd_ >= 0) { ::close(held_slave_fd_); held_slave_fd_ = -1; }
   }
-  startReader();
 }
 
 auto PseudoTerminal::slaveName() const -> std::filesystem::path {
@@ -175,7 +234,9 @@ auto PseudoTerminal::resize(unsigned columns, unsigned rows) -> bool {
 
 auto PseudoTerminal::sendSignal(int signal) -> bool {
   const auto child = pid_.load();
-  return child > 0 && (::kill(-child, signal) == 0 || ::kill(child, signal) == 0);
+  const auto process_group = process_group_.load();
+  if (process_group > 0 && ::kill(-process_group, signal) == 0) return true;
+  return running_ && child > 0 && ::kill(child, signal) == 0;
 }
 
 auto PseudoTerminal::drain() -> std::vector<std::string> {
@@ -192,16 +253,17 @@ auto PseudoTerminal::exitCode() const -> std::optional<int> {
 }
 
 void PseudoTerminal::stop() {
-  running_ = false;
+  const bool process_was_running = running_.exchange(false);
   const auto child = pid_.exchange(-1);
-  if (child > 0) {
-    (void)::kill(-child, SIGTERM);
-    (void)::kill(child, SIGTERM);
+  const auto process_group = process_group_.exchange(-1);
+  if (child > 0 || process_group > 0) {
+    signalProcessGroup(process_group, process_was_running ? child : -1, SIGTERM);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
-    while (exit_code_ < 0 && std::chrono::steady_clock::now() < deadline)
+    while ((exit_code_ < 0 || processGroupExists(process_group))
+        && std::chrono::steady_clock::now() < deadline)
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    (void)::kill(-child, SIGKILL);
-    (void)::kill(child, SIGKILL);
+    if (exit_code_ < 0 || processGroupExists(process_group))
+      signalProcessGroup(process_group, process_was_running ? child : -1, SIGKILL);
   }
   {
     std::lock_guard lock(fd_mutex_);
@@ -214,16 +276,26 @@ void PseudoTerminal::stop() {
   session_ = false;
 }
 
-void PseudoTerminal::startReader() {
-  reader_ = std::jthread([this] { readerLoop(); });
+auto PseudoTerminal::startReader() -> bool {
+  int fd{-1};
+  {
+    std::lock_guard lock(fd_mutex_);
+    if (master_fd_ < 0) return false;
+    fd = ::fcntl(master_fd_, F_DUPFD_CLOEXEC, 0);
+  }
+  if (fd < 0) return false;
+  try {
+    reader_ = std::jthread([this, fd] { readerLoop(fd); });
+  } catch (...) {
+    closeDescriptor(fd);
+    return false;
+  }
+  return true;
 }
 
-void PseudoTerminal::readerLoop() {
+void PseudoTerminal::readerLoop(int fd) {
   char buffer[4096];
   for (;;) {
-    int fd{-1};
-    { std::lock_guard lock(fd_mutex_); fd = master_fd_; }
-    if (fd < 0) break;
     pollfd descriptor{fd, POLLIN, 0};
     const auto ready = ::poll(&descriptor, 1, 100);
     if (ready < 0 && errno == EINTR) continue;
@@ -235,13 +307,15 @@ void PseudoTerminal::readerLoop() {
     std::lock_guard lock(output_mutex_);
     output_.emplace_back(buffer, static_cast<std::size_t>(count));
   }
+  closeDescriptor(fd);
 }
 
 void PseudoTerminal::waiterLoop(int child) {
   int status{};
-  while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
-  if (WIFEXITED(status)) exit_code_ = WEXITSTATUS(status);
-  else if (WIFSIGNALED(status)) exit_code_ = 128 + WTERMSIG(status);
+  pid_t result{};
+  do result = ::waitpid(child, &status, 0); while (result < 0 && errno == EINTR);
+  if (result == child && WIFEXITED(status)) exit_code_ = WEXITSTATUS(status);
+  else if (result == child && WIFSIGNALED(status)) exit_code_ = 128 + WTERMSIG(status);
   running_ = false;
 }
 
