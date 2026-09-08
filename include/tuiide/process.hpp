@@ -41,6 +41,7 @@ class AsyncProcess {
 
   int input_fd_{-1};
   std::atomic<int> pid_{-1};
+  std::atomic<int> process_group_{-1};
   std::atomic<bool> running_{false};
   std::atomic<int> exit_code_{-1};
   std::mutex input_mutex_;

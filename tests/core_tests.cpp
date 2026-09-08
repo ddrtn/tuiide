@@ -48,6 +48,8 @@
 
 #include <chrono>
 #include <algorithm>
+#include <cerrno>
+#include <csignal>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -960,6 +962,48 @@ int main() {
   std::string stdin_output;
   for (const auto& chunk : stdin_process.drain()) stdin_output += chunk;
   expect(stdin_output == "UTF-8 stdin: данные\n", "closing process stdin delivers EOF without losing data");
+
+  tuiide::AsyncProcess reusable_process;
+  for (int run = 1; run <= 3; ++run) {
+    expect(reusable_process.start({"sh", "-c", "printf 'run-%s' \"$1\"", "sh",
+        std::to_string(run)}), "completed AsyncProcess can start again");
+    for (int attempt = 0; attempt < 200 && reusable_process.running(); ++attempt)
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    reusable_process.stop();
+    std::string output;
+    for (const auto& chunk : reusable_process.drain()) output += chunk;
+    expect(output == "run-" + std::to_string(run),
+      "repeated AsyncProcess start/stop keeps descriptors and output isolated");
+  }
+
+  tuiide::AsyncProcess orphan_process;
+  expect(orphan_process.start({"sh", "-c", "sleep 30 & printf '%s' \"$!\""}),
+    "process with a background descendant starts");
+  for (int attempt = 0; attempt < 200 && orphan_process.running(); ++attempt)
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  std::string orphan_output;
+  for (int attempt = 0; attempt < 200 && orphan_output.empty(); ++attempt) {
+    for (const auto& chunk : orphan_process.drain()) orphan_output += chunk;
+    if (orphan_output.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  expect(!orphan_output.empty(), "leader output is drained while its descendant holds the pipe");
+  const auto orphan_pid = static_cast<pid_t>(std::stol(orphan_output));
+  expect(!orphan_process.running() && ::kill(orphan_pid, 0) == 0,
+    "background descendant remains observable after its process-group leader exits");
+  orphan_process.stop();
+  bool orphan_terminated{};
+  for (int attempt = 0; attempt < 100 && !orphan_terminated; ++attempt) {
+    errno = 0;
+    if (::kill(orphan_pid, 0) != 0 && errno == ESRCH) orphan_terminated = true;
+    else {
+      std::ifstream status("/proc/" + std::to_string(orphan_pid) + "/stat");
+      std::string pid_field; std::string command_field; char state{};
+      if (status >> pid_field >> command_field >> state && state == 'Z') orphan_terminated = true;
+    }
+    if (!orphan_terminated) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  expect(orphan_terminated,
+    "stop terminates background descendants after the process-group leader has exited");
 
   tuiide::PseudoTerminal pseudo_terminal;
   expect(pseudo_terminal.start({"sh", "-c", "stty size; IFS= read -r line; printf 'received:%s\\n' \"$line\""},
