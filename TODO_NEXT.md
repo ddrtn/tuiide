@@ -23,7 +23,7 @@
   и удалением недоступных путей.
 - [x] Заменить единственную launch-настройку списком именованных Run/Debug
   configurations с созданием, клонированием, удалением и быстрым выбором.
-- [ ] Интегрировать CTest: discovery через JSON, запуск всех/выбранных/упавших
+- [x] Интегрировать CTest: discovery через JSON, запуск всех/выбранных/упавших
   тестов, test presets, панель Tests и переход из failure в исходный файл.
 - [ ] Добавить запуск clang-tidy, cppcheck, sanitizers и include-what-you-use для
   файла/target/проекта с выводом результатов в Analysis и Problems.

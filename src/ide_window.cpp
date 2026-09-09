@@ -192,10 +192,11 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   menu_bar_.addAccelerator(finalcut::FKey::Menu, &menu_bar_);
   setupMenus();
   refreshRecentFilesMenu();
-  const std::array<std::pair<std::string_view, const finalcut::FMenu*>, 9> menus{{
+  const std::array<std::pair<std::string_view, const finalcut::FMenu*>, 10> menus{{
     {"File", &file_menu_.menu}, {"Edit", &edit_menu_.menu}, {"Search", &search_menu_.menu},
     {"Run", &run_menu_.menu}, {"Project", &project_menu_.menu}, {"Debug", &debug_menu_.menu},
-    {"Tools", &tools_menu_.menu}, {"Window", &window_menu_.menu}, {"Help", &help_menu_.menu},
+    {"Tests", &run_menu_.tests}, {"Tools", &tools_menu_.menu},
+    {"Window", &window_menu_.menu}, {"Help", &help_menu_.menu},
   }};
   if (const auto top_error = menuMnemonicError("top-level menu", menu_bar_); !top_error.empty())
     throw std::logic_error(top_error);
@@ -214,6 +215,7 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   sidebar_tabs_.addTab("Outline", outline_);
   sidebar_tabs_.addTab("Debug", debug_);
   sidebar_tabs_.addTab("Breakpoints", breakpoints_);
+  sidebar_tabs_.addTab("Tests", tests_);
   lower_tabs_.addTab("Output", output_);
   lower_tabs_.addTab("Problems", problems_);
   lower_tabs_.addTab("Build", build_output_);
@@ -297,6 +299,11 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
     if (key == finalcut::FKey::Meta_D) { deferred_command_ = [this] { clearBreakpoints(); }; return true; }
     return handleCommand(key);
   });
+  tests_.setCommandHandler([this](finalcut::FKey key) {
+    if (key == finalcut::FKey::Return) { openSelectedTestFailure(); return true; }
+    if (key == finalcut::FKey::Space) { deferred_command_ = [this] { runSelectedTest(); }; return true; }
+    return handleCommand(key);
+  });
   tabs_.setContextHandler([this](finalcut::FPoint position) { showOpenFilesContextMenu(position); });
   files_.setContextHandler([this](finalcut::FPoint position) { showProjectContextMenu(position); });
   debug_.setContextHandler([this](finalcut::FPoint position) { showDebugContextMenu(position, false); });
@@ -313,6 +320,7 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   debug_.addCallback("clicked", [this] { openSelectedFrame(); });
   breakpoints_.addCallback("row-selected", [this] { openSelectedBreakpoint(); });
   breakpoints_.addCallback("clicked", [this] { openSelectedBreakpoint(); });
+  tests_.addCallback("clicked", [this] { openSelectedTestFailure(); });
   outline_.addCallback("row-selected", [this] { openSelectedOutlineSymbol(); });
   outline_.addCallback("clicked", [this] { openSelectedOutlineSymbol(); });
 
@@ -344,17 +352,17 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   if (initial_root.empty()) {
     setText("TUI IDE — No project");
     publishEvent(EventSource::System, EventSeverity::Information, "Welcome to TUI IDE. Use File > Open Project or File > New Project to begin.\n");
-    refreshFiles(); refreshDebugPanel(); refreshBreakpointsPanel(); updateStatus();
+    refreshFiles(); refreshDebugPanel(); refreshBreakpointsPanel(); refreshTestsPanel(); updateStatus();
   } else if (!loadProject(std::move(initial_root))) {
     setText("TUI IDE — No project");
-    refreshFiles(); refreshDebugPanel(); refreshBreakpointsPanel(); updateStatus();
+    refreshFiles(); refreshDebugPanel(); refreshBreakpointsPanel(); refreshTestsPanel(); updateStatus();
   }
   layout();
 }
 
 IdeWindow::~IdeWindow() {
   if (debug_state_dirty_) saveDebugState();
-  lsp_.stop(); gdb_.stop(); build_session_.reset(); run_session_.stop(); console_.setControlEnabled(false);
+  lsp_.stop(); gdb_.stop(); build_session_.reset(); ctest_session_.stop(); run_session_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
   execution_file_.clear(); execution_line_ = 0;
 }
@@ -375,6 +383,7 @@ void IdeWindow::setupMenus() {
   search_menu_.separator.setSeparator();
   project_menu_.separator1.setSeparator();
   run_menu_.separator1.setSeparator(); run_menu_.separator2.setSeparator();
+  run_menu_.test_separator.setSeparator();
   debug_menu_.separator1.setSeparator(); debug_menu_.separator2.setSeparator();
   tools_menu_.separator.setSeparator(); tools_menu_.separator2.setSeparator(); tools_menu_.separator3.setSeparator();
   tools_menu_.separator4.setSeparator();
@@ -500,6 +509,30 @@ void IdeWindow::setupMenus() {
   bind(run_menu_.configure_preset, finalcut::FKey::Ctrl_p, "Select a CMake configure preset");
   bind(run_menu_.build_preset, finalcut::FKey::Meta_b, "Select a CMake build preset");
   bind(run_menu_.target, finalcut::FKey::Ctrl_t, "Select an executable CMake target");
+  run_menu_.discover_tests.setStatusBarMessage("Discover tests using CTest JSON output");
+  run_menu_.discover_tests.addCallback("clicked", [this] {
+    deferred_command_ = [this] { discoverTests(); };
+  });
+  run_menu_.run_all_tests.setStatusBarMessage("Run all discovered CTest tests");
+  run_menu_.run_all_tests.addCallback("clicked", [this] {
+    deferred_command_ = [this] { runAllTests(); };
+  });
+  run_menu_.run_selected_test.setStatusBarMessage("Run the test selected in the Tests panel");
+  run_menu_.run_selected_test.addCallback("clicked", [this] {
+    deferred_command_ = [this] { runSelectedTest(); };
+  });
+  run_menu_.rerun_failed_tests.setStatusBarMessage("Rerun tests from CTest's failed-test log");
+  run_menu_.rerun_failed_tests.addCallback("clicked", [this] {
+    deferred_command_ = [this] { rerunFailedTests(); };
+  });
+  run_menu_.test_preset.setStatusBarMessage("Select and run a CMake test preset");
+  run_menu_.test_preset.addCallback("clicked", [this] {
+    deferred_command_ = [this] { selectCTestPreset(); };
+  });
+  run_menu_.stop_tests.setStatusBarMessage("Stop the active CTest process");
+  run_menu_.stop_tests.addCallback("clicked", [this] {
+    deferred_command_ = [this] { stopTests(); };
+  });
 
   bind(debug_menu_.start, finalcut::FKey::F5, "Start or continue debugging");
   bind(debug_menu_.pause, finalcut::FKey::F17, "Pause the debuggee");
@@ -591,6 +624,7 @@ void IdeWindow::setupMenus() {
   window_menu_.outline.setChecked();
   window_menu_.debug.setChecked();
   window_menu_.breakpoints.setChecked();
+  window_menu_.tests.setChecked();
   const auto togglePanel = [this](finalcut::FCheckMenuItem& item, std::size_t index) {
     auto* menu_item = &item;
     item.addCallback("clicked", [this, menu_item, index] {
@@ -608,6 +642,7 @@ void IdeWindow::setupMenus() {
   togglePanel(window_menu_.outline, 2);
   togglePanel(window_menu_.debug, 3);
   togglePanel(window_menu_.breakpoints, 4);
+  togglePanel(window_menu_.tests, 5);
   window_menu_.clear_lower.setStatusBarMessage("Clear Output, Problems, Build, or Terminal content");
   window_menu_.clear_lower.addCallback("clicked", [this] { deferred_command_ = [this] { clearLowerPanel(); }; });
   window_menu_.copy_lower.setStatusBarMessage("Copy all text from the active lower panel");
@@ -1605,7 +1640,8 @@ void IdeWindow::unloadProject() {
   const bool had_project = !root_.empty();
   clearRecovery(recovery_file_);
   if (debug_state_dirty_ && !root_.empty()) saveDebugState();
-  lsp_.stop(); gdb_.stop(); build_session_.reset(); run_session_.stop(); console_.setControlEnabled(false);
+  lsp_.stop(); gdb_.stop(); build_session_.reset(); ctest_session_.clear(); ctest_preset_.clear();
+  run_session_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
   execution_file_.clear(); execution_line_ = 0;
   document_session_.clear();
@@ -1618,6 +1654,7 @@ void IdeWindow::unloadProject() {
   problems_filter_.clear(); problems_signature_.clear(); problems_text_.clear(); problem_rows_.clear();
   problems_.clear(); problems_.insert("No problems");
   outline_.clear(); outline_.insert("Open a C/C++ file for outline"); outline_positions_.clear();
+  refreshTestsPanel();
   event_log_.clear(); output_.clear(); build_output_.clear(); console_.clear();
   applyShortcutAccelerators();
   editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
@@ -1631,6 +1668,7 @@ void IdeWindow::unloadProject() {
     const bool clean = documents_.empty() && !document_
       && !lsp_.running() && lsp_.diagnostics().empty() && lsp_.semanticTokens().empty()
       && !build_session_.running() && !run_session_.running() && !run_session_.consoleRunning()
+      && !ctest_session_.running() && ctest_session_.tests().empty()
       && !gdb_.running() && gdb_.breakpoints().empty() && gdb_.watches().empty()
       && cmake_session_.targets().empty() && cmake_session_.configurePresets().empty()
       && cmake_session_.buildPresets().empty() && !project_session_.open();
@@ -1662,7 +1700,7 @@ auto IdeWindow::loadProject(std::filesystem::path root, std::filesystem::path bu
   loadDebugState();
   refreshCompilationDatabase(true);
   restartLanguageServer();
-  refreshFiles(); updateStatus(); restoreRecovery();
+  refreshFiles(); refreshTestsPanel(); updateStatus(); restoreRecovery();
   std::string history_error;
   if (!rememberRecentProject(project_history_file_, root_, history_error))
     publishEvent(EventSource::Project, EventSeverity::Error, "Recent projects: " + history_error + "\n");
@@ -2815,6 +2853,7 @@ void IdeWindow::restoreRecovery() {
 
 void IdeWindow::build() {
   if (root_.empty()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Build unavailable: no project is open\n"); return; }
+  if (ctest_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Build unavailable: CTest is running\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Build unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(true)) return;
   build_session_.begin(BuildOperation::Build, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
@@ -2824,6 +2863,7 @@ void IdeWindow::build() {
 
 void IdeWindow::configure() {
   if (root_.empty()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Configure unavailable: no project is open\n"); return; }
+  if (ctest_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Configure unavailable: CTest is running\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Configure unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(true)) return;
   build_session_.begin(BuildOperation::Configure, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
@@ -2832,6 +2872,7 @@ void IdeWindow::configure() {
 
 void IdeWindow::rebuild() {
   if (root_.empty()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Rebuild unavailable: no project is open\n"); return; }
+  if (ctest_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Rebuild unavailable: CTest is running\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Rebuild unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(true)) return;
   build_session_.begin(BuildOperation::Rebuild, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
@@ -2841,6 +2882,7 @@ void IdeWindow::rebuild() {
 
 void IdeWindow::clean() {
   if (root_.empty()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Clean unavailable: no project is open\n"); return; }
+  if (ctest_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Clean unavailable: CTest is running\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Clean unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(false)) return;
   build_session_.begin(BuildOperation::Clean, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
@@ -3053,8 +3095,177 @@ void IdeWindow::selectCMakeTarget() {
   updateStatus();
 }
 
+void IdeWindow::discoverTests() {
+  if (root_.empty()) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "CTest discovery unavailable: no project is open\n");
+    return;
+  }
+  if (!external_tools_.cmake || !std::filesystem::exists(build_dir_ / "CTestTestfile.cmake")) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "CTest discovery unavailable: configure a CMake project with tests first\n");
+    return;
+  }
+  if (build_session_.running() || run_session_.running() || gdb_.running() || ctest_session_.running()) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "CTest discovery unavailable while another build, run, debug, or test operation is active\n");
+    return;
+  }
+  if (!ctest_session_.discover(root_, build_dir_)) {
+    publishEvent(EventSource::Test, EventSeverity::Error,
+      "CTest discovery: " + ctest_session_.lastError() + "\n");
+    return;
+  }
+  tests_.clear(); tests_.insert("[~] Discovering tests...");
+  sidebar_tabs_.setCurrentIndex(5, true);
+  menu_state_.reset();
+  publishEvent(EventSource::Test, EventSeverity::Information,
+    "CTest discovery started in " + build_dir_.string() + "\n");
+}
+
+void IdeWindow::runAllTests() {
+  if (ctest_session_.tests().empty()) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "Run Tests unavailable: discover tests first\n");
+    return;
+  }
+  if (build_session_.running() || run_session_.running() || gdb_.running() || ctest_session_.running()) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "Run Tests unavailable while another operation is active\n");
+    return;
+  }
+  if (!saveAllDocuments()) return;
+  if (!ctest_session_.runAll(root_, build_dir_)) {
+    publishEvent(EventSource::Test, EventSeverity::Error, "Failed to start CTest\n"); return;
+  }
+  sidebar_tabs_.setCurrentIndex(5);
+  lower_tabs_.setCurrentIndex(0);
+  menu_state_.reset(); refreshTestsPanel();
+  publishEvent(EventSource::Test, EventSeverity::Information, "Running all CTest tests\n");
+}
+
+void IdeWindow::runSelectedTest() {
+  const auto index = tests_.currentItem();
+  if (index == 0 || index > ctest_session_.tests().size()) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "Run Selected Test unavailable: select a discovered test\n");
+    return;
+  }
+  if (build_session_.running() || run_session_.running() || gdb_.running() || ctest_session_.running()) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "Run Selected Test unavailable while another operation is active\n");
+    return;
+  }
+  if (!saveAllDocuments()) return;
+  const auto name = ctest_session_.tests()[index - 1].name;
+  if (!ctest_session_.runSelected(root_, build_dir_, name)) {
+    publishEvent(EventSource::Test, EventSeverity::Error, "Failed to start CTest\n"); return;
+  }
+  lower_tabs_.setCurrentIndex(0); menu_state_.reset();
+  publishEvent(EventSource::Test, EventSeverity::Information, "Running CTest: " + name + "\n");
+}
+
+void IdeWindow::rerunFailedTests() {
+  if (root_.empty() || !std::filesystem::exists(build_dir_ / "Testing/Temporary/LastTestsFailed.log")) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "Rerun Failed Tests unavailable: CTest has no failed-test log\n");
+    return;
+  }
+  if (build_session_.running() || run_session_.running() || gdb_.running() || ctest_session_.running()) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "Rerun Failed Tests unavailable while another operation is active\n");
+    return;
+  }
+  if (!ctest_session_.rerunFailed(root_, build_dir_)) {
+    publishEvent(EventSource::Test, EventSeverity::Error, "Failed to start CTest\n"); return;
+  }
+  lower_tabs_.setCurrentIndex(0); menu_state_.reset();
+  publishEvent(EventSource::Test, EventSeverity::Information, "Rerunning failed CTest tests\n");
+}
+
+void IdeWindow::selectCTestPreset() {
+  if (root_.empty()) return;
+  std::string error;
+  const auto presets = loadCTestPresets(root_, error);
+  if (!error.empty()) {
+    publishEvent(EventSource::Test, EventSeverity::Error, "CTest presets: " + error + "\n"); return;
+  }
+  if (presets.empty()) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "No visible testPresets in CMakePresets.json or CMakeUserPresets.json\n");
+    return;
+  }
+  std::vector<std::string> labels;
+  for (const auto& preset : presets)
+    labels.push_back(preset.display_name + (preset.display_name == preset.name ? "" : " [" + preset.name + "]"));
+  const auto selection = choose("CTest preset", labels);
+  if (selection == 0 || selection > presets.size()) return;
+  if (build_session_.running() || run_session_.running() || gdb_.running() || ctest_session_.running()) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "Test preset unavailable while another operation is active\n"); return;
+  }
+  ctest_preset_ = presets[selection - 1].name;
+  if (!ctest_session_.runPreset(root_, ctest_preset_)) {
+    publishEvent(EventSource::Test, EventSeverity::Error, "Failed to start CTest preset\n"); return;
+  }
+  lower_tabs_.setCurrentIndex(0); menu_state_.reset();
+  publishEvent(EventSource::Test, EventSeverity::Information,
+    "Running CTest preset: " + ctest_preset_ + "\n");
+}
+
+void IdeWindow::stopTests() {
+  if (!ctest_session_.running()) {
+    publishEvent(EventSource::Test, EventSeverity::Warning,
+      "Stop Tests unavailable: CTest is not running\n"); return;
+  }
+  ctest_session_.stop(); menu_state_.reset(); refreshTestsPanel();
+  publishEvent(EventSource::Test, EventSeverity::Warning, "CTest operation stopped\n");
+}
+
+void IdeWindow::refreshTestsPanel() {
+  const auto selected = tests_.currentItem();
+  tests_.clear();
+  if (ctest_session_.tests().empty()) {
+    tests_.insert(root_.empty() ? "No project" : "Tests not discovered");
+  } else {
+    for (const auto& test : ctest_session_.tests()) {
+      std::string label{ctestStatusLabel(test.status)};
+      label += " " + test.name;
+      if (!test.labels.empty()) {
+        label += "  [";
+        for (std::size_t i{}; i < test.labels.size(); ++i) {
+          if (i != 0) label += ",";
+          label += test.labels[i];
+        }
+        label += "]";
+      }
+      tests_.insert(finalcut::FString(label));
+    }
+    if (selected > 0 && selected <= ctest_session_.tests().size()) tests_.setCurrentItem(selected);
+  }
+  sidebar_tabs_.redrawCurrentPage();
+}
+
+void IdeWindow::openSelectedTestFailure() {
+  const auto index = tests_.currentItem();
+  if (index == 0 || index > ctest_session_.tests().size()) return;
+  const auto& test = ctest_session_.tests()[index - 1];
+  if (test.failures.empty()) {
+    publishEvent(EventSource::Test, EventSeverity::Information,
+      "No source failure location recorded for " + test.name + "; press Space to run it\n");
+    return;
+  }
+  const auto location = test.failures.front();
+  openFile(location.path);
+  if (document_ && document_->path() == location.path) editor_.reveal({location.line, 0});
+  publishEvent(EventSource::Test, EventSeverity::Information,
+    "Test failure: " + test.name + " at " + location.path.string() + ":"
+      + std::to_string(location.line + 1) + "\n");
+}
+
 void IdeWindow::run() {
   if (root_.empty()) { publishEvent(EventSource::Run, EventSeverity::Warning, "Run unavailable: no project is open\n"); return; }
+  if (ctest_session_.running()) { publishEvent(EventSource::Run, EventSeverity::Warning, "Run unavailable: CTest is running\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Run, EventSeverity::Warning, "Run unavailable: a CMake operation is in progress\n"); return; }
   if (!saveAllDocuments()) { publishEvent(EventSource::Run, EventSeverity::Warning, "Run cancelled because not all documents were saved\n"); return; }
   if (project_settings_.launch.pre_launch_build) {
@@ -3096,6 +3307,11 @@ void IdeWindow::stopRun() {
 }
 
 void IdeWindow::debugRun() {
+  if (ctest_session_.running()) {
+    publishEvent(EventSource::Debug, EventSeverity::Warning,
+      "Debug unavailable: CTest is running\n");
+    return;
+  }
   if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: no project is open\n"); return; }
   if (!external_tools_.gdb) { publishEvent(EventSource::Debug, EventSeverity::Error,
     "GDB unavailable: install gdb or add it to PATH; debugging cannot start.\n"); return; }
@@ -3351,6 +3567,13 @@ void IdeWindow::updateMenuState() {
   enabled(run_menu_.configure_preset, state.cmake_configuration);
   enabled(run_menu_.build_preset, state.cmake_configuration);
   enabled(run_menu_.target, state.cmake_configuration);
+  const bool test_idle = state.cmake_configuration && !ctest_session_.running();
+  enabled(run_menu_.discover_tests, test_idle);
+  enabled(run_menu_.run_all_tests, test_idle && !ctest_session_.tests().empty());
+  enabled(run_menu_.run_selected_test, test_idle && !ctest_session_.tests().empty());
+  enabled(run_menu_.rerun_failed_tests, test_idle);
+  enabled(run_menu_.test_preset, test_idle);
+  enabled(run_menu_.stop_tests, ctest_session_.running());
   enabled(debug_menu_.start, state.debug_start);
   enabled(debug_menu_.pause, state.debug_pause);
   enabled(debug_menu_.stop, state.debug_stop);
@@ -3389,6 +3612,7 @@ void IdeWindow::updateMenuState() {
   enabled(window_menu_.outline, true);
   enabled(window_menu_.debug, true);
   enabled(window_menu_.breakpoints, true);
+  enabled(window_menu_.tests, true);
   enabled(window_menu_.clear_lower, true);
   enabled(window_menu_.copy_lower, true);
   enabled(window_menu_.filter_problems, true);
@@ -3426,6 +3650,7 @@ void IdeWindow::updateStatus() {
     if (const auto progress = build_session_.progress()) text << ' ' << *progress << '%';
     text << ' ' << static_cast<unsigned>(build_session_.stageElapsed()) << 's';
   }
+  text << " | tests: " << (ctest_session_.running() ? "running" : std::to_string(ctest_session_.tests().size()));
   const auto* selected_target = cmake_session_.selectedTarget();
   text
        << " | preset: " << (cmake_session_.configurePreset().empty()
@@ -3908,6 +4133,35 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
       } else {
         finishBuildOperation(0, {});
       }
+    }
+  }
+  const auto ctest_operation = ctest_session_.operation();
+  auto ctest_poll = ctest_session_.poll();
+  if (ctest_operation != CTestOperation::Discover) {
+    for (auto& chunk : ctest_poll.output)
+      publishEvent(EventSource::Test, EventSeverity::Information, std::move(chunk));
+  }
+  if (ctest_poll.tests_changed) refreshTestsPanel();
+  if (ctest_poll.completion) {
+    menu_state_.reset();
+    if (!ctest_poll.error.empty()) {
+      publishEvent(EventSource::Test, EventSeverity::Error,
+        "CTest discovery failed: " + ctest_poll.error + "\n");
+      showNotification("CTest discovery failed", NotificationKind::Error);
+    } else if (ctest_operation == CTestOperation::Discover) {
+      const auto count = ctest_session_.tests().size();
+      publishEvent(EventSource::Test,
+        *ctest_poll.completion == 0 ? EventSeverity::Success : EventSeverity::Error,
+        "CTest discovery finished with exit code " + std::to_string(*ctest_poll.completion)
+          + ": " + std::to_string(count) + " test(s)\n");
+      showNotification("CTest: discovered " + std::to_string(count) + " test(s)",
+        *ctest_poll.completion == 0 ? NotificationKind::Success : NotificationKind::Error);
+    } else {
+      const auto code = *ctest_poll.completion;
+      publishEvent(EventSource::Test, code == 0 ? EventSeverity::Success : EventSeverity::Error,
+        "CTest finished with exit code " + std::to_string(code) + "\n");
+      showNotification(code == 0 ? "CTest completed successfully" : "CTest failed",
+        code == 0 ? NotificationKind::Success : NotificationKind::Error);
     }
   }
   auto run_poll = run_session_.poll();

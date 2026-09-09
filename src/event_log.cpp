@@ -96,6 +96,7 @@ auto eventSourceName(EventSource source) noexcept -> std::string_view {
     case EventSource::Project: return "project";
     case EventSource::Editor: return "editor";
     case EventSource::Build: return "build";
+    case EventSource::Test: return "test";
     case EventSource::Run: return "run";
     case EventSource::Debug: return "debug";
     case EventSource::Lsp: return "lsp";

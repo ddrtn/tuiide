@@ -19,6 +19,8 @@ source code and user interface use UTF-8.
   configure/build presets, generators, build directories, and parallel jobs.
 - Asynchronous Configure, Build, Clean, and Rebuild commands with Problems and
   Output panels.
+- CTest JSON discovery, all/selected/failed runs, test presets, and source
+  navigation from failed tests in the Tests panel.
 - Named Run/Debug configurations support cloning and quick selection; programs
   run in an integrated PTY or external terminal with arguments, environment,
   and standard input.
@@ -94,8 +96,10 @@ select commands inside an open menu. Configure global shortcuts through
 - `Alt+PageUp/PageDown`: sidebar tabs;
   `Alt+Shift+PageUp/PageDown`: lower-panel tabs.
 
-The sidebar contains **Open files**, **Project**, **Outline**, **Debug**, and
-**Breakpoints**. Toggle individual pages from **Window**. The lower area
+The sidebar contains **Open files**, **Project**, **Outline**, **Debug**,
+**Breakpoints**, and **Tests**. Toggle individual pages from **Window**. In
+Tests, press `Space` to run the selected test and `Enter` to open its first
+failure location; discovery and grouped runs are under **Run → Tests**. The lower area
 contains **Output**, **Problems**, **Build**, and an interactive **Terminal**.
 
 ## Repository Layout

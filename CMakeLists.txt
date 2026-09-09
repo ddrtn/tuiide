@@ -91,6 +91,7 @@ add_library(tuiide_core
   src/cmake_presets.cpp
   src/cmake_session.cpp
   src/cmake_source_edit.cpp
+  src/ctest_session.cpp
   src/clipboard.cpp
   src/clang_format.cpp
   src/compilation_database.cpp

@@ -12,6 +12,7 @@
 #include "tuiide/cmake_presets.hpp"
 #include "tuiide/cmake_session.hpp"
 #include "tuiide/cmake_source_edit.hpp"
+#include "tuiide/ctest_session.hpp"
 #include "tuiide/clipboard.hpp"
 #include "tuiide/cli.hpp"
 #include "tuiide/clang_format.hpp"
@@ -2224,6 +2225,51 @@ int main() {
       && build_command.working_directory == command_project,
     "preset clean command uses the project working directory and defensively clamps parallelism");
   std::filesystem::remove_all(preset_source, cleanup_error);
+
+  std::vector<tuiide::CTestCase> ctest_cases;
+  std::string ctest_error;
+  const auto ctest_json = R"({"kind":"ctestInfo","version":{"major":1,"minor":0},"tests":[
+    {"name":"unit.alpha","command":["/tmp/unit","--alpha"],"properties":[
+      {"name":"LABELS","value":["unit","fast"]}]},
+    {"name":"unit.disabled","command":null,"properties":[
+      {"name":"DISABLED","value":true},{"name":"LABELS","value":null}]},
+    {"name":null,"properties":"invalid"}]})";
+  expect(tuiide::parseCTestDiscovery(ctest_json, ctest_cases, ctest_error)
+      && ctest_error.empty() && ctest_cases.size() == 2
+      && ctest_cases[0].name == "unit.alpha"
+      && ctest_cases[0].command == std::vector<std::string>{"/tmp/unit", "--alpha"}
+      && ctest_cases[0].labels == std::vector<std::string>{"unit", "fast"}
+      && ctest_cases[1].status == tuiide::CTestStatus::Disabled,
+    "CTest JSON discovery tolerates null and malformed optional fields");
+  expect(!tuiide::parseCTestDiscovery(R"({"tests":null})", ctest_cases, ctest_error)
+      && ctest_error.find("tests array") != std::string::npos,
+    "CTest JSON discovery reports a missing tests array without throwing");
+
+  const auto ctest_directory = std::filesystem::temp_directory_path()
+    / ("tuiide-ctest-" + std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(ctest_directory / "src");
+  { std::ofstream file(ctest_directory / "CMakePresets.json"); file << R"({
+    "version": 6, "include": ["presets/extra.json"],
+    "testPresets": [{"name":"default-tests","displayName":"Default tests"},
+                    {"name":"hidden-tests","hidden":true}]})"; }
+  std::filesystem::create_directories(ctest_directory / "presets");
+  { std::ofstream file(ctest_directory / "presets/extra.json"); file << R"({
+    "version": 6, "testPresets": [{"name":"integration"}]})"; }
+  { std::ofstream file(ctest_directory / "CMakeUserPresets.json"); file << R"({
+    "version": 6, "testPresets": [{"name":"local"},{"name":"integration"}]})"; }
+  const auto test_presets = tuiide::loadCTestPresets(ctest_directory, ctest_error);
+  expect(ctest_error.empty() && test_presets.size() == 3
+      && test_presets[0].name == "default-tests"
+      && test_presets[1].name == "integration"
+      && test_presets[2].name == "local",
+    "CTest presets load includes, user presets, display names, hidden flags, and deduplicate names");
+  const auto locations = tuiide::parseCTestLocations(
+    "src/widget_test.cpp:42: failure\n./src/widget_test.cpp(42): duplicate\n", ctest_directory);
+  expect(locations.size() == 1 && locations[0].path == ctest_directory / "src/widget_test.cpp"
+      && locations[0].line == 41,
+    "CTest failure parser normalizes and deduplicates GCC and parenthesized source locations");
+  std::filesystem::remove_all(ctest_directory, cleanup_error);
 
   const std::vector<std::uint32_t> semantic_data{
     0, 2, 3, 0, 1,

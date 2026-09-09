@@ -16,6 +16,8 @@ CMake, clangd и GDB/MI. Исходный текст и интерфейс ра�
 - Создание, импорт и настройка CMake-проектов; targets, configure/build presets,
   выбор генератора, build-каталога и количества задач сборки.
 - Асинхронные Configure/Build/Clean/Rebuild, список проблем и журнал вывода.
+- Интеграция CTest: JSON-discovery, запуск всех, выбранного или ранее упавших
+  тестов, test presets и переход к строке сбоя из панели Tests.
 - Именованные конфигурации Run/Debug с клонированием и быстрым выбором; запуск в
   интегрированном PTY или внешнем терминале, аргументы, среда и `stdin`.
 - Отладка через GDB: breakpoints/logpoints, стек, потоки, локальные переменные,
@@ -90,8 +92,11 @@ ctest --test-dir tuiide-build --output-on-failure
 - `Alt+PageUp/PageDown` — вкладки боковой панели; `Alt+Shift+PageUp/PageDown` —
   вкладки нижней панели.
 
-Слева находятся страницы **Open files**, **Project**, **Outline**, **Debug** и
-**Breakpoints**. Их видимость управляется меню **Window**. Внизу размещены
+Слева находятся страницы **Open files**, **Project**, **Outline**, **Debug**,
+**Breakpoints** и **Tests**. Их видимость управляется меню **Window**. В Tests
+нажмите `Space`, чтобы запустить выбранный тест, и `Enter`, чтобы открыть первую
+строку его сбоя. Discovery и групповые запуски находятся в **Run → Tests**.
+Внизу размещены
 **Output**, **Problems**, **Build** и интерактивный **Terminal**.
 
 ## Структура репозитория

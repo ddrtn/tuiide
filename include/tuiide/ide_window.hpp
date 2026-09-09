@@ -10,6 +10,7 @@
 #include "tuiide/cmake_presets.hpp"
 #include "tuiide/cmake_session.hpp"
 #include "tuiide/cmake_source_edit.hpp"
+#include "tuiide/ctest_session.hpp"
 #include "tuiide/clang_format.hpp"
 #include "tuiide/compilation_database.hpp"
 #include "tuiide/command_state.hpp"
@@ -244,6 +245,14 @@ class IdeWindow final : public finalcut::FDialog {
   void selectCMakeBuildPreset();
   void refreshCMakeTargets();
   void selectCMakeTarget();
+  void discoverTests();
+  void runAllTests();
+  void runSelectedTest();
+  void rerunFailedTests();
+  void selectCTestPreset();
+  void stopTests();
+  void refreshTestsPanel();
+  void openSelectedTestFailure();
   void run();
   void stopRun();
   void startRun();
@@ -301,6 +310,8 @@ class IdeWindow final : public finalcut::FDialog {
   std::filesystem::path execution_file_;
   std::size_t execution_line_{};  // one-based; zero means no stopped source line
   BuildSession build_session_;
+  CTestSession ctest_session_;
+  std::string ctest_preset_;
   RunSession run_session_;
   std::size_t diagnostic_index_{};
   EventLog event_log_;
@@ -392,13 +403,21 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem cancel_build{"Cancel B&uild", &menu};
     finalcut::FMenuItem separator1{&menu};
     finalcut::FMenuItem run{finalcut::FKey::F6, "Ru&n", &menu};
-    finalcut::FMenuItem stop_run{"S&top program", &menu};
+    finalcut::FMenuItem stop_run{"Stop progra&m", &menu};
     finalcut::FMenuItem launch_select{finalcut::FKey::Meta_L, "Select &active configuration...", &menu};
     finalcut::FMenuItem launch_settings{finalcut::FKey::Meta_l, "Manage &Debug/Run configurations...", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem configure_preset{finalcut::FKey::Ctrl_p, "Configure &preset...", &menu};
     finalcut::FMenuItem build_preset{finalcut::FKey::Meta_b, "Build pre&set...", &menu};
     finalcut::FMenuItem target{finalcut::FKey::Ctrl_t, "Select tar&get...", &menu};
+    finalcut::FMenu tests{"&Tests", &menu};
+    finalcut::FMenuItem discover_tests{"&Discover tests", &tests};
+    finalcut::FMenuItem run_all_tests{"Run &all tests", &tests};
+    finalcut::FMenuItem run_selected_test{"Run &selected test", &tests};
+    finalcut::FMenuItem rerun_failed_tests{"Rerun &failed tests", &tests};
+    finalcut::FMenuItem test_preset{"Test &preset...", &tests};
+    finalcut::FMenuItem test_separator{&tests};
+    finalcut::FMenuItem stop_tests{"S&top tests", &tests};
   };
   struct ProjectMenu {
     explicit ProjectMenu(finalcut::FMenuBar& bar) : menu{"&Project", &bar} {}
@@ -473,6 +492,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FCheckMenuItem outline{"Show O&utline", &menu};
     finalcut::FCheckMenuItem debug{"Show &Debug", &menu};
     finalcut::FCheckMenuItem breakpoints{"Show &Breakpoints", &menu};
+    finalcut::FCheckMenuItem tests{"Show T&ests", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem clear_lower{"&Clear active lower panel", &menu};
     finalcut::FMenuItem copy_lower{"Cop&y active lower panel", &menu};
@@ -557,6 +577,7 @@ class IdeWindow final : public finalcut::FDialog {
   CommandListBox outline_{&sidebar_tabs_};
   CommandListBox debug_{&sidebar_tabs_};
   CommandListBox breakpoints_{&sidebar_tabs_};
+  CommandListBox tests_{&sidebar_tabs_};
   CodeEditor editor_{this};
   SidebarTabs lower_tabs_{this};
   finalcut::FTextView output_{&lower_tabs_};
