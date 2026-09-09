@@ -47,6 +47,7 @@ auto ideCommands() -> const std::vector<IdeCommand>& {
     {"run.debug", "Debug: Start / Continue", finalcut::FKey::F5, "F5"},
     {"run.run", "Run: Run", finalcut::FKey::F6, "F6"},
     {"run.build", "Run: Build", finalcut::FKey::F7, "F7"},
+    {"run.selectLaunch", "Run: Select Configuration", finalcut::FKey::Meta_L, "Alt+Shift+L"},
     {"run.launchSettings", "Run: Launch Configuration", finalcut::FKey::Meta_l, "Alt+L"},
     {"debug.breakpoint", "Debug: Toggle Breakpoint", finalcut::FKey::F9, "F9"},
     {"debug.stepInto", "Debug: Step Into", finalcut::FKey::F11, "F11"},
@@ -92,6 +93,7 @@ auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
     {"ALT+D", finalcut::FKey::Meta_d}, {"ALT+E", finalcut::FKey::Meta_e},
     {"ALT+F", finalcut::FKey::Meta_f}, {"ALT+H", finalcut::FKey::Meta_h},
     {"ALT+K", finalcut::FKey::Meta_k}, {"ALT+L", finalcut::FKey::Meta_l},
+    {"ALT+SHIFT+L", finalcut::FKey::Meta_L},
     {"ALT+P", finalcut::FKey::Meta_p},
     {"ALT+R", finalcut::FKey::Meta_r}, {"ALT+S", finalcut::FKey::Meta_s},
     {"ALT+T", finalcut::FKey::Meta_t},
@@ -482,8 +484,10 @@ void IdeWindow::setupMenus() {
   bind(run_menu_.run, finalcut::FKey::F6, "Run the selected executable");
   run_menu_.stop_run.setStatusBarMessage("Terminate the running program and its process group");
   run_menu_.stop_run.addCallback("clicked", [this] { deferred_command_ = [this] { stopRun(); }; });
+  bind(run_menu_.launch_select, finalcut::FKey::Meta_L,
+    "Quickly select the active Run/Debug configuration");
   bind(run_menu_.launch_settings, finalcut::FKey::Meta_l,
-    "Set target, arguments, environment, stdin, and launch behavior");
+    "Create, clone, edit, delete, or select Run/Debug configurations");
   bind(run_menu_.configure_preset, finalcut::FKey::Ctrl_p, "Select a CMake configure preset");
   bind(run_menu_.build_preset, finalcut::FKey::Meta_b, "Select a CMake build preset");
   bind(run_menu_.target, finalcut::FKey::Ctrl_t, "Select an executable CMake target");
@@ -623,6 +627,7 @@ void IdeWindow::applyShortcutAccelerators(bool enabled) {
     {"search.definition", &search_menu_.definition}, {"search.references", &search_menu_.references},
     {"search.problems", &search_menu_.problems}, {"run.debug", &debug_menu_.start},
     {"run.run", &run_menu_.run}, {"run.build", &run_menu_.build},
+    {"run.selectLaunch", &run_menu_.launch_select},
     {"run.launchSettings", &run_menu_.launch_settings},
     {"debug.breakpoint", &debug_menu_.breakpoint}, {"debug.stepInto", &debug_menu_.step},
     {"debug.stepOut", &debug_menu_.finish}, {"debug.watch", &debug_menu_.watch},
@@ -682,7 +687,7 @@ void IdeWindow::showKeyboardHelp() {
     "Alt+Shift+PgUp/Dn  Previous/next lower tab\n"
     "Ctrl+F       Find/Replace text or project\n"
     "Ctrl+P, Alt+B, Ctrl+T  Configure/Build preset/Target\n"
-    "Alt+L        Launch configuration\n"
+    "Alt+L / Alt+Shift+L  Manage / select Run/Debug configuration\n"
     "Alt+K        Search the command palette\n"
     "Alt+A        clangd Code Actions / Quick Fixes\n"
     "Ctrl+E       Focus Project explorer\n"
@@ -1662,26 +1667,64 @@ void IdeWindow::launchSettings() {
     return;
   }
   refreshCMakeTargets();
+  auto current = project_settings_;
+  synchronizeActiveLaunchConfiguration(current);
   delTimer(timer_id_);
-  LaunchSettingsDialog dialog(root_, project_settings_.launch, cmake_session_.targets(), this);
+  LaunchConfigurationManagerDialog dialog(root_, current.launch_configurations,
+    current.active_launch_configuration, cmake_session_.targets(), this);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted) return;
-  LaunchConfiguration launch;
   std::string error;
-  if (!dialog.configuration(launch, error)) {
-    finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
-  }
   auto updated = project_settings_;
-  updated.launch = std::move(launch);
+  updated.launch_configurations = dialog.configurations();
+  if (!selectLaunchConfiguration(updated, dialog.selectedName())) {
+    finalcut::FMessageBox::error(this, "The selected launch configuration is unavailable.");
+    return;
+  }
   if (!saveProjectSettings(root_, updated, error)) {
     finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
   }
   project_settings_ = std::move(updated);
-  const auto launch_name = !project_settings_.launch.executable.empty()
-    ? project_settings_.launch.executable.string()
-    : !project_settings_.launch.target.empty() ? project_settings_.launch.target : "selected CMake target";
-  publishEvent(EventSource::Project, EventSeverity::Success, "Launch configuration saved: " + launch_name + "\n");
+  publishEvent(EventSource::Project, EventSeverity::Success,
+    "Active Run/Debug configuration: " + project_settings_.active_launch_configuration + "\n");
+  updateStatus();
+}
+
+void IdeWindow::selectLaunchProfile() {
+  if (root_.empty()) {
+    publishEvent(EventSource::Project, EventSeverity::Warning,
+      "Launch configuration unavailable: no project is open\n");
+    return;
+  }
+  if (build_session_.running() || run_session_.running()
+      || run_session_.consoleRunning() || gdb_.running()) {
+    publishEvent(EventSource::Project, EventSeverity::Warning,
+      "Launch configuration unavailable while build, program, or debugger is running\n");
+    return;
+  }
+  auto current = project_settings_;
+  synchronizeActiveLaunchConfiguration(current);
+  std::vector<std::string> labels;
+  labels.reserve(current.launch_configurations.size());
+  for (const auto& item : current.launch_configurations) {
+    const auto detail = !item.configuration.executable.empty()
+      ? item.configuration.executable.string()
+      : !item.configuration.target.empty() ? item.configuration.target : "current CMake target";
+    labels.push_back(item.name + " — " + detail);
+  }
+  const auto selection = choose("Select Run/Debug configuration", labels);
+  if (selection == 0 || selection > current.launch_configurations.size()) return;
+  auto updated = std::move(current);
+  const auto name = updated.launch_configurations[selection - 1].name;
+  if (!selectLaunchConfiguration(updated, name)) return;
+  std::string error;
+  if (!saveProjectSettings(root_, updated, error)) {
+    finalcut::FMessageBox::error(this, finalcut::FString{error}); return;
+  }
+  project_settings_ = std::move(updated);
+  publishEvent(EventSource::Project, EventSeverity::Success,
+    "Active Run/Debug configuration: " + project_settings_.active_launch_configuration + "\n");
   updateStatus();
 }
 
@@ -3252,6 +3295,7 @@ void IdeWindow::updateMenuState() {
   enabled(run_menu_.cancel_build, state.cancel_build);
   enabled(run_menu_.run, state.run);
   enabled(run_menu_.stop_run, state.stop_run);
+  enabled(run_menu_.launch_select, state.cmake_configuration);
   enabled(run_menu_.launch_settings, state.cmake_configuration);
   enabled(run_menu_.configure_preset, state.cmake_configuration);
   enabled(run_menu_.build_preset, state.cmake_configuration);
@@ -3337,6 +3381,7 @@ void IdeWindow::updateStatus() {
          ? "none" : cmake_session_.configurePreset())
        << "/" << (cmake_session_.buildPreset().empty()
          ? "default" : cmake_session_.buildPreset())
+       << " | run: " << project_settings_.active_launch_configuration
        << " | target: " << (!project_settings_.launch.executable.empty()
          ? "launch:" + project_settings_.launch.executable.filename().string()
          : (selected_target ? selected_target->name : "unselected"))
@@ -3505,10 +3550,20 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
     case finalcut::FKey::Meta_l:
       if (root_.empty()) publishEvent(EventSource::Project, EventSeverity::Warning,
         "Launch configuration unavailable: no project is open\n");
-      else if (build_session_.running() || run_session_.running() || gdb_.running())
+      else if (build_session_.running() || run_session_.running()
+               || run_session_.consoleRunning() || gdb_.running())
         publishEvent(EventSource::Project, EventSeverity::Warning,
           "Launch configuration unavailable while build, program, or debugger is running\n");
       else deferred_command_ = [this] { launchSettings(); };
+      return true;
+    case finalcut::FKey::Meta_L:
+      if (root_.empty()) publishEvent(EventSource::Project, EventSeverity::Warning,
+        "Launch configuration unavailable: no project is open\n");
+      else if (build_session_.running() || run_session_.running()
+               || run_session_.consoleRunning() || gdb_.running())
+        publishEvent(EventSource::Project, EventSeverity::Warning,
+          "Launch configuration unavailable while build, program, or debugger is running\n");
+      else deferred_command_ = [this] { selectLaunchProfile(); };
       return true;
     case finalcut::FKey::Ctrl_k:
       if (root_.empty()) publishEvent(EventSource::Build, EventSeverity::Warning, "Problems unavailable: no project is open\n");

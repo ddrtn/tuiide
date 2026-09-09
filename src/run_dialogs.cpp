@@ -130,6 +130,144 @@ auto LaunchSettingsDialog::configuration(LaunchConfiguration& result,
   return impl_->readConfiguration(result, error);
 }
 
+LaunchConfigurationManagerDialog::LaunchConfigurationManagerDialog(
+    std::filesystem::path root, std::vector<NamedLaunchConfiguration> configurations,
+    std::string selected, const std::vector<CMakeTarget>& targets, finalcut::FWidget* parent)
+    : CenteredDialog("Run/Debug configurations", parent), root_(std::move(root)),
+      configurations_(std::move(configurations)), selected_(std::move(selected)), targets_(targets),
+      list_(this), add_("&Add...", this), clone_("&Clone...", this),
+      edit_("&Edit...", this), remove_("&Delete", this), select_("&Select", this),
+      cancel_("C&ancel", this) {
+  setDialogSize({82, 25});
+  setModal();
+  list_.setGeometry({2, 2}, {77, 15});
+  add_.setGeometry({2, 19}, {11, 1});
+  clone_.setGeometry({15, 19}, {11, 1});
+  edit_.setGeometry({28, 19}, {11, 1});
+  remove_.setGeometry({41, 19}, {11, 1});
+  select_.setGeometry({56, 19}, {10, 1});
+  cancel_.setGeometry({68, 19}, {11, 1});
+  add_.addCallback("clicked", [this] { addConfiguration(); });
+  clone_.addCallback("clicked", [this] { cloneConfiguration(); });
+  edit_.addCallback("clicked", [this] { editConfiguration(); });
+  remove_.addCallback("clicked", [this] { deleteConfiguration(); });
+  select_.addCallback("clicked", [this] { selectConfiguration(); });
+  cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
+  list_.addCallback("clicked", [this] { editConfiguration(); });
+  refresh(selected_);
+}
+
+auto LaunchConfigurationManagerDialog::currentIndex() const -> std::optional<std::size_t> {
+  const auto row = list_.currentItem();
+  if (row == 0 || row > configurations_.size()) return std::nullopt;
+  return row - 1;
+}
+
+auto LaunchConfigurationManagerDialog::requestUniqueName(std::string title)
+    -> std::optional<std::string> {
+  PromptDialog dialog(std::move(title), "Configuration name:", this);
+  if (dialog.exec() != ResultCode::Accept) return std::nullopt;
+  auto name = dialog.value();
+  const auto begin = name.find_first_not_of(" \t");
+  const auto end = name.find_last_not_of(" \t");
+  name = begin == std::string::npos ? std::string{} : name.substr(begin, end - begin + 1);
+  if (name.empty()) {
+    finalcut::FMessageBox::error(this, "Configuration name is required.");
+    return std::nullopt;
+  }
+  if (std::any_of(configurations_.begin(), configurations_.end(), [&name](const auto& item) {
+      return item.name == name;
+    })) {
+    finalcut::FMessageBox::error(this, "A configuration with this name already exists.");
+    return std::nullopt;
+  }
+  return name;
+}
+
+void LaunchConfigurationManagerDialog::refresh(const std::string& preferred) {
+  list_.clear();
+  std::size_t selected_row{1};
+  for (std::size_t index{}; index < configurations_.size(); ++index) {
+    const auto& item = configurations_[index];
+    auto detail = !item.configuration.executable.empty()
+      ? item.configuration.executable.string()
+      : !item.configuration.target.empty() ? item.configuration.target : "current CMake target";
+    list_.insert(finalcut::FString{(item.name == selected_ ? "* " : "  ")
+      + item.name + " — " + detail});
+    if (item.name == (preferred.empty() ? selected_ : preferred)) selected_row = index + 1;
+  }
+  list_.setCurrentItem(selected_row);
+  remove_.setEnable(configurations_.size() > 1);
+  list_.redraw();
+  activateWindow();
+  raiseWindow();
+  setWindowFocusWidget(&list_);
+  list_.setFocus();
+}
+
+void LaunchConfigurationManagerDialog::addConfiguration() {
+  const auto name = requestUniqueName("Add Run/Debug configuration");
+  if (!name) return;
+  LaunchConfiguration configuration;
+  LaunchSettingsDialog dialog(root_, configuration, targets_, this);
+  if (dialog.exec() != ResultCode::Accept) return;
+  std::string error;
+  if (!dialog.configuration(configuration, error)) {
+    finalcut::FMessageBox::error(this, finalcut::FString{error}); return;
+  }
+  configurations_.push_back({*name, std::move(configuration)});
+  refresh(*name);
+}
+
+void LaunchConfigurationManagerDialog::cloneConfiguration() {
+  const auto index = currentIndex();
+  if (!index) return;
+  const auto name = requestUniqueName("Clone Run/Debug configuration");
+  if (!name) return;
+  configurations_.push_back({*name, configurations_[*index].configuration});
+  refresh(*name);
+}
+
+void LaunchConfigurationManagerDialog::editConfiguration() {
+  const auto index = currentIndex();
+  if (!index) return;
+  LaunchSettingsDialog dialog(root_, configurations_[*index].configuration, targets_, this);
+  if (dialog.exec() != ResultCode::Accept) return;
+  LaunchConfiguration configuration;
+  std::string error;
+  if (!dialog.configuration(configuration, error)) {
+    finalcut::FMessageBox::error(this, finalcut::FString{error}); return;
+  }
+  configurations_[*index].configuration = std::move(configuration);
+  refresh(configurations_[*index].name);
+}
+
+void LaunchConfigurationManagerDialog::deleteConfiguration() {
+  const auto index = currentIndex();
+  if (!index) return;
+  if (configurations_.size() == 1) {
+    finalcut::FMessageBox::info(this, "Run/Debug configurations",
+      "At least one configuration must remain.");
+    return;
+  }
+  const auto answer = finalcut::FMessageBox::info(this, "Delete configuration",
+    finalcut::FString{"Delete " + configurations_[*index].name + "?"},
+    finalcut::FMessageBox::ButtonType::Yes, finalcut::FMessageBox::ButtonType::No,
+    finalcut::FMessageBox::ButtonType::Reject);
+  if (answer != finalcut::FMessageBox::ButtonType::Yes) return;
+  const auto deleted_active = configurations_[*index].name == selected_;
+  configurations_.erase(configurations_.begin() + static_cast<std::ptrdiff_t>(*index));
+  if (deleted_active) selected_ = configurations_.front().name;
+  refresh(selected_);
+}
+
+void LaunchConfigurationManagerDialog::selectConfiguration() {
+  const auto index = currentIndex();
+  if (!index) return;
+  selected_ = configurations_[*index].name;
+  done(ResultCode::Accept);
+}
+
 namespace {
 auto joinPresetValues(const std::vector<std::string>& values) -> std::string {
   std::string result;

@@ -1717,6 +1717,10 @@ int main() {
       && loaded_settings.custom_themes == project_settings.custom_themes
       && tuiide::effectiveEditorTheme(loaded_settings) == "Dark"
       && loaded_settings.colors == project_settings.colors
+      && loaded_settings.launch_configurations.size() == 1
+      && loaded_settings.active_launch_configuration == "Default"
+      && loaded_settings.launch_configurations.front().configuration.arguments
+        == project_settings.launch.arguments
       && loaded_settings.launch.executable == tuiide::normalizePath(settings_project / "bin/custom app")
       && loaded_settings.launch.target == "cmake_app"
       && loaded_settings.launch.working_directory == tuiide::normalizePath(settings_project / "run")
@@ -1903,6 +1907,48 @@ int main() {
       launch_command, session_error)
       && session_error.find("does not exist") != std::string::npos,
     "missing explicit executable reports an actionable launch error");
+  auto named_settings = loaded_settings;
+  tuiide::LaunchConfiguration tests_launch;
+  tests_launch.target = "cmake_app";
+  tests_launch.arguments = {"--suite", "unit"};
+  named_settings.launch_configurations.push_back({"Tests", tests_launch});
+  expect(tuiide::selectLaunchConfiguration(named_settings, "Tests")
+      && named_settings.launch.arguments == std::vector<std::string>{"--suite", "unit"}
+      && named_settings.active_launch_configuration == "Tests",
+    "a named launch configuration can be selected as the shared Run/Debug profile");
+  named_settings.launch.arguments.push_back("--verbose");
+  tuiide::synchronizeActiveLaunchConfiguration(named_settings);
+  expect(named_settings.launch_configurations.back().configuration.arguments
+      == std::vector<std::string>{"--suite", "unit", "--verbose"}
+      && !tuiide::selectLaunchConfiguration(named_settings, "Missing"),
+    "active launch edits synchronize without accepting an unknown profile");
+  expect(tuiide::saveProjectSettings(settings_project, named_settings, session_error),
+    "multiple named launch configurations are saved atomically");
+  tuiide::ProjectSettings reloaded_named_settings;
+  expect(tuiide::loadProjectSettings(settings_project, reloaded_named_settings, session_error)
+      && reloaded_named_settings.launch_configurations.size() == 2
+      && reloaded_named_settings.active_launch_configuration == "Tests"
+      && reloaded_named_settings.launch.arguments
+        == std::vector<std::string>{"--suite", "unit", "--verbose"},
+    "named launch configurations and active selection round-trip");
+  auto invalid_launch_settings = named_settings;
+  invalid_launch_settings.launch_configurations.push_back({"Tests", {}});
+  expect(!tuiide::validateProjectSettings(settings_project, invalid_launch_settings, session_error)
+      && session_error.find("Duplicate") != std::string::npos,
+    "duplicate launch configuration names are rejected");
+  const auto legacy_launch_project = settings_project / "legacy-launch";
+  std::filesystem::create_directories(legacy_launch_project);
+  {
+    std::ofstream legacy(legacy_launch_project / ".tuiide-project.json");
+    legacy << "{\"version\":1,\"buildDirectory\":\"build\","
+      "\"launch\":{\"arguments\":[\"--legacy\"]}}";
+  }
+  tuiide::ProjectSettings migrated_launch_settings;
+  expect(tuiide::loadProjectSettings(legacy_launch_project, migrated_launch_settings, session_error)
+      && migrated_launch_settings.active_launch_configuration == "Default"
+      && migrated_launch_settings.launch_configurations.size() == 1
+      && migrated_launch_settings.launch.arguments == std::vector<std::string>{"--legacy"},
+    "legacy single launch settings migrate to the Default named configuration");
   auto invalid_theme = project_settings;
   invalid_theme.theme = "Invisible";
   expect(!tuiide::validateProjectSettings(settings_project, invalid_theme, session_error),

@@ -8,6 +8,7 @@
 #include <iterator>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <unordered_set>
 
 namespace tuiide {
 namespace {
@@ -33,6 +34,31 @@ auto resolvePath(const std::filesystem::path& root, const std::string& value) ->
   if (value.empty()) return {};
   const std::filesystem::path path(value);
   return normalizePath(path.is_absolute() ? path : root / path);
+}
+
+auto readLaunchConfiguration(const std::filesystem::path& root, const nlohmann::json& value)
+    -> LaunchConfiguration {
+  LaunchConfiguration launch;
+  launch.executable = resolvePath(root, value.value("executable", std::string{}));
+  launch.target = value.value("target", std::string{});
+  launch.working_directory = resolvePath(root, value.value("workingDirectory", std::string{}));
+  launch.arguments = value.value("arguments", std::vector<std::string>{});
+  launch.environment = value.value("environment", std::map<std::string, std::string>{});
+  launch.stdin_file = resolvePath(root, value.value("stdinFile", std::string{}));
+  launch.pre_launch_build = value.value("preLaunchBuild", false);
+  launch.external_terminal = value.value("externalTerminal", false);
+  launch.terminal = value.value("terminal", std::string("x-terminal-emulator"));
+  return launch;
+}
+
+auto launchConfigurationJson(const std::filesystem::path& root,
+    const LaunchConfiguration& launch) -> nlohmann::json {
+  return {{"executable", portablePath(root, launch.executable)}, {"target", launch.target},
+    {"workingDirectory", portablePath(root, launch.working_directory)},
+    {"arguments", launch.arguments}, {"environment", launch.environment},
+    {"stdinFile", portablePath(root, launch.stdin_file)},
+    {"preLaunchBuild", launch.pre_launch_build},
+    {"externalTerminal", launch.external_terminal}, {"terminal", launch.terminal}};
 }
 
 auto gitignorePath(std::string value) -> std::string {
@@ -67,6 +93,23 @@ auto writeAtomically(const std::filesystem::path& destination, std::string_view 
   return true;
 }
 }  // namespace
+
+auto selectLaunchConfiguration(ProjectSettings& settings, std::string_view name) -> bool {
+  const auto selected = std::find_if(settings.launch_configurations.begin(),
+    settings.launch_configurations.end(), [name](const auto& item) { return item.name == name; });
+  if (selected == settings.launch_configurations.end()) return false;
+  settings.active_launch_configuration = selected->name;
+  settings.launch = selected->configuration;
+  return true;
+}
+
+void synchronizeActiveLaunchConfiguration(ProjectSettings& settings) {
+  const auto active = std::find_if(settings.launch_configurations.begin(),
+    settings.launch_configurations.end(), [&settings](const auto& item) {
+      return item.name == settings.active_launch_configuration;
+    });
+  if (active != settings.launch_configurations.end()) active->configuration = settings.launch;
+}
 
 auto defaultProjectSettings(const std::filesystem::path& project_directory) -> ProjectSettings {
   const auto root = normalizePath(project_directory);
@@ -136,13 +179,32 @@ auto validateProjectSettings(const std::filesystem::path& project_directory,
     (void)value;
     if (!validEnvironmentName(name)) { error = "Invalid environment variable name: " + name; return false; }
   }
-  for (const auto& [name, value] : settings.launch.environment) {
-    (void)value;
-    if (!validEnvironmentName(name)) { error = "Invalid launch environment variable name: " + name; return false; }
+  if (settings.launch_configurations.empty()) {
+    error = "At least one launch configuration is required."; return false;
   }
-  if (settings.launch.external_terminal && settings.launch.terminal.empty()) {
-    error = "External terminal command is required."; return false;
+  std::unordered_set<std::string> launch_names;
+  bool active_found{};
+  for (const auto& named : settings.launch_configurations) {
+    if (named.name.empty() || !launch_names.insert(named.name).second) {
+      error = named.name.empty() ? "Launch configuration name is required."
+        : "Duplicate launch configuration name: " + named.name;
+      return false;
+    }
+    active_found = active_found || named.name == settings.active_launch_configuration;
+    const auto& launch = named.name == settings.active_launch_configuration
+      ? settings.launch : named.configuration;
+    for (const auto& [name, value] : launch.environment) {
+      (void)value;
+      if (!validEnvironmentName(name)) {
+        error = "Invalid launch environment variable name in " + named.name + ": " + name;
+        return false;
+      }
+    }
+    if (launch.external_terminal && launch.terminal.empty()) {
+      error = "External terminal command is required for " + named.name + "."; return false;
+    }
   }
+  if (!active_found) { error = "Active launch configuration was not found."; return false; }
   return true;
 }
 
@@ -177,17 +239,23 @@ auto loadProjectSettings(const std::filesystem::path& project_directory,
     settings.theme = json.value("theme", std::string("Dark"));
     settings.custom_themes = json.value("customThemes", std::map<std::string, std::string>{});
     settings.colors = json.value("colors", std::map<std::string, std::string>{});
-    if (json.contains("launch") && json["launch"].is_object()) {
-      const auto& launch = json["launch"];
-      settings.launch.executable = resolvePath(root, launch.value("executable", std::string{}));
-      settings.launch.target = launch.value("target", std::string{});
-      settings.launch.working_directory = resolvePath(root, launch.value("workingDirectory", std::string{}));
-      settings.launch.arguments = launch.value("arguments", std::vector<std::string>{});
-      settings.launch.environment = launch.value("environment", std::map<std::string, std::string>{});
-      settings.launch.stdin_file = resolvePath(root, launch.value("stdinFile", std::string{}));
-      settings.launch.pre_launch_build = launch.value("preLaunchBuild", false);
-      settings.launch.external_terminal = launch.value("externalTerminal", false);
-      settings.launch.terminal = launch.value("terminal", std::string("x-terminal-emulator"));
+    if (json.contains("launchConfigurations") && json["launchConfigurations"].is_array()) {
+      settings.launch_configurations.clear();
+      for (const auto& value : json["launchConfigurations"]) {
+        if (!value.is_object()) continue;
+        const auto name = value.value("name", std::string{});
+        const auto configuration = value.find("configuration");
+        if (name.empty() || configuration == value.end() || !configuration->is_object()) continue;
+        settings.launch_configurations.push_back({name, readLaunchConfiguration(root, *configuration)});
+      }
+      settings.active_launch_configuration = json.value("activeLaunchConfiguration", std::string("Default"));
+      if (!selectLaunchConfiguration(settings, settings.active_launch_configuration)) {
+        error = "Active launch configuration was not found."; return false;
+      }
+    } else if (json.contains("launch") && json["launch"].is_object()) {
+      settings.launch = readLaunchConfiguration(root, json["launch"]);
+      settings.launch_configurations = {{"Default", settings.launch}};
+      settings.active_launch_configuration = "Default";
     }
   } catch (const nlohmann::json::exception& exception) {
     error = "Cannot parse project settings: " + std::string(exception.what());
@@ -200,6 +268,15 @@ auto saveProjectSettings(const std::filesystem::path& project_directory,
     const ProjectSettings& settings, std::string& error) -> bool {
   const auto root = normalizePath(project_directory);
   if (!validateProjectSettings(root, settings, error)) return false;
+  auto launch_configurations = settings.launch_configurations;
+  const auto active = std::find_if(launch_configurations.begin(), launch_configurations.end(),
+    [&settings](const auto& item) { return item.name == settings.active_launch_configuration; });
+  if (active != launch_configurations.end()) active->configuration = settings.launch;
+  auto launch_json = nlohmann::json::array();
+  for (const auto& named : launch_configurations) {
+    launch_json.push_back({{"name", named.name},
+      {"configuration", launchConfigurationJson(root, named.configuration)}});
+  }
   const nlohmann::json json{
     {"version", 1}, {"buildDirectory", portablePath(root, settings.build_directory)},
     {"generator", settings.generator}, {"toolchain", portablePath(root, settings.toolchain)},
@@ -212,12 +289,8 @@ auto saveProjectSettings(const std::filesystem::path& project_directory,
     {"environment", settings.environment}, {"clangdArguments", settings.clangd_arguments},
     {"shortcuts", settings.shortcuts},
     {"theme", settings.theme}, {"customThemes", settings.custom_themes}, {"colors", settings.colors},
-    {"launch", {{"executable", portablePath(root, settings.launch.executable)}, {"target", settings.launch.target},
-      {"workingDirectory", portablePath(root, settings.launch.working_directory)},
-      {"arguments", settings.launch.arguments}, {"environment", settings.launch.environment},
-      {"stdinFile", portablePath(root, settings.launch.stdin_file)},
-      {"preLaunchBuild", settings.launch.pre_launch_build},
-      {"externalTerminal", settings.launch.external_terminal}, {"terminal", settings.launch.terminal}}}
+    {"activeLaunchConfiguration", settings.active_launch_configuration},
+    {"launchConfigurations", std::move(launch_json)}
   };
   if (!writeAtomically(root / ".tuiide-project.json", json.dump(2) + "\n", error)) return false;
   error.clear();

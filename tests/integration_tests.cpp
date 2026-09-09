@@ -712,9 +712,17 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
     screen.clear();
     constexpr std::string_view launch_settings{"\033l"};
     (void)::write(master, launch_settings.data(), launch_settings.size());
+    (void)waitFor(pumpScreen, [&] {
+      return screen.find("Run/Debug configurations") != std::string::npos;
+    }, 5s);
+    constexpr std::string_view edit_launch{"\033e"};
+    screen.clear();
+    (void)::write(master, edit_launch.data(), edit_launch.size());
     secondary_settings_loaded = waitFor(pumpScreen, [&] {
       return screen.find("SECOND_PROJECT_ARGUMENT") != std::string::npos;
     }, 5s);
+    (void)::write(master, &escape, 1);
+    std::this_thread::sleep_for(150ms); pumpScreen();
     (void)::write(master, &escape, 1);
     (void)waitFor(pumpScreen, [&] { return screen.find("TUI IDE") != std::string::npos; }, 3s);
     std::this_thread::sleep_for(300ms);
@@ -965,8 +973,12 @@ auto exerciseImportLifecyclePty(const std::filesystem::path& tuiide,
   const bool artifact = std::filesystem::is_regular_file(build / "ui_import");
 
   screen.clear(); send("\033l");
+  const bool launch_manager = visible("Run/Debug configurations");
+  screen.clear(); send("\033e");
   const bool launch_dialog = visible("Launch configuration");
   send("ui-argument");
+  screen.clear(); send("\033s");
+  const bool launch_edited = visible("Run/Debug configurations");
   screen.clear(); send("\033s");
   const bool launch_saved = visible("TUI IDE");
 
@@ -1012,7 +1024,8 @@ auto exerciseImportLifecyclePty(const std::filesystem::path& tuiide,
   ptrace_restricted = ptrace_restricted || logged("ptrace: Operation not permitted");
   const bool success = started && project_picker && import_offer
     && import_settings && build_picker && directory_prompt && preview
-    && imported && built && artifact && launch_dialog && launch_saved && argument_saved && run_waiting
+    && imported && built && artifact && launch_manager && launch_dialog && launch_edited
+    && launch_saved && argument_saved && run_waiting
     && run_input && run_finished && debug_started
     && (debug_finished || ptrace_restricted)
     && files_created && exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
@@ -1022,7 +1035,8 @@ auto exerciseImportLifecyclePty(const std::filesystem::path& tuiide,
       << " settings=" << import_settings << " build_picker=" << build_picker
       << " prompt=" << directory_prompt << " build_dir=" << build_entered
       << " preview=" << preview << " imported=" << imported << " built=" << built
-      << " artifact=" << artifact << " launch=" << launch_dialog
+      << " artifact=" << artifact << " launch_manager=" << launch_manager
+      << " launch=" << launch_dialog << " launch_edited=" << launch_edited
       << " launch_saved=" << launch_saved << " argument_saved=" << argument_saved
       << " run_waiting=" << run_waiting
       << " run_input=" << run_input << " run_finished=" << run_finished
@@ -1308,7 +1322,15 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
   { std::ofstream file(project / "main.cpp"); file << "int main() { return 0; }\n"; }
   {
     std::ofstream file(project / ".tuiide-project.json");
-    file << "{\"version\":1,\"buildDirectory\":\"build\",\"buildJobs\":1}\n";
+    if (std::getenv("TUIIDE_LAUNCH_CONFIGS_ONLY") != nullptr) {
+      file << R"({"version":1,"buildDirectory":"build","buildJobs":1,)"
+              R"("activeLaunchConfiguration":"Default","launchConfigurations":[)"
+              R"({"name":"Default","configuration":{"arguments":[]}},)"
+              R"({"name":"Second","configuration":{"arguments":["--second"]}}]})"
+           << '\n';
+    } else {
+      file << "{\"version\":1,\"buildDirectory\":\"build\",\"buildJobs\":1}\n";
+    }
   }
   const auto config = workspace / "window-help-config";
   const auto settings_file = config / "tuiide/settings.json";
@@ -1388,6 +1410,59 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
   };
 
   const bool started = visible("Open files");
+  if (std::getenv("TUIIDE_LAUNCH_CONFIGS_ONLY") != nullptr) {
+    screen.clear(); send("\033l");
+    const bool manager = visible("Run/Debug configurations", 5s)
+      && visible("Second", 3s);
+    screen.clear(); send("\033a");
+    const bool add_prompt = visible("Add Run/Debug configuration", 3s);
+    screen.clear(); send("Named\r");
+    const bool add_editor = visible("Launch configuration", 3s);
+    screen.clear(); send("--named"); send("\033s");
+    const bool added = visible("Named", 5s) && visible("Run/Debug configurations", 3s);
+    screen.clear(); send("\033c");
+    const bool clone_prompt = visible("Clone Run/Debug configuration", 3s);
+    screen.clear(); send("Named Copy\r");
+    const bool cloned = visible("Named Copy", 5s);
+    screen.clear(); send("\033d");
+    const bool delete_prompt = visible("Delete Named Copy", 3s);
+    screen.clear(); send("y");
+    const bool deleted = visible("Run/Debug configurations", 5s);
+    screen.clear(); send("\033[F"); send("\033s");
+    const bool selected = waitFor(pump, [&] {
+      return logged("Active Run/Debug configuration: Named");
+    }, 5s);
+    std::ifstream settings_input(project / ".tuiide-project.json", std::ios::binary);
+    const std::string settings_text((std::istreambuf_iterator<char>(settings_input)),
+      std::istreambuf_iterator<char>());
+    const bool persisted = settings_text.find("\"activeLaunchConfiguration\": \"Named\"")
+        != std::string::npos
+      && settings_text.find("--named") != std::string::npos
+      && settings_text.find("Named Copy") == std::string::npos;
+    screen.clear(); send("\033L");
+    const bool quick_select = visible("Select Run/Debug configuration", 5s)
+      && visible("Second", 3s);
+    screen.clear(); send("\033"); settle(); send("\033"); settle(); send("\021");
+    int launch_status{};
+    const auto exited = waitFor(pump, [&] {
+      return ::waitpid(child, &launch_status, WNOHANG) == child;
+    }, 8s);
+    if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &launch_status, 0); }
+    ::close(master);
+    const bool success = started && manager && add_prompt && add_editor && added
+      && clone_prompt && cloned && delete_prompt && deleted && selected && persisted
+      && quick_select && exited && WIFEXITED(launch_status) && WEXITSTATUS(launch_status) == 0;
+    if (!success) {
+      std::cerr << "Launch configurations PTY: started=" << started << " manager=" << manager
+        << " add_prompt=" << add_prompt << " add_editor=" << add_editor << " added=" << added
+        << " clone_prompt=" << clone_prompt << " cloned=" << cloned
+        << " delete_prompt=" << delete_prompt << " deleted=" << deleted
+        << " selected=" << selected << " persisted=" << persisted
+        << " quick_select=" << quick_select << " exited=" << exited
+        << " status=" << launch_status << '\n';
+    }
+    return success;
+  }
   if (std::getenv("TUIIDE_RECENT_FILES_ONLY") != nullptr) {
     screen.clear(); send("\033f");
     const bool file_menu = visible("New Project", 3s);

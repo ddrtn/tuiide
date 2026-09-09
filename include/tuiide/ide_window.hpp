@@ -232,6 +232,7 @@ class IdeWindow final : public finalcut::FDialog {
   void clean();
   void cancelBuild();
   void launchSettings();
+  void selectLaunchProfile();
   auto beginBuildOperation(bool save_documents) -> bool;
   auto startPreLaunchBuild(BuildContinuation continuation) -> bool;
   auto startConfigureStage() -> bool;
@@ -388,7 +389,8 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem separator1{&menu};
     finalcut::FMenuItem run{finalcut::FKey::F6, "Ru&n", &menu};
     finalcut::FMenuItem stop_run{"S&top program", &menu};
-    finalcut::FMenuItem launch_settings{finalcut::FKey::Meta_l, "Laun&ch configuration...", &menu};
+    finalcut::FMenuItem launch_select{finalcut::FKey::Meta_L, "Select &active configuration...", &menu};
+    finalcut::FMenuItem launch_settings{finalcut::FKey::Meta_l, "Manage &Debug/Run configurations...", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem configure_preset{finalcut::FKey::Ctrl_p, "Configure &preset...", &menu};
     finalcut::FMenuItem build_preset{finalcut::FKey::Meta_b, "Build pre&set...", &menu};

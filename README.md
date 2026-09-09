@@ -16,8 +16,8 @@ CMake, clangd и GDB/MI. Исходный текст и интерфейс ра�
 - Создание, импорт и настройка CMake-проектов; targets, configure/build presets,
   выбор генератора, build-каталога и количества задач сборки.
 - Асинхронные Configure/Build/Clean/Rebuild, список проблем и журнал вывода.
-- Запуск в интегрированном PTY или внешнем терминале, аргументы, переменные среды
-  и интерактивный `stdin`.
+- Именованные конфигурации Run/Debug с клонированием и быстрым выбором; запуск в
+  интегрированном PTY или внешнем терминале, аргументы, среда и `stdin`.
 - Отладка через GDB: breakpoints/logpoints, стек, потоки, локальные переменные,
   watches, registers, вычисление выражений, память и дизассемблер.
 - Дерево проекта, шаблоны C/C++ файлов и C++ классов с обновлением CMake.
@@ -83,6 +83,7 @@ ctest --test-dir tuiide-build --output-on-failure
 - `F5`, `F6`, `F7`, `F9` — debug, run, build и breakpoint.
 - `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+W` — новый файл, открыть, сохранить, закрыть.
 - `Ctrl+F` — поиск/замена; `Ctrl+Space` — completion; `Alt+K` — command palette.
+- `Alt+L` — менеджер конфигураций Run/Debug; `Alt+Shift+L` — быстрый выбор.
 - `Alt+PageUp/PageDown` — вкладки боковой панели; `Alt+Shift+PageUp/PageDown` —
   вкладки нижней панели.
 

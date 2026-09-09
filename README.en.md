@@ -19,8 +19,9 @@ source code and user interface use UTF-8.
   configure/build presets, generators, build directories, and parallel jobs.
 - Asynchronous Configure, Build, Clean, and Rebuild commands with Problems and
   Output panels.
-- Programs run in an integrated PTY or external terminal with arguments,
-  environment variables, and interactive standard input.
+- Named Run/Debug configurations support cloning and quick selection; programs
+  run in an integrated PTY or external terminal with arguments, environment,
+  and standard input.
 - GDB debugging with breakpoints and logpoints, stack frames, threads, locals,
   watches, registers, expression evaluation, memory, and disassembly.
 - Project tree and templates for C/C++ source files and classes that update the
@@ -86,6 +87,7 @@ select commands inside an open menu. Configure global shortcuts through
 - `F5`, `F6`, `F7`, and `F9`: debug, run, build, and toggle breakpoint.
 - `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, and `Ctrl+W`: new, open, save, and close file.
 - `Ctrl+F`: find/replace; `Ctrl+Space`: completion; `Alt+K`: command palette.
+- `Alt+L`: manage Run/Debug configurations; `Alt+Shift+L`: quick selection.
 - `Alt+PageUp/PageDown`: sidebar tabs;
   `Alt+Shift+PageUp/PageDown`: lower-panel tabs.
 

@@ -9,6 +9,12 @@
 
 namespace tuiide {
 
+/** Именованный профиль запуска, общий для команд Run и Debug. */
+struct NamedLaunchConfiguration {
+  std::string name{"Default"};
+  LaunchConfiguration configuration;
+};
+
 /**
  * Версионируемые настройки конкретного CMake-проекта.
  * Пути внутри проекта сохраняются относительными; проверка не даёт build-каталогу
@@ -34,8 +40,17 @@ struct ProjectSettings {
   std::string theme{"Dark"};
   std::map<std::string, std::string> custom_themes;
   std::map<std::string, std::string> colors;
+  std::vector<NamedLaunchConfiguration> launch_configurations{{}};
+  std::string active_launch_configuration{"Default"};
+  // Runtime-проекция активного профиля сохраняет совместимость сервисов запуска.
   LaunchConfiguration launch;
 };
+
+/** Выбирает профиль и обновляет runtime-проекцию `launch`. */
+[[nodiscard]] auto selectLaunchConfiguration(ProjectSettings& settings,
+  std::string_view name) -> bool;
+/** Записывает runtime-проекцию в активный именованный профиль. */
+void synchronizeActiveLaunchConfiguration(ProjectSettings& settings);
 
 [[nodiscard]] auto defaultProjectSettings(const std::filesystem::path& project_directory)
   -> ProjectSettings;
