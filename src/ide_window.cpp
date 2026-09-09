@@ -47,7 +47,7 @@ auto ideCommands() -> const std::vector<IdeCommand>& {
     {"search.nextDiagnostic", "Search: Next Diagnostic", finalcut::FKey::F32, "Ctrl+F8"},
     {"run.debug", "Debug: Start / Continue", finalcut::FKey::F5, "F5"},
     {"run.run", "Run: Run", finalcut::FKey::F6, "F6"},
-    {"run.build", "Run: Build", finalcut::FKey::Ctrl_b, "Ctrl+Shift+B"},
+    {"run.build", "Run: Build", finalcut::FKey::Ctrl_b, "Ctrl+B"},
     {"run.selectLaunch", "Run: Select Configuration", finalcut::FKey::Meta_L, "Alt+Shift+L"},
     {"run.launchSettings", "Run: Launch Configuration", finalcut::FKey::Meta_l, "Alt+L"},
     {"debug.breakpoint", "Debug: Toggle Breakpoint", finalcut::FKey::F9, "F9"},
@@ -77,7 +77,7 @@ auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
   });
   static const std::map<std::string, finalcut::FKey> keys{
     {"CTRL+A", finalcut::FKey::Ctrl_a}, {"CTRL+B", finalcut::FKey::Ctrl_b},
-    {"CTRL+SHIFT+B", finalcut::FKey::Ctrl_b},
+    {"CTRL+B", finalcut::FKey::Ctrl_b},
     {"CTRL+D", finalcut::FKey::Ctrl_d}, {"CTRL+E", finalcut::FKey::Ctrl_e},
     {"CTRL+F", finalcut::FKey::Ctrl_f}, {"CTRL+G", finalcut::FKey::Ctrl_g},
     {"CTRL+K", finalcut::FKey::Ctrl_k}, {"CTRL+L", finalcut::FKey::Ctrl_l},
@@ -688,7 +688,7 @@ void IdeWindow::showKeyboardHelp() {
     "F10 or Alt+F/E/S/R/P/D/T/W/H  Menu; underlines local, shortcuts global\n"
     "Ctrl+N/O/S/W  Files\n"
     "F1/F2/F3/F4  Info/Rename/Definition/References\n"
-    "F5/F6        Debug/Run   Ctrl+Shift+B Build\n"
+    "F5/F6        Debug/Run   Ctrl+B Build\n"
     "F7/F8        Step into/out   Ctrl+F10 Step over\n"
     "F9           Breakpoint   Ctrl+F8 Next diagnostic\n"
     "Alt+PgUp/Dn  Previous/next sidebar tab\n"
@@ -2997,7 +2997,7 @@ void IdeWindow::refreshCMakeTargets() {
 
 void IdeWindow::selectCMakeTarget() {
   refreshCMakeTargets();
-  if (cmake_session_.targets().empty()) { publishEvent(EventSource::Build, EventSeverity::Information, "No executable CMake targets; build the project first (Ctrl+Shift+B)\n"); return; }
+  if (cmake_session_.targets().empty()) { publishEvent(EventSource::Build, EventSeverity::Information, "No executable CMake targets; build the project first (Ctrl+B)\n"); return; }
   std::vector<std::string> labels;
   labels.reserve(cmake_session_.targets().size());
   for (const auto& target : cmake_session_.targets()) {
@@ -3394,7 +3394,7 @@ void IdeWindow::updateStatus() {
        << " | target: " << (!project_settings_.launch.executable.empty()
          ? "launch:" + project_settings_.launch.executable.filename().string()
          : (selected_target ? selected_target->name : "unselected"))
-       << " | Ctrl+Shift+B Build  F6 Run  F5 Debug  F9 Break  Ctrl+Space Complete";
+       << " | Ctrl+B Build  F6 Run  F5 Debug  F9 Break  Ctrl+Space Complete";
   status_.setText(finalcut::FString(text.str())); status_.redraw();
 }
 

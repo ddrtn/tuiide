@@ -80,7 +80,7 @@ ctest --test-dir tuiide-build --output-on-failure
 действуют внутри открытого меню; глобальные сочетания команд настраиваются через
 **Tools → Configure shortcut**.
 
-- `F5`, `F6`, `Ctrl+Shift+B`, `F9` — debug, run, build и breakpoint.
+- `F5`, `F6`, `Ctrl+B`, `F9` — debug, run, build и breakpoint.
 - `F7`, `F8`, `Ctrl+F10` — step into, step out и step over; `Ctrl+F8` —
   следующая диагностика.
 - `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+W` — новый файл, открыть, сохранить, закрыть.

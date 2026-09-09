@@ -1787,7 +1787,7 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   const bool shortcut_error_picker = visible("File: New", 5s);
   screen.clear(); send("\033c"); settle(); screen.clear();
   send(std::string(1, static_cast<char>(2)));
-  const bool conflict_captured = visible("Ctrl+Shift+B", 5s);
+  const bool conflict_captured = visible("Ctrl+B", 5s);
   const bool shortcut_error = conflict_captured && readFile(settings_file) == initial_settings;
   screen.clear(); send("\033"); settle();
   const bool shortcut_error_safe = readFile(settings_file) == initial_settings;

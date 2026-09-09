@@ -84,7 +84,7 @@ Open the main menu with `F10` or `Alt+F/E/S/R/P/D/T/W/H`. Underlined letters
 select commands inside an open menu. Configure global shortcuts through
 **Tools → Configure shortcut**.
 
-- `F5`, `F6`, `Ctrl+Shift+B`, and `F9`: debug, run, build, and toggle breakpoint.
+- `F5`, `F6`, `Ctrl+B`, and `F9`: debug, run, build, and toggle breakpoint.
 - `F7`, `F8`, and `Ctrl+F10`: step into, step out, and step over; `Ctrl+F8`:
   next diagnostic.
 - `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, and `Ctrl+W`: new, open, save, and close file.

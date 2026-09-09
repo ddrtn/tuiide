@@ -20,7 +20,7 @@ auto normalizedShortcut(std::string value) -> std::string {
 auto canonicalShortcut(std::string value) -> std::string {
   const auto normalized = normalizedShortcut(std::move(value));
   static const std::map<std::string, std::string> names{
-    {"CTRL+A", "Ctrl+A"}, {"CTRL+B", "Ctrl+Shift+B"},
+    {"CTRL+A", "Ctrl+A"}, {"CTRL+B", "Ctrl+B"},
     {"CTRL+SHIFT+B", "Ctrl+Shift+B"}, {"CTRL+D", "Ctrl+D"},
     {"CTRL+E", "Ctrl+E"}, {"CTRL+F", "Ctrl+F"}, {"CTRL+G", "Ctrl+G"},
     {"CTRL+K", "Ctrl+K"}, {"CTRL+L", "Ctrl+L"}, {"CTRL+N", "Ctrl+N"},
@@ -47,7 +47,7 @@ auto canonicalShortcut(std::string value) -> std::string {
 
 auto shortcutForKey(finalcut::FKey key) -> std::string {
   static const std::map<finalcut::FKey, std::string> names{
-    {finalcut::FKey::Ctrl_a, "Ctrl+A"}, {finalcut::FKey::Ctrl_b, "Ctrl+Shift+B"},
+    {finalcut::FKey::Ctrl_a, "Ctrl+A"}, {finalcut::FKey::Ctrl_b, "Ctrl+B"},
     {finalcut::FKey::Ctrl_d, "Ctrl+D"}, {finalcut::FKey::Ctrl_e, "Ctrl+E"},
     {finalcut::FKey::Ctrl_f, "Ctrl+F"}, {finalcut::FKey::Ctrl_g, "Ctrl+G"},
     {finalcut::FKey::Ctrl_k, "Ctrl+K"}, {finalcut::FKey::Ctrl_l, "Ctrl+L"},
