@@ -34,6 +34,8 @@ class CodeEditor final : public finalcut::FWidget {
   void setFeedbackHandler(std::function<void(std::string, bool)> handler);
   void setCommandHandler(std::function<bool(finalcut::FKey)> handler);
   void setBreakpointProvider(std::function<bool(std::size_t)> provider);
+  /** Подсвечивает исполняемую строку остановленного отладчика (нумерация с нуля). */
+  void setExecutionLine(std::optional<std::size_t> line);
   void setIndentation(unsigned width, bool use_spaces);
   void setTheme(std::string theme, const std::map<std::string, std::string>& overrides);
   void invalidateSyntax();
@@ -82,6 +84,7 @@ class CodeEditor final : public finalcut::FWidget {
   std::function<void(std::string, bool)> feedback_handler_;
   std::function<bool(finalcut::FKey)> command_handler_;
   std::function<bool(std::size_t)> breakpoint_provider_;
+  std::optional<std::size_t> execution_line_;
   std::optional<Position> selection_anchor_;
   SystemClipboard clipboard_;
   bool mouse_selecting_{};
@@ -102,6 +105,7 @@ class CodeEditor final : public finalcut::FWidget {
   finalcut::FColor diagnostic_note_{finalcut::FColor::LightCyan};
   finalcut::FColor selection_foreground_{finalcut::FColor::White};
   finalcut::FColor selection_background_{finalcut::FColor::Blue};
+  finalcut::FColor execution_background_{finalcut::FColor::Green};
 };
 
 }  // namespace tuiide

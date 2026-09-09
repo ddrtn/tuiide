@@ -561,6 +561,7 @@ ColorEditorDialog::ColorEditorDialog(std::string theme,
       overrides_(std::move(overrides)),
       roles_{"foreground", "background", "gutter", "breakpoint", "diagnosticError",
         "diagnosticWarning", "diagnosticNote", "selectionForeground", "selectionBackground",
+        "executionLineBackground",
         "plain", "keyword", "type", "string", "number", "comment", "preprocessor",
         "namespace", "function", "variable", "parameter", "property", "macro", "enumMember"},
       colors_{"Black", "Blue", "Green", "Cyan", "Red", "Magenta", "Brown", "LightGray",
@@ -614,7 +615,8 @@ auto ColorEditorDialog::effectiveColor(const std::string& role) const -> std::st
       {"foreground", 252}, {"background", 16}, {"gutter", 244}, {"plain", 252},
       {"keyword", 213}, {"type", 81}, {"string", 114}, {"number", 221}, {"comment", 244},
       {"preprocessor", 75}, {"namespace", 75}, {"function", 151}, {"variable", 252},
-      {"parameter", 81}, {"property", 80}, {"macro", 203}, {"enumMember", 221}};
+      {"parameter", 81}, {"property", 80}, {"macro", 203}, {"enumMember", 221},
+      {"executionLineBackground", 22}};
     if (const auto value = indexed.find(role); value != indexed.end())
       return "Index " + std::to_string(value->second);
   }
@@ -630,6 +632,8 @@ auto ColorEditorDialog::effectiveColor(const std::string& role) const -> std::st
   if (role == "foreground" || role == "plain" || role == "variable")
     return light ? "Black" : (contrast ? "White" : "LightGray");
   if (role == "gutter") return contrast ? "LightGray" : "DarkGray";
+  if (role == "executionLineBackground")
+    return light ? "LightGray" : (contrast ? "Blue" : "Green");
   if (role == "comment") return light ? "Green" : (contrast ? "LightGray" : "DarkGray");
   if (contrast && (role == "keyword" || role == "number")) return "Yellow";
   if (const auto value = common.find(role); value != common.end()) return value->second;

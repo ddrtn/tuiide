@@ -2523,6 +2523,7 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
   screen.clear(); send("\033[15~");
   const bool debug_started = waitFor(pump, [&] { return logged("GDB:"); }, 8s);
   const bool debug_stopped = waitFor(pump, [&] { return logged("Breakpoint 1, main"); }, 20s);
+  const bool execution_marker = visible("▶", 5s);
 
   const bool evaluate_cancel_menu = debugCommand('e');
   const bool evaluate_cancel_prompt = visible("Evaluate expression", 5s);
@@ -2612,7 +2613,7 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
     && breakpoint_set && panel_focused
     && properties_cancel_dialog && properties_cancelled
     && properties_error && properties_error_safe && properties_saved
-    && debug_started && debug_stopped
+    && debug_started && debug_stopped && execution_marker
     && evaluate_cancel_prompt && evaluation_result && evaluation_error
     && assignment_result && disassembly_result && disassembly_error
     && memory_cancel_prompt && memory_invalid
@@ -2627,6 +2628,7 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
       << " properties=" << properties_cancelled << "/" << properties_error
       << "/" << properties_error_safe << "/" << properties_saved
       << " gdb=" << debug_started << "/" << debug_stopped
+      << " marker=" << execution_marker
       << " cancel-prompts=" << watch_cancel_prompt << "/" << properties_cancel_dialog
       << "/" << evaluate_cancel_prompt << "/" << memory_cancel_prompt
       << " evaluate=" << evaluation_result << "/" << evaluation_error

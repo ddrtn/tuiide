@@ -23,7 +23,8 @@ source code and user interface use UTF-8.
   run in an integrated PTY or external terminal with arguments, environment,
   and standard input.
 - GDB debugging with breakpoints and logpoints, stack frames, threads, locals,
-  watches, registers, expression evaluation, memory, and disassembly.
+  watches, registers, expression evaluation, memory, and disassembly; the editor
+  highlights the current stopped source line.
 - Project tree and templates for C/C++ source files and classes that update the
   relevant CMake files.
 

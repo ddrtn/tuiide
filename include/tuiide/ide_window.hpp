@@ -154,6 +154,7 @@ class IdeWindow final : public finalcut::FDialog {
   void refreshTabs();
   void refreshDebugPanel();
   void refreshBreakpointsPanel();
+  void refreshExecutionLocation();
   void openSelectedBreakpoint();
   void editSelectedBreakpoint();
   void toggleSelectedBreakpoint();
@@ -297,6 +298,8 @@ class IdeWindow final : public finalcut::FDialog {
   std::unordered_set<std::filesystem::path> compilation_database_warnings_;
   GdbClient gdb_;
   DebugUiController debug_ui_;
+  std::filesystem::path execution_file_;
+  std::size_t execution_line_{};  // one-based; zero means no stopped source line
   BuildSession build_session_;
   RunSession run_session_;
   std::size_t diagnostic_index_{};

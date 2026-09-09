@@ -58,6 +58,7 @@ CodeEditor::CodeEditor(finalcut::FWidget* parent) : FWidget(parent) {
 
 void CodeEditor::setDocument(Document* document) {
   document_ = document; selection_anchor_.reset(); top_line_ = 0; left_column_ = 0;
+  execution_line_.reset();
   syntax_cache_.clear(); cmake_syntax_cache_.clear();
   rebuildDiagnosticIndex(); rebuildSemanticIndex(); redraw();
 }
@@ -69,6 +70,11 @@ void CodeEditor::setFeedbackHandler(std::function<void(std::string, bool)> handl
 }
 void CodeEditor::setCommandHandler(std::function<bool(finalcut::FKey)> handler) { command_handler_ = std::move(handler); }
 void CodeEditor::setBreakpointProvider(std::function<bool(std::size_t)> provider) { breakpoint_provider_ = std::move(provider); }
+void CodeEditor::setExecutionLine(std::optional<std::size_t> line) {
+  if (execution_line_ == line) return;
+  execution_line_ = line;
+  redraw();
+}
 void CodeEditor::setIndentation(unsigned width, bool use_spaces) {
   tab_width_ = std::clamp<std::size_t>(width, 1, 16);
   use_spaces_ = use_spaces;
@@ -119,16 +125,19 @@ void CodeEditor::draw() {
     const auto diagnostic = diagnostic_lines_.find(line_number);
     const bool has_diagnostic = diagnostic != diagnostic_lines_.end();
     const bool has_breakpoint = breakpoint_provider_ && breakpoint_provider_(line_number);
+    const bool executing = execution_line_ && *execution_line_ == line_number;
+    const auto line_background = executing ? execution_background_ : background_;
     auto gutter_color = gutter_;
     if (has_diagnostic) gutter_color = diagnostic->second <= 1 ? diagnostic_error_
       : (diagnostic->second == 2 ? diagnostic_warning_ : diagnostic_note_);
     if (has_breakpoint) gutter_color = breakpoint_;
-    FWidget::setColor(gutter_color, background_);
+    FWidget::setColor(gutter_color, line_background);
     std::ostringstream gutter;
-    if (line_number < document_->lines().size()) gutter << std::setw(gutter_width - 2) << line_number + 1 << (has_breakpoint ? " ●" : " │");
+    if (line_number < document_->lines().size()) gutter << std::setw(gutter_width - 2)
+      << line_number + 1 << (executing ? " ▶" : has_breakpoint ? " ●" : " │");
     else gutter << std::string(gutter_width - 1, ' ') << "│";
     *this << gutter.str();
-    FWidget::setColor(foreground_, background_);
+    FWidget::setColor(foreground_, line_background);
     *this << std::string(static_cast<std::size_t>(std::max(0, width - gutter_width)), ' ');
     if (line_number >= document_->lines().size()) continue;
 
@@ -168,7 +177,8 @@ void CodeEditor::draw() {
       if (unit.column_begin >= visible_end) break;
       const bool selected = selected_line && unit.byte_begin >= selected_begin && unit.byte_begin < selected_end;
       if (selected) FWidget::setColor(selection_foreground_, selection_background_);
-      else FWidget::setColor(token_colors_[static_cast<std::size_t>(styles[unit.byte_begin])], background_);
+      else FWidget::setColor(token_colors_[static_cast<std::size_t>(styles[unit.byte_begin])],
+        line_background);
       const auto clipped_begin = std::max(unit.column_begin, left_column_);
       const auto clipped_end = std::min(unit.column_end, visible_end);
       const auto clipped_width = clipped_end - clipped_begin;
@@ -448,6 +458,7 @@ void CodeEditor::rebuildColors() {
   gutter_ = light ? FColor::DarkGray : FColor::DarkGray;
   selection_foreground_ = light ? FColor::White : FColor::White;
   selection_background_ = light ? FColor::Blue : FColor::Blue;
+  execution_background_ = light ? FColor::LightGray : FColor::Green;
   diagnostic_error_ = FColor::LightRed; diagnostic_warning_ = FColor::Yellow;
   diagnostic_note_ = FColor::LightCyan; breakpoint_ = FColor::LightRed;
   token_colors_ = {foreground_, FColor::LightMagenta, FColor::LightCyan, FColor::LightGreen,
@@ -458,6 +469,7 @@ void CodeEditor::rebuildColors() {
     foreground_ = static_cast<FColor>(252); background_ = static_cast<FColor>(16);
     gutter_ = static_cast<FColor>(244); diagnostic_error_ = static_cast<FColor>(203);
     diagnostic_warning_ = static_cast<FColor>(221); diagnostic_note_ = static_cast<FColor>(81);
+    execution_background_ = static_cast<FColor>(22);
     token_colors_ = {foreground_, static_cast<FColor>(213), static_cast<FColor>(81),
       static_cast<FColor>(114), static_cast<FColor>(221), static_cast<FColor>(244),
       static_cast<FColor>(75), static_cast<FColor>(75), static_cast<FColor>(151),
@@ -466,6 +478,7 @@ void CodeEditor::rebuildColors() {
   }
   if (contrast) {
     foreground_ = FColor::White; background_ = FColor::Black; gutter_ = FColor::LightGray;
+    execution_background_ = FColor::Blue;
     token_colors_ = {foreground_, FColor::Yellow, FColor::LightCyan, FColor::LightGreen,
       FColor::White, FColor::LightGray, FColor::LightCyan, FColor::LightCyan,
       FColor::LightGreen, FColor::White, FColor::LightCyan, FColor::Cyan,
@@ -476,6 +489,7 @@ void CodeEditor::rebuildColors() {
     {"breakpoint", &breakpoint_}, {"diagnosticError", &diagnostic_error_},
     {"diagnosticWarning", &diagnostic_warning_}, {"diagnosticNote", &diagnostic_note_},
     {"selectionForeground", &selection_foreground_}, {"selectionBackground", &selection_background_},
+    {"executionLineBackground", &execution_background_},
   };
   for (const auto& [role, value] : color_overrides_) {
     const auto color = namedColor(value);
@@ -499,6 +513,7 @@ void CodeEditor::rebuildColors() {
   diagnostic_note_ = terminalColor(diagnostic_note_, maximum);
   selection_foreground_ = terminalColor(selection_foreground_, maximum);
   selection_background_ = terminalColor(selection_background_, maximum);
+  execution_background_ = terminalColor(execution_background_, maximum);
   for (auto& color : token_colors_) color = terminalColor(color, maximum);
   setForegroundColor(foreground_); setBackgroundColor(background_);
 }

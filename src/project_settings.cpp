@@ -162,6 +162,7 @@ auto validateProjectSettings(const std::filesystem::path& project_directory,
   }
   static const std::vector<std::string> color_roles{"foreground", "background", "gutter", "breakpoint",
     "diagnosticError", "diagnosticWarning", "diagnosticNote", "selectionForeground", "selectionBackground",
+    "executionLineBackground",
     "plain", "keyword", "type", "string", "number", "comment", "preprocessor", "namespace",
     "function", "variable", "parameter", "property", "macro", "enumMember"};
   static const std::vector<std::string> color_names{"Black", "Blue", "Green", "Cyan", "Red", "Magenta",

@@ -1688,7 +1688,8 @@ int main() {
   project_settings.shortcuts = {{"run.build", "Ctrl+B"}, {"search.find", "Alt+K"}};
   project_settings.theme = "Team dark";
   project_settings.custom_themes = {{"Team dark", "Dark"}};
-  project_settings.colors = {{"diagnosticError", "LightRed"}, {"keyword", "Yellow"}};
+  project_settings.colors = {{"diagnosticError", "LightRed"}, {"keyword", "Yellow"},
+    {"executionLineBackground", "Green"}};
   project_settings.launch.executable = settings_project / "bin/custom app";
   project_settings.launch.target = "cmake_app";
   project_settings.launch.working_directory = settings_project / "run";
@@ -1795,7 +1796,8 @@ int main() {
   user_settings.shortcuts = {{"file.open", "Ctrl+B"}};
   user_settings.theme = "Team dark";
   user_settings.custom_themes = {{"Team dark", "Dark"}};
-  user_settings.colors = {{"keyword", "Yellow"}, {"diagnosticError", "LightRed"}};
+  user_settings.colors = {{"keyword", "Yellow"}, {"diagnosticError", "LightRed"},
+    {"executionLineBackground", "Green"}};
   user_settings.recent_files = {recent_first, recent_first, missing_recent, recent_second};
   expect(tuiide::saveUserSettings(user_settings_path, user_settings, session_error),
     "user settings create their configuration directory and save atomically");

@@ -354,6 +354,7 @@ IdeWindow::~IdeWindow() {
   if (debug_state_dirty_) saveDebugState();
   lsp_.stop(); gdb_.stop(); build_session_.reset(); run_session_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
+  execution_file_.clear(); execution_line_ = 0;
 }
 
 void IdeWindow::adjustSize() {
@@ -1259,6 +1260,38 @@ void IdeWindow::refreshDebugPanel() {
   sidebar_tabs_.redrawCurrentPage();
 }
 
+void IdeWindow::refreshExecutionLocation() {
+  std::filesystem::path file;
+  std::size_t line{};
+  if (gdb_.stopped()) {
+    const auto& frames = gdb_.frames();
+    const auto frame = std::find_if(frames.begin(), frames.end(), [](const auto& item) {
+      return item.level == 0 && !item.file.empty() && item.line != 0;
+    });
+    if (frame != frames.end()) {
+      file = frame->file.is_absolute() ? frame->file : root_ / frame->file;
+      file = normalizePath(file);
+      line = frame->line;
+    }
+  }
+
+  const bool changed = file != execution_file_ || line != execution_line_;
+  execution_file_ = std::move(file);
+  execution_line_ = line;
+  if (changed && execution_line_ != 0) {
+    std::error_code error;
+    if (std::filesystem::is_regular_file(execution_file_, error)) {
+      if (!document_ || document_->path() != execution_file_) openFile(execution_file_);
+      if (document_ && document_->path() == execution_file_)
+        editor_.reveal({execution_line_ - 1, 0});
+    }
+  }
+  const bool visible = execution_line_ != 0 && document_
+    && document_->path() == execution_file_ && execution_line_ <= document_->lines().size();
+  editor_.setExecutionLine(visible
+    ? std::optional<std::size_t>{execution_line_ - 1} : std::nullopt);
+}
+
 void IdeWindow::refreshBreakpointsPanel() {
   const auto current = breakpoints_.currentItem();
   if (!debug_ui_.updateBreakpoints(gdb_.breakpoints(), gdb_.running(), root_)) return;
@@ -1533,6 +1566,10 @@ void IdeWindow::activateDocument(std::size_t index) {
   editor_.setDocument(document_);
   lsp_.setActiveDocument(document_);
   editor_.setDiagnostics(&lsp_.diagnostics());
+  const bool execution_visible = execution_line_ != 0
+    && document_->path() == execution_file_ && execution_line_ <= document_->lines().size();
+  editor_.setExecutionLine(execution_visible
+    ? std::optional<std::size_t>{execution_line_ - 1} : std::nullopt);
   tabs_.setCurrentItem(index + 1);
   editor_.setFocus();
   finalcut::FWidget::setFocusWidget(&editor_);
@@ -1567,6 +1604,7 @@ void IdeWindow::unloadProject() {
   if (debug_state_dirty_ && !root_.empty()) saveDebugState();
   lsp_.stop(); gdb_.stop(); build_session_.reset(); run_session_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
+  execution_file_.clear(); execution_line_ = 0;
   document_session_.clear();
   editor_.setDocument(nullptr);
   editor_.setDiagnostics(nullptr);
@@ -3109,6 +3147,7 @@ void IdeWindow::startDebug() {
 void IdeWindow::debugStop() {
   if (!gdb_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Stop unavailable: debugger is not started\n"); return; }
   gdb_.stop();
+  execution_file_.clear(); execution_line_ = 0; editor_.setExecutionLine(std::nullopt);
   run_session_.stop();
   console_.setControlEnabled(false);
   debug_ui_.invalidateDebug();
@@ -3883,6 +3922,7 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
     editor_.setFocus(); finalcut::FWidget::setFocusWidget(&editor_);
   }
   gdb_.poll();
+  refreshExecutionLocation();
   const bool debug_active = gdb_.active();
   if (debug_ui_.observeActive(debug_active, gdb_.exited()))
     showNotification("Debuggee finished", NotificationKind::Success);

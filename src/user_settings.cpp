@@ -14,7 +14,7 @@ namespace {
 const std::vector<std::string> themes{"Dark", "Light", "High contrast"};
 const std::vector<std::string> color_roles{"foreground", "background", "gutter", "breakpoint",
   "diagnosticError", "diagnosticWarning", "diagnosticNote", "selectionForeground",
-  "selectionBackground", "plain", "keyword", "type", "string", "number", "comment",
+  "selectionBackground", "executionLineBackground", "plain", "keyword", "type", "string", "number", "comment",
   "preprocessor", "namespace", "function", "variable", "parameter", "property", "macro",
   "enumMember"};
 const std::vector<std::string> color_names{"Black", "Blue", "Green", "Cyan", "Red", "Magenta",
