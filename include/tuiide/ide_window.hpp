@@ -424,9 +424,9 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem breakpoint_enable{"Enable / &disable breakpoint", &menu};
     finalcut::FMenuItem breakpoint_remove{"Remove brea&kpoint", &menu};
     finalcut::FMenuItem breakpoint_clear{"Remove &all breakpoints", &menu};
-    finalcut::FMenuItem next{finalcut::FKey::F34, "&Next", &menu};
+    finalcut::FMenuItem next{finalcut::FKey::F8, "&Next", &menu};
     finalcut::FMenuItem step{finalcut::FKey::F7, "Step &into", &menu};
-    finalcut::FMenuItem finish{finalcut::FKey::F8, "Step &out", &menu};
+    finalcut::FMenuItem finish{finalcut::FKey::Meta_f8, "Step &out", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem watch{finalcut::FKey::Ctrl_l, "Add &watch...", &menu};
     finalcut::FMenuItem evaluate{"&Evaluate expression...", &menu};

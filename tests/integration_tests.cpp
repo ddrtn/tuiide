@@ -759,7 +759,8 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   const bool build_unavailable = unavailableCommand("\002", "Build unavailable");
   const bool breakpoint_unavailable = unavailableCommand("\033[20~", "Breakpoint unavailable");
   const bool step_unavailable = unavailableCommand("\033[18~", "Step into unavailable");
-  const bool finish_unavailable = unavailableCommand("\033[19~", "Step out unavailable");
+  const bool next_unavailable = unavailableCommand("\033[19~", "Next unavailable");
+  const bool finish_unavailable = unavailableCommand("\033[19;3~", "Step out unavailable");
   const bool diagnostic_unavailable = unavailableCommand("\033[19;5~", "No build or clangd diagnostics");
   const bool preset_unavailable = unavailableCommand("\020", "Configure preset unavailable");
   const bool watch_unavailable = unavailableCommand("\014", "Add watch unavailable");
@@ -789,7 +790,7 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
     && exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
   const auto unavailable_complete = close_unavailable && find_unavailable && lsp_unavailable
     && debug_unavailable && run_unavailable && build_unavailable && breakpoint_unavailable
-    && step_unavailable && finish_unavailable && diagnostic_unavailable
+    && step_unavailable && next_unavailable && finish_unavailable && diagnostic_unavailable
     && preset_unavailable && watch_unavailable && registers_unavailable;
   if (!success || !unavailable_complete)
     std::cerr << "PTY state: painted=" << painted << " files=" << files_visible << " opened=" << file_opened
@@ -844,7 +845,8 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
               << " lsp=" << lsp_unavailable << " debug=" << debug_unavailable
               << " run=" << run_unavailable << " build=" << build_unavailable
               << " breakpoint=" << breakpoint_unavailable << " step=" << step_unavailable
-              << " finish=" << finish_unavailable << " diagnostic=" << diagnostic_unavailable
+              << " next=" << next_unavailable << " finish=" << finish_unavailable
+              << " diagnostic=" << diagnostic_unavailable
               << " preset=" << preset_unavailable << " watch=" << watch_unavailable
               << " registers=" << registers_unavailable << "]"
               << " exited=" << exited << " unsaved=" << (screen.find("Unsaved") != std::string::npos)
@@ -1519,6 +1521,8 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     screen.clear(); send("\033[18~");
     const bool step_into = waitFor(pump, [&] { return logged("Step into unavailable"); }, 5s);
     screen.clear(); send("\033[19~");
+    const bool step_over = waitFor(pump, [&] { return logged("Next unavailable"); }, 5s);
+    screen.clear(); send("\033[19;3~");
     const bool step_out = waitFor(pump, [&] { return logged("Step out unavailable"); }, 5s);
     screen.clear(); send("\033[19;5~");
     const bool next_diagnostic = waitFor(pump, [&] {
@@ -1535,12 +1539,13 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     }
     ::close(master);
     const bool success = started && build_streamed && build_finished
-      && step_into && step_out && next_diagnostic && exited
+      && step_into && step_over && step_out && next_diagnostic && exited
       && WIFEXITED(panel_status) && WEXITSTATUS(panel_status) == 0;
     if (!success)
       std::cerr << "Panel redraw PTY: started=" << started
         << " streamed=" << build_streamed << " finished=" << build_finished
-        << " step_into=" << step_into << " step_out=" << step_out
+        << " step_into=" << step_into << " step_over=" << step_over
+        << " step_out=" << step_out
         << " next_diagnostic=" << next_diagnostic
         << " exited=" << exited << " status=" << panel_status << '\n';
     return success;

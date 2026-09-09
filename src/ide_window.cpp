@@ -52,7 +52,8 @@ auto ideCommands() -> const std::vector<IdeCommand>& {
     {"run.launchSettings", "Run: Launch Configuration", finalcut::FKey::Meta_l, "Alt+L"},
     {"debug.breakpoint", "Debug: Toggle Breakpoint", finalcut::FKey::F9, "F9"},
     {"debug.stepInto", "Debug: Step Into", finalcut::FKey::F7, "F7"},
-    {"debug.stepOut", "Debug: Step Out", finalcut::FKey::F8, "F8"},
+    {"debug.stepOver", "Debug: Step Over / Next", finalcut::FKey::F8, "F8"},
+    {"debug.stepOut", "Debug: Step Out", finalcut::FKey::Meta_f8, "Alt+F8"},
     {"debug.watch", "Debug: Add Watch", finalcut::FKey::Ctrl_l, "Ctrl+L"},
     {"tools.completion", "Tools: Completion", finalcut::FKey::Ctrl_space, "Ctrl+Space"},
     {"tools.hover", "Tools: Symbol Information", finalcut::FKey::F1, "F1"},
@@ -96,6 +97,7 @@ auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
     {"ALT+F", finalcut::FKey::Meta_f}, {"ALT+H", finalcut::FKey::Meta_h},
     {"ALT+K", finalcut::FKey::Meta_k}, {"ALT+L", finalcut::FKey::Meta_l},
     {"ALT+SHIFT+L", finalcut::FKey::Meta_L},
+    {"ALT+F8", finalcut::FKey::Meta_f8},
     {"ALT+P", finalcut::FKey::Meta_p},
     {"ALT+R", finalcut::FKey::Meta_r}, {"ALT+S", finalcut::FKey::Meta_s},
     {"ALT+T", finalcut::FKey::Meta_t},
@@ -514,9 +516,9 @@ void IdeWindow::setupMenus() {
   debug_menu_.breakpoint_remove.addCallback("clicked", [this] { deferred_command_ = [this] { removeSelectedBreakpoint(); }; });
   debug_menu_.breakpoint_clear.setStatusBarMessage("Remove every project breakpoint");
   debug_menu_.breakpoint_clear.addCallback("clicked", [this] { deferred_command_ = [this] { clearBreakpoints(); }; });
-  bind(debug_menu_.next, finalcut::FKey::F34, "Step over the current source line");
+  bind(debug_menu_.next, finalcut::FKey::F8, "Step over the current source line");
   bind(debug_menu_.step, finalcut::FKey::F7, "Step into the current call");
-  bind(debug_menu_.finish, finalcut::FKey::F8, "Finish the current stack frame");
+  bind(debug_menu_.finish, finalcut::FKey::Meta_f8, "Finish the current stack frame");
   bind(debug_menu_.watch, finalcut::FKey::Ctrl_l, "Add a GDB watch expression");
   debug_menu_.evaluate.setStatusBarMessage("Evaluate a C/C++ expression in the selected stack frame");
   debug_menu_.evaluate.addCallback("clicked", [this] { deferred_command_ = [this] { evaluateExpression(); }; });
@@ -639,7 +641,8 @@ void IdeWindow::applyShortcutAccelerators(bool enabled) {
     {"run.selectLaunch", &run_menu_.launch_select},
     {"run.launchSettings", &run_menu_.launch_settings},
     {"debug.breakpoint", &debug_menu_.breakpoint}, {"debug.stepInto", &debug_menu_.step},
-    {"debug.stepOut", &debug_menu_.finish}, {"debug.watch", &debug_menu_.watch},
+    {"debug.stepOver", &debug_menu_.next}, {"debug.stepOut", &debug_menu_.finish},
+    {"debug.watch", &debug_menu_.watch},
     {"tools.completion", &tools_menu_.completion}, {"tools.hover", &tools_menu_.hover},
     {"tools.rename", &tools_menu_.rename}, {"tools.codeActions", &tools_menu_.code_actions},
     {"window.previous", &window_menu_.previous},
@@ -690,7 +693,7 @@ void IdeWindow::showKeyboardHelp() {
     "Ctrl+N/O/S/W  Files\n"
     "F1/F2/F3/F4  Info/Rename/Definition/References\n"
     "F5/F6        Debug/Run   Ctrl+B Build\n"
-    "F7/F8        Step into/out   Ctrl+F10 Step over\n"
+    "F7/F8        Step into/over   Alt+F8 Step out\n"
     "F9           Breakpoint   Ctrl+F8 Next diagnostic\n"
     "Alt+PgUp/Dn  Previous/next sidebar tab\n"
     "Alt+Shift+PgUp/Dn  Previous/next lower tab\n"
@@ -3689,9 +3692,9 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       else if (gdb_.stopped()) publishEvent(EventSource::Debug, EventSeverity::Warning, "Pause unavailable: debuggee is already stopped\n");
       else gdb_.interrupt();
       return true;
-    case finalcut::FKey::F34: if (requireStoppedDebugger("Next")) gdb_.next(); return true;
+    case finalcut::FKey::F8: if (requireStoppedDebugger("Next")) gdb_.next(); return true;
     case finalcut::FKey::F7: if (requireStoppedDebugger("Step into")) gdb_.step(); return true;
-    case finalcut::FKey::F8: if (requireStoppedDebugger("Step out")) gdb_.finish(); return true;
+    case finalcut::FKey::Meta_f8: if (requireStoppedDebugger("Step out")) gdb_.finish(); return true;
     default: return false;
   }
 }

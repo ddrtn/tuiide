@@ -86,8 +86,8 @@ select commands inside an open menu. Configure global shortcuts through
 **Tools → Configure shortcut**.
 
 - `F5`, `F6`, `Ctrl+B`, and `F9`: debug, run, build, and toggle breakpoint.
-- `F7`, `F8`, and `Ctrl+F10`: step into, step out, and step over; `Ctrl+F8`:
-  next diagnostic.
+- `F7`, `F8`, and `Alt+F8`: step into, step over (Next), and step out;
+  `Ctrl+F8`: next diagnostic.
 - `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, and `Ctrl+W`: new, open, save, and close file.
 - `Ctrl+F`: find/replace; `Ctrl+Space`: completion; `Alt+K`: command palette.
 - `Alt+L`: manage Run/Debug configurations; `Alt+Shift+L`: quick selection.
