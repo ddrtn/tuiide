@@ -44,14 +44,15 @@ auto ideCommands() -> const std::vector<IdeCommand>& {
     {"search.definition", "Search: Go to Definition", finalcut::FKey::F3, "F3"},
     {"search.references", "Search: Find References", finalcut::FKey::F4, "F4"},
     {"search.problems", "Search: Problems", finalcut::FKey::Ctrl_k, "Ctrl+K"},
+    {"search.nextDiagnostic", "Search: Next Diagnostic", finalcut::FKey::F32, "Ctrl+F8"},
     {"run.debug", "Debug: Start / Continue", finalcut::FKey::F5, "F5"},
     {"run.run", "Run: Run", finalcut::FKey::F6, "F6"},
-    {"run.build", "Run: Build", finalcut::FKey::F7, "F7"},
+    {"run.build", "Run: Build", finalcut::FKey::Ctrl_b, "Ctrl+Shift+B"},
     {"run.selectLaunch", "Run: Select Configuration", finalcut::FKey::Meta_L, "Alt+Shift+L"},
     {"run.launchSettings", "Run: Launch Configuration", finalcut::FKey::Meta_l, "Alt+L"},
     {"debug.breakpoint", "Debug: Toggle Breakpoint", finalcut::FKey::F9, "F9"},
-    {"debug.stepInto", "Debug: Step Into", finalcut::FKey::F11, "F11"},
-    {"debug.stepOut", "Debug: Step Out", finalcut::FKey::F12, "F12"},
+    {"debug.stepInto", "Debug: Step Into", finalcut::FKey::F7, "F7"},
+    {"debug.stepOut", "Debug: Step Out", finalcut::FKey::F8, "F8"},
     {"debug.watch", "Debug: Add Watch", finalcut::FKey::Ctrl_l, "Ctrl+L"},
     {"tools.completion", "Tools: Completion", finalcut::FKey::Ctrl_space, "Ctrl+Space"},
     {"tools.hover", "Tools: Symbol Information", finalcut::FKey::F1, "F1"},
@@ -76,6 +77,7 @@ auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
   });
   static const std::map<std::string, finalcut::FKey> keys{
     {"CTRL+A", finalcut::FKey::Ctrl_a}, {"CTRL+B", finalcut::FKey::Ctrl_b},
+    {"CTRL+SHIFT+B", finalcut::FKey::Ctrl_b},
     {"CTRL+D", finalcut::FKey::Ctrl_d}, {"CTRL+E", finalcut::FKey::Ctrl_e},
     {"CTRL+F", finalcut::FKey::Ctrl_f}, {"CTRL+G", finalcut::FKey::Ctrl_g},
     {"CTRL+K", finalcut::FKey::Ctrl_k}, {"CTRL+L", finalcut::FKey::Ctrl_l},
@@ -103,6 +105,7 @@ auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
     {"F4", finalcut::FKey::F4}, {"F5", finalcut::FKey::F5}, {"F6", finalcut::FKey::F6},
     {"F7", finalcut::FKey::F7}, {"F8", finalcut::FKey::F8}, {"F9", finalcut::FKey::F9},
     {"F10", finalcut::FKey::F10}, {"F11", finalcut::FKey::F11}, {"F12", finalcut::FKey::F12},
+    {"CTRL+F8", finalcut::FKey::F32},
   };
   const auto found = keys.find(value);
   return found == keys.end() ? std::nullopt : std::optional<finalcut::FKey>{found->second};
@@ -453,6 +456,8 @@ void IdeWindow::setupMenus() {
   bind(search_menu_.definition, finalcut::FKey::F3, "Open the symbol definition");
   bind(search_menu_.references, finalcut::FKey::F4, "List symbol references");
   bind(search_menu_.problems, finalcut::FKey::Ctrl_k, "List build and clangd problems");
+  bind(search_menu_.next_diagnostic, finalcut::FKey::F32,
+    "Open the next build or clangd diagnostic");
 
   project_menu_.refresh.addCallback("clicked", [this] { deferred_command_ = [this] {
     refreshFiles();
@@ -474,7 +479,8 @@ void IdeWindow::setupMenus() {
 
   run_menu_.configure.setStatusBarMessage("Configure the project with CMake");
   run_menu_.configure.addCallback("clicked", [this] { deferred_command_ = [this] { configure(); }; });
-  bind(run_menu_.build, finalcut::FKey::F7, "Build the project; configure first when required");
+  bind(run_menu_.build, finalcut::FKey::Ctrl_b,
+    "Build the project; configure first when required");
   run_menu_.rebuild.setStatusBarMessage("Clean and build the project");
   run_menu_.rebuild.addCallback("clicked", [this] { deferred_command_ = [this] { rebuild(); }; });
   run_menu_.clean.setStatusBarMessage("Build the CMake clean target");
@@ -508,8 +514,8 @@ void IdeWindow::setupMenus() {
   debug_menu_.breakpoint_clear.setStatusBarMessage("Remove every project breakpoint");
   debug_menu_.breakpoint_clear.addCallback("clicked", [this] { deferred_command_ = [this] { clearBreakpoints(); }; });
   bind(debug_menu_.next, finalcut::FKey::F34, "Step over the current source line");
-  bind(debug_menu_.step, finalcut::FKey::F11, "Step into the current call");
-  bind(debug_menu_.finish, finalcut::FKey::F12, "Finish the current stack frame");
+  bind(debug_menu_.step, finalcut::FKey::F7, "Step into the current call");
+  bind(debug_menu_.finish, finalcut::FKey::F8, "Finish the current stack frame");
   bind(debug_menu_.watch, finalcut::FKey::Ctrl_l, "Add a GDB watch expression");
   debug_menu_.evaluate.setStatusBarMessage("Evaluate a C/C++ expression in the selected stack frame");
   debug_menu_.evaluate.addCallback("clicked", [this] { deferred_command_ = [this] { evaluateExpression(); }; });
@@ -625,7 +631,9 @@ void IdeWindow::applyShortcutAccelerators(bool enabled) {
     {"file.closeAll", &file_menu_.close_all}, {"file.reopen", &file_menu_.reopen_closed},
     {"search.find", &search_menu_.find}, {"search.goToLine", &search_menu_.go_to_line},
     {"search.definition", &search_menu_.definition}, {"search.references", &search_menu_.references},
-    {"search.problems", &search_menu_.problems}, {"run.debug", &debug_menu_.start},
+    {"search.problems", &search_menu_.problems},
+    {"search.nextDiagnostic", &search_menu_.next_diagnostic},
+    {"run.debug", &debug_menu_.start},
     {"run.run", &run_menu_.run}, {"run.build", &run_menu_.build},
     {"run.selectLaunch", &run_menu_.launch_select},
     {"run.launchSettings", &run_menu_.launch_settings},
@@ -680,9 +688,9 @@ void IdeWindow::showKeyboardHelp() {
     "F10 or Alt+F/E/S/R/P/D/T/W/H  Menu; underlines local, shortcuts global\n"
     "Ctrl+N/O/S/W  Files\n"
     "F1/F2/F3/F4  Info/Rename/Definition/References\n"
-    "F5/F6/F7     Debug/Run/Build\n"
-    "F9           Breakpoint   Ctrl+F10  Next\n"
-    "F11/F12      Step into/out\n"
+    "F5/F6        Debug/Run   Ctrl+Shift+B Build\n"
+    "F7/F8        Step into/out   Ctrl+F10 Step over\n"
+    "F9           Breakpoint   Ctrl+F8 Next diagnostic\n"
     "Alt+PgUp/Dn  Previous/next sidebar tab\n"
     "Alt+Shift+PgUp/Dn  Previous/next lower tab\n"
     "Ctrl+F       Find/Replace text or project\n"
@@ -2989,7 +2997,7 @@ void IdeWindow::refreshCMakeTargets() {
 
 void IdeWindow::selectCMakeTarget() {
   refreshCMakeTargets();
-  if (cmake_session_.targets().empty()) { publishEvent(EventSource::Build, EventSeverity::Information, "No executable CMake targets; build the project first (F7)\n"); return; }
+  if (cmake_session_.targets().empty()) { publishEvent(EventSource::Build, EventSeverity::Information, "No executable CMake targets; build the project first (Ctrl+Shift+B)\n"); return; }
   std::vector<std::string> labels;
   labels.reserve(cmake_session_.targets().size());
   for (const auto& target : cmake_session_.targets()) {
@@ -3282,6 +3290,7 @@ void IdeWindow::updateMenuState() {
   enabled(search_menu_.definition, state.definition);
   enabled(search_menu_.references, state.references);
   enabled(search_menu_.problems, state.problems);
+  enabled(search_menu_.next_diagnostic, state.problems);
   enabled(project_menu_.refresh, state.project_panel);
   enabled(project_menu_.filter, state.project_panel);
   enabled(project_menu_.clear_filter, state.project_panel && !project_filter_.empty());
@@ -3385,7 +3394,7 @@ void IdeWindow::updateStatus() {
        << " | target: " << (!project_settings_.launch.executable.empty()
          ? "launch:" + project_settings_.launch.executable.filename().string()
          : (selected_target ? selected_target->name : "unselected"))
-       << " | F7 Build  F6 Run  F5 Debug  F9 Break  Ctrl+Space Complete";
+       << " | Ctrl+Shift+B Build  F6 Run  F5 Debug  F9 Break  Ctrl+Space Complete";
   status_.setText(finalcut::FString(text.str())); status_.redraw();
 }
 
@@ -3599,8 +3608,8 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       return true;
     case finalcut::FKey::F5: debugRun(); return true;
     case finalcut::FKey::F6: run(); return true;
-    case finalcut::FKey::F7: build(); return true;
-    case finalcut::FKey::F8: {
+    case finalcut::FKey::Ctrl_b: build(); return true;
+    case finalcut::FKey::F32: {
       const auto& diagnostics = lsp_.diagnostics();
       const auto count = build_session_.diagnostics().size() + diagnostics.size();
       if (count == 0) { publishEvent(EventSource::Build, EventSeverity::Warning, "No build or clangd diagnostics\n"); return true; }
@@ -3642,8 +3651,8 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       else gdb_.interrupt();
       return true;
     case finalcut::FKey::F34: if (requireStoppedDebugger("Next")) gdb_.next(); return true;
-    case finalcut::FKey::F11: if (requireStoppedDebugger("Step into")) gdb_.step(); return true;
-    case finalcut::FKey::F12: if (requireStoppedDebugger("Step out")) gdb_.finish(); return true;
+    case finalcut::FKey::F7: if (requireStoppedDebugger("Step into")) gdb_.step(); return true;
+    case finalcut::FKey::F8: if (requireStoppedDebugger("Step out")) gdb_.finish(); return true;
     default: return false;
   }
 }

@@ -20,7 +20,8 @@ auto normalizedShortcut(std::string value) -> std::string {
 auto canonicalShortcut(std::string value) -> std::string {
   const auto normalized = normalizedShortcut(std::move(value));
   static const std::map<std::string, std::string> names{
-    {"CTRL+A", "Ctrl+A"}, {"CTRL+B", "Ctrl+B"}, {"CTRL+D", "Ctrl+D"},
+    {"CTRL+A", "Ctrl+A"}, {"CTRL+B", "Ctrl+Shift+B"},
+    {"CTRL+SHIFT+B", "Ctrl+Shift+B"}, {"CTRL+D", "Ctrl+D"},
     {"CTRL+E", "Ctrl+E"}, {"CTRL+F", "Ctrl+F"}, {"CTRL+G", "Ctrl+G"},
     {"CTRL+K", "Ctrl+K"}, {"CTRL+L", "Ctrl+L"}, {"CTRL+N", "Ctrl+N"},
     {"CTRL+O", "Ctrl+O"}, {"CTRL+P", "Ctrl+P"}, {"CTRL+Q", "Ctrl+Q"},
@@ -38,6 +39,7 @@ auto canonicalShortcut(std::string value) -> std::string {
     {"F1", "F1"}, {"F2", "F2"}, {"F3", "F3"}, {"F4", "F4"},
     {"F5", "F5"}, {"F6", "F6"}, {"F7", "F7"}, {"F8", "F8"},
     {"F9", "F9"}, {"F10", "F10"}, {"F11", "F11"}, {"F12", "F12"},
+    {"CTRL+F8", "Ctrl+F8"},
   };
   const auto found = names.find(normalized);
   return found == names.end() ? std::string{} : found->second;
@@ -45,7 +47,7 @@ auto canonicalShortcut(std::string value) -> std::string {
 
 auto shortcutForKey(finalcut::FKey key) -> std::string {
   static const std::map<finalcut::FKey, std::string> names{
-    {finalcut::FKey::Ctrl_a, "Ctrl+A"}, {finalcut::FKey::Ctrl_b, "Ctrl+B"},
+    {finalcut::FKey::Ctrl_a, "Ctrl+A"}, {finalcut::FKey::Ctrl_b, "Ctrl+Shift+B"},
     {finalcut::FKey::Ctrl_d, "Ctrl+D"}, {finalcut::FKey::Ctrl_e, "Ctrl+E"},
     {finalcut::FKey::Ctrl_f, "Ctrl+F"}, {finalcut::FKey::Ctrl_g, "Ctrl+G"},
     {finalcut::FKey::Ctrl_k, "Ctrl+K"}, {finalcut::FKey::Ctrl_l, "Ctrl+L"},
@@ -73,6 +75,7 @@ auto shortcutForKey(finalcut::FKey key) -> std::string {
     {finalcut::FKey::F5, "F5"}, {finalcut::FKey::F6, "F6"}, {finalcut::FKey::F7, "F7"},
     {finalcut::FKey::F8, "F8"}, {finalcut::FKey::F9, "F9"}, {finalcut::FKey::F10, "F10"},
     {finalcut::FKey::F11, "F11"}, {finalcut::FKey::F12, "F12"},
+    {finalcut::FKey::F32, "Ctrl+F8"},
   };
   const auto found = names.find(key);
   return found == names.end() ? std::string{} : found->second;
@@ -383,7 +386,7 @@ auto ShortcutEditorDialog::captureKey(finalcut::FKey key) -> bool {
     capturing_ = false; validation_.setText("Capture cancelled."); return true;
   }
   const auto value = shortcutForKey(key);
-  if (value.empty()) { validation_.setText("Unsupported key. Use Ctrl/Alt combinations, Ctrl+PageUp/Down, or F1-F12."); return true; }
+  if (value.empty()) { validation_.setText("Unsupported key. Use Ctrl/Alt combinations, Ctrl+F8, or F1-F12."); return true; }
   capturing_ = false;
   updating_ = true; current_.setText(finalcut::FString(value)); updating_ = false;
   updateCurrentValue();

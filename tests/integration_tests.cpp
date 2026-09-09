@@ -444,9 +444,9 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   screen.clear();
   (void)::write(master, &save_all, 1);
   const auto all_saved = waitFor(pumpScreen, [&] { return screen.find("Save All: saved 1 document") != std::string::npos; }, 5s);
-  constexpr std::string_view f7{"\033[18~"};
+  constexpr std::string_view build_key{"\002"};  // Ctrl+Shift+B is Ctrl+B in a terminal.
   screen.clear();
-  (void)::write(master, f7.data(), f7.size());
+  (void)::write(master, build_key.data(), build_key.size());
   const auto build_completed = waitFor(pumpScreen, [&] {
     return screen.find("2 parallel jobs") != std::string::npos
       && screen.find("Built target smoke_app") != std::string::npos;
@@ -756,12 +756,14 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   const bool lsp_unavailable = unavailableCommand("\033OP", "Symbol information unavailable");
   const bool debug_unavailable = unavailableCommand("\033[15~", "Debug unavailable");
   const bool run_unavailable = unavailableCommand("\033[17~", "Run unavailable");
-  const bool build_unavailable = unavailableCommand("\033[18~", "Build unavailable");
+  const bool build_unavailable = unavailableCommand("\002", "Build unavailable");
   const bool breakpoint_unavailable = unavailableCommand("\033[20~", "Breakpoint unavailable");
-  const bool step_unavailable = unavailableCommand("\033[23~", "Step into unavailable");
-  const bool preset_unavailable = unavailableCommand("\033p", "Configure preset unavailable");
-  const bool watch_unavailable = unavailableCommand("\033w", "Add watch unavailable");
-  const bool registers_unavailable = unavailableCommand("\033r", "Registers unavailable");
+  const bool step_unavailable = unavailableCommand("\033[18~", "Step into unavailable");
+  const bool finish_unavailable = unavailableCommand("\033[19~", "Step out unavailable");
+  const bool diagnostic_unavailable = unavailableCommand("\033[19;5~", "No build or clangd diagnostics");
+  const bool preset_unavailable = unavailableCommand("\020", "Configure preset unavailable");
+  const bool watch_unavailable = unavailableCommand("\014", "Add watch unavailable");
+  const bool registers_unavailable = unavailableCommand("\022", "Registers unavailable");
   const char quit = 4;
   screen.clear();
   (void)::write(master, &quit, 1);
@@ -787,7 +789,8 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
     && exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
   const auto unavailable_complete = close_unavailable && find_unavailable && lsp_unavailable
     && debug_unavailable && run_unavailable && build_unavailable && breakpoint_unavailable
-    && step_unavailable && preset_unavailable && watch_unavailable && registers_unavailable;
+    && step_unavailable && finish_unavailable && diagnostic_unavailable
+    && preset_unavailable && watch_unavailable && registers_unavailable;
   if (!success || !unavailable_complete)
     std::cerr << "PTY state: painted=" << painted << " files=" << files_visible << " opened=" << file_opened
               << " unicode_scroll=" << unicode_horizontal_scroll
@@ -841,6 +844,7 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
               << " lsp=" << lsp_unavailable << " debug=" << debug_unavailable
               << " run=" << run_unavailable << " build=" << build_unavailable
               << " breakpoint=" << breakpoint_unavailable << " step=" << step_unavailable
+              << " finish=" << finish_unavailable << " diagnostic=" << diagnostic_unavailable
               << " preset=" << preset_unavailable << " watch=" << watch_unavailable
               << " registers=" << registers_unavailable << "]"
               << " exited=" << exited << " unsaved=" << (screen.find("Unsaved") != std::string::npos)
@@ -965,8 +969,8 @@ auto exerciseImportLifecyclePty(const std::filesystem::path& tuiide,
   screen.clear(); send("\033a");
   const bool imported = visible("Imported 1 source and header files", 10s);
 
-  constexpr std::string_view f7{"\033[18~"};
-  screen.clear(); send(f7);
+  constexpr std::string_view build_key{"\002"};
+  screen.clear(); send(build_key);
   const bool built = waitFor(pump, [&] {
     return logged("Build finished with exit code 0");
   }, 45s);
@@ -1504,14 +1508,22 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     return success;
   }
   if (std::getenv("TUIIDE_PANEL_REDRAW_ONLY") != nullptr) {
-    constexpr std::string_view f7{"\033[18~"};
-    screen.clear(); send(f7);
+    constexpr std::string_view build_key{"\002"};
+    screen.clear(); send(build_key);
     const bool build_streamed = waitFor(pump, [&] {
       return screen.find("Built target window_help") != std::string::npos;
     }, 45s);
     const bool build_finished = waitFor(pump, [&] {
       return screen.find("Build finished with exit code 0") != std::string::npos;
     }, 10s);
+    screen.clear(); send("\033[18~");
+    const bool step_into = waitFor(pump, [&] { return logged("Step into unavailable"); }, 5s);
+    screen.clear(); send("\033[19~");
+    const bool step_out = waitFor(pump, [&] { return logged("Step out unavailable"); }, 5s);
+    screen.clear(); send("\033[19;5~");
+    const bool next_diagnostic = waitFor(pump, [&] {
+      return logged("No build or clangd diagnostics");
+    }, 5s);
     screen.clear(); send("\021");
     int panel_status{};
     const auto exited = waitFor(pump, [&] {
@@ -1522,11 +1534,14 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       (void)::waitpid(child, &panel_status, 0);
     }
     ::close(master);
-    const bool success = started && build_streamed && build_finished && exited
+    const bool success = started && build_streamed && build_finished
+      && step_into && step_out && next_diagnostic && exited
       && WIFEXITED(panel_status) && WEXITSTATUS(panel_status) == 0;
     if (!success)
       std::cerr << "Panel redraw PTY: started=" << started
         << " streamed=" << build_streamed << " finished=" << build_finished
+        << " step_into=" << step_into << " step_out=" << step_out
+        << " next_diagnostic=" << next_diagnostic
         << " exited=" << exited << " status=" << panel_status << '\n';
     return success;
   }
@@ -1691,7 +1706,7 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   std::filesystem::create_directories(settings_file.parent_path());
   {
     std::ofstream file(settings_file);
-    file << "{\"version\":1,\"theme\":\"Dark\",\"shortcuts\":{\"file.open\":\"Ctrl+B\"}}\n";
+    file << "{\"version\":1,\"theme\":\"Dark\",\"shortcuts\":{\"file.open\":\"Ctrl+U\"}}\n";
   }
   const auto readFile = [](const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
@@ -1772,7 +1787,7 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   const bool shortcut_error_picker = visible("File: New", 5s);
   screen.clear(); send("\033c"); settle(); screen.clear();
   send(std::string(1, static_cast<char>(2)));
-  const bool conflict_captured = visible("Ctrl+B", 5s);
+  const bool conflict_captured = visible("Ctrl+Shift+B", 5s);
   const bool shortcut_error = conflict_captured && readFile(settings_file) == initial_settings;
   screen.clear(); send("\033"); settle();
   const bool shortcut_error_safe = readFile(settings_file) == initial_settings;

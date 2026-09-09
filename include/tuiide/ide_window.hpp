@@ -377,12 +377,13 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem definition{finalcut::FKey::F3, "Go to &definition", &menu};
     finalcut::FMenuItem references{finalcut::FKey::F4, "Find r&eferences", &menu};
     finalcut::FMenuItem problems{finalcut::FKey::Ctrl_k, "Pro&blems...", &menu};
+    finalcut::FMenuItem next_diagnostic{finalcut::FKey::F32, "Next d&iagnostic", &menu};
   };
   struct RunMenu {
     explicit RunMenu(finalcut::FMenuBar& bar) : menu{"&Run", &bar} {}
     finalcut::FMenu menu;
     finalcut::FMenuItem configure{"C&onfigure", &menu};
-    finalcut::FMenuItem build{finalcut::FKey::F7, "&Build", &menu};
+    finalcut::FMenuItem build{finalcut::FKey::Ctrl_b, "&Build", &menu};
     finalcut::FMenuItem rebuild{"&Rebuild", &menu};
     finalcut::FMenuItem clean{"C&lean", &menu};
     finalcut::FMenuItem cancel_build{"Cancel B&uild", &menu};
@@ -421,8 +422,8 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem breakpoint_remove{"Remove brea&kpoint", &menu};
     finalcut::FMenuItem breakpoint_clear{"Remove &all breakpoints", &menu};
     finalcut::FMenuItem next{finalcut::FKey::F34, "&Next", &menu};
-    finalcut::FMenuItem step{finalcut::FKey::F11, "Step &into", &menu};
-    finalcut::FMenuItem finish{finalcut::FKey::F12, "Step &out", &menu};
+    finalcut::FMenuItem step{finalcut::FKey::F7, "Step &into", &menu};
+    finalcut::FMenuItem finish{finalcut::FKey::F8, "Step &out", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem watch{finalcut::FKey::Ctrl_l, "Add &watch...", &menu};
     finalcut::FMenuItem evaluate{"&Evaluate expression...", &menu};
