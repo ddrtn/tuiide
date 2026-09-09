@@ -1310,6 +1310,15 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     std::ofstream file(project / ".tuiide-project.json");
     file << "{\"version\":1,\"buildDirectory\":\"build\",\"buildJobs\":1}\n";
   }
+  const auto config = workspace / "window-help-config";
+  const auto settings_file = config / "tuiide/settings.json";
+  if (std::getenv("TUIIDE_RECENT_FILES_ONLY") != nullptr) {
+    std::filesystem::create_directories(settings_file.parent_path());
+    std::ofstream settings(settings_file);
+    settings << "{\"version\":1,\"recentFiles\":[\"" << (project / "main.cpp").string()
+      << "\",\"" << (project / "main.cpp").string() << "\",\""
+      << (project / "removed.cpp").string() << "\"]}\n";
+  }
 
   int master{-1};
   winsize window{26, 90, 0, 0};
@@ -1319,7 +1328,6 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     ::setenv("TERM", "xterm-256color", 1);
     ::setenv("TUIIDE_CLIPBOARD_NATIVE", "0", 1);
     ::setenv("TUIIDE_OSC52", "0", 1);
-    const auto config = workspace / "window-help-config";
     ::setenv("XDG_CONFIG_HOME", config.c_str(), 1);
     ::execl(tuiide.c_str(), tuiide.c_str(), "--log-file", log.c_str(), project.c_str(),
       static_cast<char*>(nullptr));
@@ -1380,6 +1388,46 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
   };
 
   const bool started = visible("Open files");
+  if (std::getenv("TUIIDE_RECENT_FILES_ONLY") != nullptr) {
+    screen.clear(); send("\033f");
+    const bool file_menu = visible("New Project", 3s);
+    screen.clear(); send("f");
+    const bool recent_menu = visible("main.cpp", 3s) && visible("lear history", 3s);
+    const bool unavailable_hidden = screen.find("removed.cpp") == std::string::npos;
+    screen.clear(); send("\r");
+    const bool opened = visible("1 file(s)", 5s);
+    const auto persisted = waitFor(pump, [&] {
+      std::ifstream input(settings_file, std::ios::binary);
+      const std::string text((std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+      return text.find("main.cpp") != std::string::npos
+        && text.find("removed.cpp") == std::string::npos;
+    }, 5s);
+    screen.clear(); send("\033f"); (void)visible("Open Project", 3s);
+    screen.clear(); send("f"); (void)visible("lear history", 3s);
+    screen.clear(); send("c");
+    const bool cleared = waitFor(pump, [&] { return logged("Recent Files history cleared"); }, 5s);
+    screen.clear(); send("\033f"); (void)visible("Open Project", 3s);
+    screen.clear(); send("f");
+    const bool empty = visible("History is empty", 3s);
+    screen.clear(); send("\033"); settle(); send("\033"); settle(); send("\021");
+    int recent_status{};
+    const auto exited = waitFor(pump, [&] {
+      return ::waitpid(child, &recent_status, WNOHANG) == child;
+    }, 8s);
+    if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &recent_status, 0); }
+    ::close(master);
+    const bool success = started && file_menu && recent_menu && unavailable_hidden && opened
+      && persisted && cleared && empty && exited && WIFEXITED(recent_status)
+      && WEXITSTATUS(recent_status) == 0;
+    if (!success) {
+      std::cerr << "Recent files PTY: started=" << started << " file_menu=" << file_menu
+        << " recent_menu=" << recent_menu << " unavailable_hidden=" << unavailable_hidden
+        << " opened=" << opened << " persisted=" << persisted << " cleared=" << cleared
+        << " empty=" << empty << " exited=" << exited << " status=" << recent_status << '\n';
+    }
+    return success;
+  }
   if (std::getenv("TUIIDE_PANEL_REDRAW_ONLY") != nullptr) {
     constexpr std::string_view f7{"\033[18~"};
     screen.clear(); send(f7);

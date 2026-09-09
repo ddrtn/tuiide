@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace tuiide {
 
@@ -16,7 +17,15 @@ struct UserSettings {
   std::string theme{"Dark"};
   std::map<std::string, std::string> custom_themes;
   std::map<std::string, std::string> colors;
+  std::vector<std::filesystem::path> recent_files;
 };
+
+/** Нормализует, дедуплицирует и ограничивает историю существующих файлов. */
+[[nodiscard]] auto normalizeRecentFiles(const std::vector<std::filesystem::path>& files,
+  std::size_t limit = 10) -> std::vector<std::filesystem::path>;
+/** Перемещает существующий файл в начало ограниченной истории. */
+void rememberRecentFile(std::vector<std::filesystem::path>& files,
+  const std::filesystem::path& file, std::size_t limit = 10);
 
 /** Возвращает XDG-путь `$XDG_CONFIG_HOME/tuiide/settings.json`. */
 [[nodiscard]] auto defaultUserSettingsPath() -> std::filesystem::path;

@@ -175,6 +175,10 @@ class IdeWindow final : public finalcut::FDialog {
   void newProject();
   void openProject();
   void openRecentProject();
+  void refreshRecentFilesMenu();
+  void openRecentFile(const std::filesystem::path& path);
+  void clearRecentFiles();
+  void persistUserSettings();
   void importProject(const std::filesystem::path& directory);
   void closeProject();
   void projectSettings();
@@ -330,6 +334,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem new_file{finalcut::FKey::Ctrl_n, "&New", &menu};
     finalcut::FMenuItem new_project_file{"New from &template...", &menu};
     finalcut::FMenuItem open{finalcut::FKey::Ctrl_o, "Open f&ile...", &menu};
+    finalcut::FMenu recent_files{"Recent &Files", &menu};
     finalcut::FMenuItem save{finalcut::FKey::Ctrl_s, "&Save", &menu};
     finalcut::FMenuItem save_all{"Save A&ll", &menu};
     finalcut::FMenuItem save_as{"Save &As...", &menu};
@@ -491,6 +496,7 @@ class IdeWindow final : public finalcut::FDialog {
   ToolsMenu tools_menu_{menu_bar_};
   WindowMenu window_menu_{menu_bar_};
   HelpMenu help_menu_{menu_bar_};
+  std::vector<std::unique_ptr<finalcut::FMenuItem>> recent_file_items_;
 
   struct OpenFilesContextMenu {
     explicit OpenFilesContextMenu(finalcut::FWidget* parent) : menu(finalcut::FString{"-"}, parent) {

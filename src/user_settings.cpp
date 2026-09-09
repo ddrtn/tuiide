@@ -1,9 +1,12 @@
 #include "tuiide/user_settings.hpp"
 
+#include "tuiide/document.hpp"
+
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <unordered_set>
 #include <vector>
 
 namespace tuiide {
@@ -18,6 +21,33 @@ const std::vector<std::string> color_names{"Black", "Blue", "Green", "Cyan", "Re
   "Brown", "LightGray", "DarkGray", "LightBlue", "LightGreen", "LightCyan", "LightRed",
   "LightMagenta", "Yellow", "White"};
 }  // namespace
+
+auto normalizeRecentFiles(const std::vector<std::filesystem::path>& files, std::size_t limit)
+    -> std::vector<std::filesystem::path> {
+  std::vector<std::filesystem::path> result;
+  if (limit == 0) return result;
+  std::unordered_set<std::filesystem::path> seen;
+  for (const auto& file : files) {
+    const auto normalized = normalizePath(file);
+    std::error_code error;
+    if (normalized.empty() || !std::filesystem::is_regular_file(normalized, error)
+        || !seen.insert(normalized).second)
+      continue;
+    result.push_back(normalized);
+    if (result.size() == limit) break;
+  }
+  return result;
+}
+
+void rememberRecentFile(std::vector<std::filesystem::path>& files,
+    const std::filesystem::path& file, std::size_t limit) {
+  const auto normalized = normalizePath(file);
+  std::error_code error;
+  if (normalized.empty() || !std::filesystem::is_regular_file(normalized, error)) return;
+  files.erase(std::remove(files.begin(), files.end(), normalized), files.end());
+  files.insert(files.begin(), normalized);
+  files = normalizeRecentFiles(files, limit);
+}
 
 auto defaultUserSettingsPath() -> std::filesystem::path {
   if (const auto* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg)
@@ -75,6 +105,12 @@ auto loadUserSettings(const std::filesystem::path& path, UserSettings& settings,
     settings.theme = json.value("theme", std::string("Dark"));
     settings.custom_themes = json.value("customThemes", std::map<std::string, std::string>{});
     settings.colors = json.value("colors", std::map<std::string, std::string>{});
+    std::vector<std::filesystem::path> recent_files;
+    if (const auto iterator = json.find("recentFiles"); iterator != json.end() && iterator->is_array()) {
+      for (const auto& value : *iterator)
+        if (value.is_string()) recent_files.emplace_back(value.get<std::string>());
+    }
+    settings.recent_files = normalizeRecentFiles(recent_files);
   } catch (const nlohmann::json::exception& exception) {
     error = "Cannot parse user settings: " + std::string(exception.what());
     return false;
@@ -95,9 +131,12 @@ auto saveUserSettings(const std::filesystem::path& path, const UserSettings& set
     error = "Cannot create user settings directory: " + filesystem_error.message();
     return false;
   }
+  auto recent_files = nlohmann::json::array();
+  for (const auto& file : normalizeRecentFiles(settings.recent_files))
+    recent_files.push_back(file.string());
   const nlohmann::json json{{"version", settings.version}, {"shortcuts", settings.shortcuts},
     {"theme", settings.theme}, {"customThemes", settings.custom_themes},
-    {"colors", settings.colors}};
+    {"colors", settings.colors}, {"recentFiles", std::move(recent_files)}};
   const auto temporary = path.string() + ".tmp";
   {
     std::ofstream output(temporary, std::ios::binary | std::ios::trunc);

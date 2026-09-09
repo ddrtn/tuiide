@@ -106,6 +106,13 @@ auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
   return found == keys.end() ? std::nullopt : std::optional<finalcut::FKey>{found->second};
 }
 
+auto escapeMenuLabel(const std::filesystem::path& path) -> std::string {
+  auto label = path.string();
+  for (std::size_t offset{}; (offset = label.find('&', offset)) != std::string::npos; offset += 2)
+    label.insert(offset, 1, '&');
+  return label;
+}
+
 auto completionKindName(int kind) -> std::string_view {
   switch (kind) {
     case 2: return "method";
@@ -177,6 +184,7 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   menu_bar_.addAccelerator(finalcut::FKey::F10, &menu_bar_);
   menu_bar_.addAccelerator(finalcut::FKey::Menu, &menu_bar_);
   setupMenus();
+  refreshRecentFilesMenu();
   const std::array<std::pair<std::string_view, const finalcut::FMenu*>, 9> menus{{
     {"File", &file_menu_.menu}, {"Edit", &edit_menu_.menu}, {"Search", &search_menu_.menu},
     {"Run", &run_menu_.menu}, {"Project", &project_menu_.menu}, {"Debug", &debug_menu_.menu},
@@ -382,6 +390,8 @@ void IdeWindow::setupMenus() {
     deferred_command_ = [this] { createProjectFile(); };
   });
   bind(file_menu_.open, finalcut::FKey::Ctrl_o, "Open a C or C++ source file");
+  file_menu_.recent_files.getItem()->setStatusBarMessage(
+    "Open or clear the persistent file history");
   bind(file_menu_.save, finalcut::FKey::Ctrl_s, "Save the active source file");
   file_menu_.save_all.setStatusBarMessage("Save every modified document");
   file_menu_.save_all.addCallback("clicked", [this] {
@@ -1780,6 +1790,93 @@ void IdeWindow::openRecentProject() {
   (void)loadProject(selected);
 }
 
+void IdeWindow::refreshRecentFilesMenu() {
+  constexpr std::size_t history_limit{10};
+  constexpr std::size_t empty_index{history_limit};
+  constexpr std::size_t separator_index{history_limit + 1};
+  constexpr std::size_t clear_index{history_limit + 2};
+  if (recent_file_items_.empty()) {
+    for (std::size_t index{}; index < history_limit; ++index) {
+      auto item = std::make_unique<finalcut::FMenuItem>(
+        finalcut::FString{"-"}, &file_menu_.recent_files);
+      item->addCallback("clicked", [this, index] {
+        if (index >= user_settings_.recent_files.size()) return;
+        const auto path = user_settings_.recent_files[index];
+        deferred_command_ = [this, path] { openRecentFile(path); };
+      });
+      recent_file_items_.push_back(std::move(item));
+    }
+    auto empty = std::make_unique<finalcut::FMenuItem>(
+      finalcut::FString{"(History is empty)"}, &file_menu_.recent_files);
+    empty->setDisable();
+    recent_file_items_.push_back(std::move(empty));
+    auto separator = std::make_unique<finalcut::FMenuItem>(&file_menu_.recent_files);
+    separator->setSeparator();
+    recent_file_items_.push_back(std::move(separator));
+    auto clear = std::make_unique<finalcut::FMenuItem>(
+      finalcut::FString{"&Clear history"}, &file_menu_.recent_files);
+    clear->setStatusBarMessage("Remove all entries from Recent Files");
+    clear->addCallback("clicked", [this] {
+      deferred_command_ = [this] { clearRecentFiles(); };
+    });
+    recent_file_items_.push_back(std::move(clear));
+  }
+
+  user_settings_.recent_files = normalizeRecentFiles(user_settings_.recent_files);
+  for (std::size_t index{}; index < history_limit; ++index) {
+    auto& item = *recent_file_items_[index];
+    if (index >= user_settings_.recent_files.size()) {
+      item.hide();
+      continue;
+    }
+    const auto& path = user_settings_.recent_files[index];
+    item.setText(finalcut::FString{std::to_string(index + 1) + "  " + escapeMenuLabel(path)});
+    item.setStatusBarMessage(finalcut::FString{"Open " + path.string()});
+    item.setEnable(true);
+    item.show();
+  }
+  const bool empty = user_settings_.recent_files.empty();
+  if (empty) {
+    recent_file_items_[empty_index]->show();
+    recent_file_items_[separator_index]->hide();
+    recent_file_items_[clear_index]->hide();
+  } else {
+    recent_file_items_[empty_index]->hide();
+    recent_file_items_[separator_index]->show();
+    recent_file_items_[clear_index]->show();
+  }
+}
+
+void IdeWindow::openRecentFile(const std::filesystem::path& path) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(path, error)) {
+    std::erase(user_settings_.recent_files, normalizePath(path));
+    persistUserSettings();
+    refreshRecentFilesMenu();
+    publishEvent(EventSource::Editor, EventSeverity::Warning,
+      "Recent Files removed an unavailable path: " + path.string() + "\n");
+    showNotification("Recent file is no longer available", NotificationKind::Warning);
+    return;
+  }
+  openFile(path);
+}
+
+void IdeWindow::clearRecentFiles() {
+  user_settings_.recent_files.clear();
+  persistUserSettings();
+  refreshRecentFilesMenu();
+  publishEvent(EventSource::Editor, EventSeverity::Information,
+    "Recent Files history cleared\n");
+  showNotification("Recent Files history cleared", NotificationKind::Success);
+}
+
+void IdeWindow::persistUserSettings() {
+  std::string error;
+  if (!saveUserSettings(user_settings_file_, user_settings_, error))
+    publishEvent(EventSource::System, EventSeverity::Error,
+      "User settings: " + error + "\n");
+}
+
 void IdeWindow::newProject() {
   delTimer(timer_id_); NewProjectDialog settings_dialog(this);
   const auto accepted = settings_dialog.exec() == finalcut::FDialog::ResultCode::Accept;
@@ -2073,6 +2170,9 @@ void IdeWindow::openFile(const std::filesystem::path& path) {
   if (opened->newly_loaded && isCppSource(opened->document->path())) lsp_.open(*opened->document);
   activateDocument(opened->index);
   refreshTabs();
+  rememberRecentFile(user_settings_.recent_files, opened->document->path());
+  persistUserSettings();
+  refreshRecentFilesMenu();
 }
 
 auto IdeWindow::save(bool report) -> bool {
@@ -2084,6 +2184,9 @@ auto IdeWindow::save(bool report) -> bool {
     return false;
   }
   if (isCppSource(document_->path())) lsp_.change(*document_);
+  rememberRecentFile(user_settings_.recent_files, document_->path());
+  persistUserSettings();
+  refreshRecentFilesMenu();
   refreshTabs(); updateStatus();
   if (report) publishEvent(EventSource::Editor, EventSeverity::Success,
     "Saved: " + document_->path().string() + "\n");
@@ -2131,6 +2234,9 @@ auto IdeWindow::saveAs() -> bool {
   editor_.setDocument(document_);
   if (isCppSource(document_->path())) lsp_.open(*document_);
   lsp_.setActiveDocument(document_);
+  rememberRecentFile(user_settings_.recent_files, document_->path());
+  persistUserSettings();
+  refreshRecentFilesMenu();
   refreshFiles(); refreshTabs(); updateStatus();
   return true;
 }

@@ -1768,11 +1768,31 @@ int main() {
     "project settings file is versioned and keeps in-project paths portable");
 
   const auto user_settings_path = settings_project / "config/tuiide/settings.json";
+  const auto recent_first = settings_project / "recent-first.cpp";
+  const auto recent_second = settings_project / "recent-second.hpp";
+  { std::ofstream file(recent_first); file << "int recent_first;\n"; }
+  { std::ofstream file(recent_second); file << "#pragma once\n"; }
+  const auto missing_recent = settings_project / "removed.cpp";
+  const auto normalized_recent = tuiide::normalizeRecentFiles(
+    {recent_first, recent_first, missing_recent, recent_second});
+  expect(normalized_recent == std::vector<std::filesystem::path>{
+      tuiide::normalizePath(recent_first), tuiide::normalizePath(recent_second)},
+    "recent files are normalized, deduplicated, and stripped of unavailable paths");
+  auto ordered_recent = normalized_recent;
+  tuiide::rememberRecentFile(ordered_recent, recent_second);
+  expect(ordered_recent == std::vector<std::filesystem::path>{
+      tuiide::normalizePath(recent_second), tuiide::normalizePath(recent_first)},
+    "opening a recent file moves it to the front without duplicating it");
+  tuiide::rememberRecentFile(ordered_recent, recent_first, 1);
+  expect(ordered_recent == std::vector<std::filesystem::path>{tuiide::normalizePath(recent_first)}
+      && tuiide::normalizeRecentFiles(ordered_recent, 0).empty(),
+    "recent file history obeys its configured size limit, including zero");
   tuiide::UserSettings user_settings;
   user_settings.shortcuts = {{"file.open", "Ctrl+B"}};
   user_settings.theme = "Team dark";
   user_settings.custom_themes = {{"Team dark", "Dark"}};
   user_settings.colors = {{"keyword", "Yellow"}, {"diagnosticError", "LightRed"}};
+  user_settings.recent_files = {recent_first, recent_first, missing_recent, recent_second};
   expect(tuiide::saveUserSettings(user_settings_path, user_settings, session_error),
     "user settings create their configuration directory and save atomically");
   tuiide::UserSettings loaded_user_settings;
@@ -1781,8 +1801,20 @@ int main() {
       && loaded_user_settings.theme == user_settings.theme
       && loaded_user_settings.custom_themes == user_settings.custom_themes
       && loaded_user_settings.colors == user_settings.colors
+      && loaded_user_settings.recent_files == normalized_recent
       && tuiide::effectiveEditorTheme(loaded_user_settings) == "Dark",
-    "user shortcuts, theme, custom themes, and colors round-trip independently of a project");
+    "user shortcuts, theme, colors, and filtered recent files round-trip independently of a project");
+  const auto malformed_recent_path = settings_project / "config/tuiide/malformed-recent.json";
+  {
+    std::ofstream output(malformed_recent_path);
+    output << "{\"version\":1,\"recentFiles\":[null,{},7,\""
+      << recent_first.string() << "\"]}";
+  }
+  tuiide::UserSettings malformed_recent_settings;
+  expect(tuiide::loadUserSettings(malformed_recent_path, malformed_recent_settings, session_error)
+      && malformed_recent_settings.recent_files
+        == std::vector<std::filesystem::path>{tuiide::normalizePath(recent_first)},
+    "malformed recent-file entries are ignored without rejecting otherwise valid settings");
   const auto saved_user_text = [&] {
     std::ifstream input(user_settings_path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
