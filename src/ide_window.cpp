@@ -53,7 +53,7 @@ auto ideCommands() -> const std::vector<IdeCommand>& {
     {"debug.breakpoint", "Debug: Toggle Breakpoint", finalcut::FKey::F9, "F9"},
     {"debug.stepInto", "Debug: Step Into", finalcut::FKey::F7, "F7"},
     {"debug.stepOver", "Debug: Step Over / Next", finalcut::FKey::F8, "F8"},
-    {"debug.stepOut", "Debug: Step Out", finalcut::FKey::Meta_f8, "Alt+F8"},
+    {"debug.stepOut", "Debug: Step Out", finalcut::FKey::F56, "Alt+F8"},
     {"debug.watch", "Debug: Add Watch", finalcut::FKey::Ctrl_l, "Ctrl+L"},
     {"tools.completion", "Tools: Completion", finalcut::FKey::Ctrl_space, "Ctrl+Space"},
     {"tools.hover", "Tools: Symbol Information", finalcut::FKey::F1, "F1"},
@@ -97,7 +97,7 @@ auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
     {"ALT+F", finalcut::FKey::Meta_f}, {"ALT+H", finalcut::FKey::Meta_h},
     {"ALT+K", finalcut::FKey::Meta_k}, {"ALT+L", finalcut::FKey::Meta_l},
     {"ALT+SHIFT+L", finalcut::FKey::Meta_L},
-    {"ALT+F8", finalcut::FKey::Meta_f8},
+    {"ALT+F8", finalcut::FKey::F56},
     {"ALT+P", finalcut::FKey::Meta_p},
     {"ALT+R", finalcut::FKey::Meta_r}, {"ALT+S", finalcut::FKey::Meta_s},
     {"ALT+T", finalcut::FKey::Meta_t},
@@ -518,7 +518,7 @@ void IdeWindow::setupMenus() {
   debug_menu_.breakpoint_clear.addCallback("clicked", [this] { deferred_command_ = [this] { clearBreakpoints(); }; });
   bind(debug_menu_.next, finalcut::FKey::F8, "Step over the current source line");
   bind(debug_menu_.step, finalcut::FKey::F7, "Step into the current call");
-  bind(debug_menu_.finish, finalcut::FKey::Meta_f8, "Finish the current stack frame");
+  bind(debug_menu_.finish, finalcut::FKey::F56, "Finish the current stack frame");
   bind(debug_menu_.watch, finalcut::FKey::Ctrl_l, "Add a GDB watch expression");
   debug_menu_.evaluate.setStatusBarMessage("Evaluate a C/C++ expression in the selected stack frame");
   debug_menu_.evaluate.addCallback("clicked", [this] { deferred_command_ = [this] { evaluateExpression(); }; });
@@ -3441,6 +3441,9 @@ void IdeWindow::updateStatus() {
 }
 
 auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
+  // Depending on terminfo availability, Final Cut reports Alt+F8 as either
+  // the extended F56 key or the fallback Meta_f8 key.
+  if (key == finalcut::FKey::Meta_f8) key = finalcut::FKey::F56;
   const auto top_menu = [this, key]() -> finalcut::FMenuItem* {
     switch (key) {
       case finalcut::FKey::Meta_f: return file_menu_.menu.getItem();
@@ -3694,7 +3697,7 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       return true;
     case finalcut::FKey::F8: if (requireStoppedDebugger("Next")) gdb_.next(); return true;
     case finalcut::FKey::F7: if (requireStoppedDebugger("Step into")) gdb_.step(); return true;
-    case finalcut::FKey::Meta_f8: if (requireStoppedDebugger("Step out")) gdb_.finish(); return true;
+    case finalcut::FKey::F56: if (requireStoppedDebugger("Step out")) gdb_.finish(); return true;
     default: return false;
   }
 }

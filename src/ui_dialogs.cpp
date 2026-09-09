@@ -67,7 +67,7 @@ auto shortcutForKey(finalcut::FKey key) -> std::string {
     {finalcut::FKey::Meta_h, "Alt+H"},
     {finalcut::FKey::Meta_k, "Alt+K"}, {finalcut::FKey::Meta_l, "Alt+L"},
     {finalcut::FKey::Meta_L, "Alt+Shift+L"},
-    {finalcut::FKey::Meta_f8, "Alt+F8"},
+    {finalcut::FKey::Meta_f8, "Alt+F8"}, {finalcut::FKey::F56, "Alt+F8"},
     {finalcut::FKey::Meta_p, "Alt+P"},
     {finalcut::FKey::Meta_r, "Alt+R"}, {finalcut::FKey::Meta_s, "Alt+S"},
     {finalcut::FKey::Meta_t, "Alt+T"},
