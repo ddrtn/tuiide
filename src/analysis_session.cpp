@@ -99,6 +99,8 @@ auto makeSanitizerConfigureCommand(const std::filesystem::path& cmake,
     const std::filesystem::path& project_root,
     const std::filesystem::path& sanitizer_build_directory,
     std::string_view generator, const std::filesystem::path& toolchain,
+    const std::filesystem::path& make_program,
+    const std::filesystem::path& sysroot,
     const std::filesystem::path& c_compiler,
     const std::filesystem::path& cpp_compiler) -> AnalysisCommand {
   AnalysisCommand command;
@@ -111,6 +113,8 @@ auto makeSanitizerConfigureCommand(const std::filesystem::path& cmake,
     "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address,undefined"};
   if (!generator.empty()) command.arguments.insert(command.arguments.end(), {"-G", std::string(generator)});
   if (!toolchain.empty()) command.arguments.push_back("-DCMAKE_TOOLCHAIN_FILE=" + toolchain.string());
+  if (!make_program.empty()) command.arguments.push_back("-DCMAKE_MAKE_PROGRAM=" + make_program.string());
+  if (!sysroot.empty()) command.arguments.push_back("-DCMAKE_SYSROOT=" + sysroot.string());
   if (!c_compiler.empty()) command.arguments.push_back("-DCMAKE_C_COMPILER=" + c_compiler.string());
   if (!cpp_compiler.empty()) command.arguments.push_back("-DCMAKE_CXX_COMPILER=" + cpp_compiler.string());
   command.working_directory = project_root;

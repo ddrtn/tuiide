@@ -23,6 +23,8 @@ source code and user interface use UTF-8.
   navigation from failed tests in the Tests panel.
 - Asynchronous file, CMake-target, or project analysis with clang-tidy,
   cppcheck, and IWYU, plus an isolated ASan/UBSan build.
+- A toolchain-kit manager detects GCC/Clang, Ninja/Make, GDB/LLDB, sysroots,
+  and project CMake toolchain files, verifies versions, and applies a selected kit.
 - Named Run/Debug configurations support cloning and quick selection; programs
   run in an integrated PTY or external terminal with arguments, environment,
   and standard input.
@@ -104,7 +106,8 @@ Tests, press `Space` to run the selected test and `Enter` to open its first
 failure location; discovery and grouped runs are under **Run → Tests**. The
 lower area contains **Output**, **Problems**, **Build**, an interactive **Terminal**, and
 **Analysis**. Start analyzers from **Tools → Run static checks**; recognized
-diagnostics are also listed in Problems.
+diagnostics are also listed in Problems. Select a detected compiler, generator,
+and debugger combination through **Tools → Toolchain kits**.
 
 ## Repository Layout
 

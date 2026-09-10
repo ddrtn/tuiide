@@ -20,6 +20,8 @@ CMake, clangd и GDB/MI. Исходный текст и интерфейс ра�
   тестов, test presets и переход к строке сбоя из панели Tests.
 - Асинхронный анализ текущего файла, CMake target или проекта через clang-tidy,
   cppcheck и IWYU; отдельная ASan/UBSan-сборка без изменения обычного build.
+- Менеджер toolchain kits обнаруживает GCC/Clang, Ninja/Make, GDB/LLDB, sysroot
+  и проектные CMake toolchain-файлы, проверяет версии и применяет kit к проекту.
 - Именованные конфигурации Run/Debug с клонированием и быстрым выбором; запуск в
   интегрированном PTY или внешнем терминале, аргументы, среда и `stdin`.
 - Отладка через GDB: breakpoints/logpoints, стек, потоки, локальные переменные,
@@ -101,7 +103,8 @@ ctest --test-dir tuiide-build --output-on-failure
 Внизу размещены
 **Output**, **Problems**, **Build**, интерактивный **Terminal** и **Analysis**.
 Анализ запускается через **Tools → Run static checks**; распознанные сообщения
-также появляются в Problems.
+также появляются в Problems. Выбор обнаруженного набора компилятора, генератора
+и отладчика находится в **Tools → Toolchain kits**.
 
 ## Структура репозитория
 

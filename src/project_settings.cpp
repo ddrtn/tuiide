@@ -224,7 +224,10 @@ auto loadProjectSettings(const std::filesystem::path& project_directory,
     settings.build_directory = resolvePath(root, json.value("buildDirectory", std::string{}));
     if (settings.build_directory.empty()) settings.build_directory = defaultProjectSettings(root).build_directory;
     settings.generator = json.value("generator", std::string{});
+    settings.kit = json.value("kit", std::string{});
     settings.toolchain = resolvePath(root, json.value("toolchain", std::string{}));
+    settings.make_program = resolvePath(root, json.value("makeProgram", std::string{}));
+    settings.sysroot = resolvePath(root, json.value("sysroot", std::string{}));
     settings.c_compiler = resolvePath(root, json.value("cCompiler", std::string{}));
     settings.cpp_compiler = resolvePath(root, json.value("cppCompiler", std::string{}));
     settings.c_standard = json.value("cStandard", std::string{});
@@ -280,7 +283,10 @@ auto saveProjectSettings(const std::filesystem::path& project_directory,
   }
   const nlohmann::json json{
     {"version", 1}, {"buildDirectory", portablePath(root, settings.build_directory)},
-    {"generator", settings.generator}, {"toolchain", portablePath(root, settings.toolchain)},
+    {"generator", settings.generator}, {"kit", settings.kit},
+    {"toolchain", portablePath(root, settings.toolchain)},
+    {"makeProgram", portablePath(root, settings.make_program)},
+    {"sysroot", portablePath(root, settings.sysroot)},
     {"cCompiler", portablePath(root, settings.c_compiler)},
     {"cppCompiler", portablePath(root, settings.cpp_compiler)}, {"cStandard", settings.c_standard},
     {"cppStandard", settings.cpp_standard}, {"cppHeaderExtension", settings.cpp_header_extension},

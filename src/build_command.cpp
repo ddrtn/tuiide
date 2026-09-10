@@ -10,6 +10,8 @@ void appendProjectSettings(std::vector<std::string>& arguments, const ProjectSet
     if (!value.empty()) arguments.push_back("-D" + std::move(name) + "=" + value.string());
   };
   definition("CMAKE_TOOLCHAIN_FILE", settings.toolchain);
+  definition("CMAKE_MAKE_PROGRAM", settings.make_program);
+  definition("CMAKE_SYSROOT", settings.sysroot);
   definition("CMAKE_C_COMPILER", settings.c_compiler);
   definition("CMAKE_CXX_COMPILER", settings.cpp_compiler);
   if (!settings.c_standard.empty()) arguments.push_back("-DCMAKE_C_STANDARD=" + settings.c_standard);

@@ -108,6 +108,7 @@ add_library(tuiide_core
   src/text_search.cpp
   src/terminal_buffer.cpp
   src/tool_discovery.cpp
+  src/toolchain_kit.cpp
   src/user_settings.cpp
   src/process.cpp
   src/pseudo_terminal.cpp

@@ -64,6 +64,8 @@ class AnalysisSession {
   const std::filesystem::path& project_root,
   const std::filesystem::path& sanitizer_build_directory,
   std::string_view generator = {}, const std::filesystem::path& toolchain = {},
+  const std::filesystem::path& make_program = {},
+  const std::filesystem::path& sysroot = {},
   const std::filesystem::path& c_compiler = {},
   const std::filesystem::path& cpp_compiler = {}) -> AnalysisCommand;
 [[nodiscard]] auto makeSanitizerBuildCommand(const std::filesystem::path& cmake,

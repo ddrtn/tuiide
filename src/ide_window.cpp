@@ -7,6 +7,7 @@
 #include "tuiide/run_dialogs.hpp"
 #include "tuiide/search_dialogs.hpp"
 #include "tuiide/text_display.hpp"
+#include "tuiide/toolchain_kit.hpp"
 #include "tuiide/ui_dialogs.hpp"
 #include "tuiide/workspace_file_transaction.hpp"
 
@@ -15,6 +16,7 @@
 #include <chrono>
 #include <cctype>
 #include <csignal>
+#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -602,6 +604,10 @@ void IdeWindow::setupMenus() {
   tools_menu_.format_selection.setStatusBarMessage("Format selected C/C++ lines with clang-format");
   tools_menu_.format_selection.addCallback("clicked", [this] {
     deferred_command_ = [this] { formatDocument(true); };
+  });
+  tools_menu_.toolchain_kits.setStatusBarMessage("Detect and select a C/C++ toolchain kit");
+  tools_menu_.toolchain_kits.addCallback("clicked", [this] {
+    deferred_command_ = [this] { manageToolchainKits(); };
   });
   tools_menu_.run_analysis.setStatusBarMessage("Run clang-tidy, cppcheck, sanitizers, or include-what-you-use");
   tools_menu_.run_analysis.addCallback("clicked", [this] {
@@ -1756,6 +1762,62 @@ void IdeWindow::projectSettings() {
   refreshCompilationDatabase(true);
   restartLanguageServer();
   publishEvent(EventSource::Project, EventSeverity::Success, "Project settings saved; build directory: " + build_dir_.string() + "\n");
+  updateStatus();
+}
+
+void IdeWindow::manageToolchainKits() {
+  if (root_.empty()) {
+    publishEvent(EventSource::Project, EventSeverity::Warning,
+      "Toolchain kits unavailable: no project is open\n");
+    return;
+  }
+  if (build_session_.running() || analysis_session_.running() || ctest_session_.running()
+      || run_session_.running() || run_session_.consoleRunning() || gdb_.running()) {
+    publishEvent(EventSource::Project, EventSeverity::Warning,
+      "Toolchain kits unavailable while another operation is active\n");
+    return;
+  }
+  publishEvent(EventSource::Project, EventSeverity::Information,
+    "Discovering GCC, Clang, CMake generators, debuggers, and toolchain files...\n");
+  const std::string path = std::getenv("PATH") ? std::getenv("PATH") : "";
+  const auto kits = discoverToolchainKits(path, root_);
+  if (kits.empty()) {
+    finalcut::FMessageBox::error(this,
+      "No usable GCC/Clang pair or CMake toolchain file was found.");
+    return;
+  }
+  std::vector<std::string> descriptions;
+  descriptions.reserve(kits.size());
+  for (const auto& kit : kits) descriptions.push_back(describeToolchainKit(kit));
+  delTimer(timer_id_);
+  SelectionDialog dialog("Toolchain kits", descriptions, this);
+  const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
+  timer_id_ = addTimer(100);
+  if (!accepted || dialog.selected() == 0 || dialog.selected() > kits.size()) return;
+  const auto& kit = kits[dialog.selected() - 1];
+  if (!kit.valid) {
+    finalcut::FMessageBox::error(this, "The selected kit failed its version checks.");
+    return;
+  }
+  auto updated = project_settings_;
+  updated.kit = kit.name;
+  updated.generator = kit.generator;
+  updated.toolchain = kit.toolchain_file;
+  updated.make_program = kit.make_program;
+  updated.sysroot = kit.sysroot;
+  updated.c_compiler = kit.c_compiler;
+  updated.cpp_compiler = kit.cpp_compiler;
+  std::string error;
+  if (!saveProjectSettings(root_, updated, error)) {
+    finalcut::FMessageBox::error(this, finalcut::FString(error));
+    return;
+  }
+  project_session_.applySettings(std::move(updated));
+  cmake_session_.reset(project_session_.buildDirectory());
+  refreshCompilationDatabase(true);
+  restartLanguageServer();
+  publishEvent(EventSource::Project, EventSeverity::Success,
+    "Toolchain kit selected: " + project_settings_.kit + "\n");
   updateStatus();
 }
 
@@ -3387,6 +3449,7 @@ void IdeWindow::runAnalysis() {
     }
     command = makeSanitizerConfigureCommand(*executable, root_, sanitizer_build_dir_,
       project_settings_.generator, project_settings_.toolchain,
+      project_settings_.make_program, project_settings_.sysroot,
       project_settings_.c_compiler, project_settings_.cpp_compiler);
     stage = AnalysisStage::SanitizerConfigure;
   } else command = makeAnalysisCommand(tool, scope, *executable, root_, build_dir_, sources);
@@ -3793,6 +3856,7 @@ void IdeWindow::updateMenuState() {
   enabled(tools_menu_.type_hierarchy, state.hierarchy);
   enabled(tools_menu_.format_document, state.format_document);
   enabled(tools_menu_.format_selection, state.format_selection);
+  enabled(tools_menu_.toolchain_kits, state.cmake_configuration && analysis_idle);
   enabled(tools_menu_.run_analysis, state.cmake_configuration && !analysis_session_.running());
   enabled(tools_menu_.stop_analysis, analysis_session_.running());
   enabled(tools_menu_.project_settings, state.cmake_configuration);

@@ -44,6 +44,7 @@
 #include "tuiide/text_search.hpp"
 #include "tuiide/terminal_buffer.hpp"
 #include "tuiide/tool_discovery.hpp"
+#include "tuiide/toolchain_kit.hpp"
 #include "tuiide/user_settings.hpp"
 #include "tuiide/workspace_edit.hpp"
 #include "tuiide/workspace_file_transaction.hpp"
@@ -95,6 +96,28 @@ int main() {
     "tool discovery finds an executable in an explicit PATH");
   expect(!tuiide::findExecutable("missing-tool", tool_directory.string()),
     "tool discovery reports an absent executable");
+  const auto makeFakeTool = [&](std::string_view name, std::string_view version) {
+    const auto path = tool_directory / name;
+    std::ofstream file(path);
+    file << "#!/bin/sh\nif [ \"$1\" = --print-sysroot ]; then echo /sdk; "
+         << "else echo '" << version << "'; fi\n";
+    file.close();
+    std::filesystem::permissions(path, std::filesystem::perms::owner_all);
+  };
+  makeFakeTool("gcc", "gcc 14.1"); makeFakeTool("g++", "g++ 14.1");
+  makeFakeTool("gdb", "GNU gdb 15.1"); makeFakeTool("ninja", "1.12.0");
+  std::filesystem::create_directories(tool_directory / "cmake");
+  { std::ofstream file(tool_directory / "cmake/arm-toolchain.cmake"); file << "# fixture\n"; }
+  const auto kits = tuiide::discoverToolchainKits(tool_directory.string(), tool_directory);
+  expect(kits.size() == 2 && kits.front().name == "GCC native"
+      && kits.front().compiler_version == "g++ 14.1"
+      && kits.front().debugger_kind == "GDB" && kits.front().generator == "Ninja"
+      && kits.front().sysroot == "/sdk" && kits.front().valid
+      && kits.back().toolchain_file.filename() == "arm-toolchain.cmake"
+      && tuiide::describeToolchainKit(kits.front()).find("g++ 14.1") != std::string::npos,
+    "toolchain discovery verifies native tools and project CMake toolchain files");
+  expect(tuiide::firstVersionLine("\n  clang version 19.0  \nTarget")
+      == "clang version 19.0", "tool version parsing returns a trimmed first line");
   std::error_code tool_cleanup_error;
   std::filesystem::remove_all(tool_directory, tool_cleanup_error);
 
@@ -1690,7 +1713,10 @@ int main() {
     "parallel jobs default to the host hardware thread count");
   project_settings.build_directory = settings_project / "out/debug";
   project_settings.generator = "Ninja";
+  project_settings.kit = "GCC native";
   project_settings.toolchain = settings_project / "cmake/toolchain.cmake";
+  project_settings.make_program = "/usr/bin/ninja";
+  project_settings.sysroot = "/opt/sdk";
   project_settings.c_compiler = "/usr/bin/cc";
   project_settings.cpp_compiler = "/usr/bin/c++";
   project_settings.c_standard = "17";
@@ -1725,6 +1751,9 @@ int main() {
   expect(tuiide::loadProjectSettings(settings_project, loaded_settings, session_error)
       && loaded_settings.build_directory == tuiide::normalizePath(settings_project / "out/debug")
       && loaded_settings.toolchain == tuiide::normalizePath(settings_project / "cmake/toolchain.cmake")
+      && loaded_settings.kit == "GCC native"
+      && loaded_settings.make_program == "/usr/bin/ninja"
+      && loaded_settings.sysroot == "/opt/sdk"
       && loaded_settings.build_jobs == 3
       && loaded_settings.tab_width == 4 && !loaded_settings.use_spaces
       && loaded_settings.environment == project_settings.environment
@@ -2196,6 +2225,8 @@ int main() {
   tuiide::ProjectSettings command_settings;
   command_settings.generator = "Ninja";
   command_settings.toolchain = "/opt/toolchains/test.cmake";
+  command_settings.make_program = "/usr/bin/ninja";
+  command_settings.sysroot = "/opt/sdk";
   command_settings.c_compiler = "/usr/bin/clang";
   command_settings.cpp_compiler = "/usr/bin/clang++";
   command_settings.c_standard = "17";
@@ -2209,6 +2240,7 @@ int main() {
       && configure_command->arguments == std::vector<std::string>{
         "cmake", "-S", command_project.string(), "-B", command_build.string(),
         "-G", "Ninja", "-DCMAKE_TOOLCHAIN_FILE=/opt/toolchains/test.cmake",
+        "-DCMAKE_MAKE_PROGRAM=/usr/bin/ninja", "-DCMAKE_SYSROOT=/opt/sdk",
         "-DCMAKE_C_COMPILER=/usr/bin/clang", "-DCMAKE_CXX_COMPILER=/usr/bin/clang++",
         "-DCMAKE_C_STANDARD=17", "-DCMAKE_CXX_STANDARD=20",
         "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"},

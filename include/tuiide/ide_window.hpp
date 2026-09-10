@@ -185,6 +185,7 @@ class IdeWindow final : public finalcut::FDialog {
   void importProject(const std::filesystem::path& directory);
   void closeProject();
   void projectSettings();
+  void manageToolchainKits();
   auto closeAllDocuments() -> bool;
   auto loadProject(std::filesystem::path root, std::filesystem::path build_directory = {}) -> bool;
   void unloadProject();
@@ -481,6 +482,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem format_document{"Format &document", &menu};
     finalcut::FMenuItem format_selection{"Format selectio&n", &menu};
     finalcut::FMenuItem separator_analysis{&menu};
+    finalcut::FMenuItem toolchain_kits{"Toolchain &kits...", &menu};
     finalcut::FMenuItem run_analysis{"Run static ch&ecks...", &menu};
     finalcut::FMenuItem stop_analysis{"Stop analysis acti&vity", &menu};
     finalcut::FMenuItem separator2{&menu};

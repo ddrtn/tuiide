@@ -24,7 +24,10 @@ struct ProjectSettings {
   int version{1};
   std::filesystem::path build_directory;
   std::string generator;
+  std::string kit;
   std::filesystem::path toolchain;
+  std::filesystem::path make_program;
+  std::filesystem::path sysroot;
   std::filesystem::path c_compiler;
   std::filesystem::path cpp_compiler;
   std::string c_standard;

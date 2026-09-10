@@ -27,7 +27,7 @@
   тестов, test presets, панель Tests и переход из failure в исходный файл.
 - [x] Добавить запуск clang-tidy, cppcheck, sanitizers и include-what-you-use для
   файла/target/проекта с выводом результатов в Analysis и Problems.
-- [ ] Добавить менеджер toolchain/kits: обнаружение GCC/Clang, GDB/LLDB,
+- [x] Добавить менеджер toolchain/kits: обнаружение GCC/Clang, GDB/LLDB,
   Ninja/Make, sysroot и CMake toolchain files с проверкой версий.
 - [ ] Расширить clangd: inlay hints, document highlights, folding ranges,
   completion resolve, selection ranges, code lens и include hierarchy.
