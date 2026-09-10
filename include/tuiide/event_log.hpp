@@ -11,7 +11,7 @@ namespace tuiide {
 
 /** Независимые ленты, отображаемые нижними панелями Output и Build. */
 enum class EventChannel { Output, Build };
-enum class EventSource { Ide, Project, Editor, Build, Test, Run, Debug, Lsp, System };
+enum class EventSource { Ide, Project, Editor, Build, Test, Analysis, Run, Debug, Lsp, System };
 enum class EventSeverity { Information, Success, Warning, Error };
 
 /** Структурированное сообщение IDE с монотонным номером и источником. */

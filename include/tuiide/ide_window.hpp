@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tuiide/code_editor.hpp"
+#include "tuiide/analysis_session.hpp"
 #include "tuiide/build_diagnostic.hpp"
 #include "tuiide/build_output_collector.hpp"
 #include "tuiide/build_progress.hpp"
@@ -253,6 +254,10 @@ class IdeWindow final : public finalcut::FDialog {
   void stopTests();
   void refreshTestsPanel();
   void openSelectedTestFailure();
+  void runAnalysis();
+  void stopAnalysis();
+  [[nodiscard]] auto startSanitizerBuild() -> bool;
+  [[nodiscard]] auto startSanitizerRun() -> bool;
   void run();
   void stopRun();
   void startRun();
@@ -312,6 +317,10 @@ class IdeWindow final : public finalcut::FDialog {
   BuildSession build_session_;
   CTestSession ctest_session_;
   std::string ctest_preset_;
+  AnalysisSession analysis_session_;
+  std::string analysis_text_;
+  std::filesystem::path sanitizer_build_dir_;
+  std::string sanitizer_target_;
   RunSession run_session_;
   std::size_t diagnostic_index_{};
   EventLog event_log_;
@@ -471,6 +480,9 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem separator_lsp{&menu};
     finalcut::FMenuItem format_document{"Format &document", &menu};
     finalcut::FMenuItem format_selection{"Format selectio&n", &menu};
+    finalcut::FMenuItem separator_analysis{&menu};
+    finalcut::FMenuItem run_analysis{"Run static ch&ecks...", &menu};
+    finalcut::FMenuItem stop_analysis{"Stop analysis acti&vity", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem command_palette{finalcut::FKey::Meta_k, "Command &palette...", &menu};
     finalcut::FMenuItem configure_shortcut{"Configure sh&ortcut...", &menu};
@@ -584,6 +596,7 @@ class IdeWindow final : public finalcut::FDialog {
   CommandListBox problems_{&lower_tabs_};
   finalcut::FTextView build_output_{&lower_tabs_};
   ConsoleWidget console_{&lower_tabs_};
+  finalcut::FTextView analysis_output_{&lower_tabs_};
   SystemClipboard lower_clipboard_;
   finalcut::FLabel status_{this};
   finalcut::FLabel notification_{this};

@@ -1,4 +1,5 @@
 #include "tuiide/document.hpp"
+#include "tuiide/analysis_session.hpp"
 #include "tuiide/document_labels.hpp"
 #include "tuiide/document_session.hpp"
 #include "tuiide/event_log.hpp"
@@ -181,6 +182,16 @@ int main() {
   expect(line_only && line_only->line == 8 && line_only->column == 0, "line-only fatal diagnostic is parsed");
   const auto colored_note = tuiide::parseCompilerDiagnostic("\x1b[36msrc/a.cpp:4:2: note: declared here\x1b[0m", "/project");
   expect(colored_note && colored_note->severity == tuiide::DiagnosticSeverity::Note, "ANSI-colored note is parsed");
+  const auto ubsan = tuiide::parseCompilerDiagnostic(
+    "src/math.cpp:8:14: runtime error: signed integer overflow", "/project");
+  expect(ubsan && ubsan->severity == tuiide::DiagnosticSeverity::Error
+      && ubsan->path == "/project/src/math.cpp" && ubsan->line == 7,
+    "UBSan runtime errors use compiler-compatible source navigation");
+  const auto asan = tuiide::parseSanitizerDiagnostic(
+    "SUMMARY: AddressSanitizer: heap-use-after-free /project/src/memory.cpp:21:9 in read", "/project");
+  expect(asan && asan->path == "/project/src/memory.cpp" && asan->line == 20
+      && asan->column == 8 && asan->message == "heap-use-after-free",
+    "ASan summaries expose source locations to Problems");
   expect(tuiide::parseBuildProgress("[12/48] Building CXX object") == 25,
     "Ninja fractional build progress is parsed");
   expect(tuiide::parseBuildProgress("[ 73%] Linking CXX executable") == 73,
@@ -1411,11 +1422,16 @@ int main() {
   std::filesystem::create_directories(reply);
   { std::ofstream file(reply / "index-test.json"); file << R"({"reply":{"codemodel-v2":{"jsonFile":"model.json"}}})"; }
   { std::ofstream file(reply / "model.json"); file << R"({"configurations":[{"name":"Debug","targets":[{"name":"app","jsonFile":"app.json"},{"name":"core","jsonFile":"core.json"}]}]})"; }
-  { std::ofstream file(reply / "app.json"); file << R"({"name":"app","type":"EXECUTABLE","artifacts":[{"path":"bin/app"}]})"; }
+  { std::ofstream file(reply / "app.json"); file
+      << "{\"name\":\"app\",\"type\":\"EXECUTABLE\",\"artifacts\":[{\"path\":\"bin/app\"}],"
+      << "\"paths\":{\"source\":\"" << cmake_build.string() << "\"},"
+      << "\"sources\":[{\"path\":\"src/main.cpp\"},{\"path\":null}]}"; }
   { std::ofstream file(reply / "core.json"); file << R"({"name":"core","type":"STATIC_LIBRARY","artifacts":[{"path":"libcore.a"}]})"; }
   auto targets = tuiide::loadCMakeExecutableTargets(cmake_build, session_error);
   expect(targets.size() == 1 && targets[0].name == "app" && targets[0].configuration == "Debug", "executable CMake target is parsed");
   expect(targets[0].artifact == cmake_build / "bin/app", "target artifact is resolved against build directory");
+  expect(targets[0].sources == std::vector<std::filesystem::path>{cmake_build / "src/main.cpp"},
+    "CMake target sources are resolved for target-scoped analysis");
   std::filesystem::remove_all(cmake_build, cleanup_error);
 
   const auto cmake_edit = std::filesystem::temp_directory_path()
@@ -2224,6 +2240,56 @@ int main() {
       "cmake", "--build", "--preset", "dev-build", "--parallel", "1", "--target", "clean"}
       && build_command.working_directory == command_project,
     "preset clean command uses the project working directory and defensively clamps parallelism");
+
+  const std::vector<std::filesystem::path> analysis_sources{
+    command_project / "src/main.cpp", command_project / "src/worker.cpp"};
+  auto analysis_command = tuiide::makeAnalysisCommand(tuiide::AnalysisTool::ClangTidy,
+    tuiide::AnalysisScope::Project,
+    "/usr/bin/clang-tidy", command_project, command_build, analysis_sources);
+  expect(analysis_command.arguments == std::vector<std::string>{"/usr/bin/clang-tidy",
+      analysis_sources[0].string(), analysis_sources[1].string(),
+      "-p=" + command_build.string(), "--quiet"}
+      && analysis_command.working_directory == command_project
+      && analysis_command.display.find("project with spaces") != std::string::npos,
+    "clang-tidy analysis command preserves source paths and compilation database");
+  analysis_command = tuiide::makeAnalysisCommand(tuiide::AnalysisTool::Cppcheck,
+    tuiide::AnalysisScope::File,
+    "/usr/bin/cppcheck", command_project, command_build, {analysis_sources.front()});
+  expect(analysis_command.arguments.front() == "/usr/bin/cppcheck"
+      && std::ranges::find(analysis_command.arguments,
+        "--template={file}:{line}:{column}: {severity}: {message}") != analysis_command.arguments.end()
+      && analysis_command.arguments.back() == analysis_sources.front().string(),
+    "cppcheck command emits compiler-compatible diagnostics for Problems");
+  analysis_command = tuiide::makeAnalysisCommand(tuiide::AnalysisTool::Cppcheck,
+    tuiide::AnalysisScope::Project, "/usr/bin/cppcheck", command_project,
+    command_build, analysis_sources);
+  expect(analysis_command.arguments.back()
+      == "--project=" + (command_build / "compile_commands.json").string(),
+    "project cppcheck consumes the compilation database instead of losing compiler flags");
+  analysis_command = tuiide::makeAnalysisCommand(tuiide::AnalysisTool::IncludeWhatYouUse,
+    tuiide::AnalysisScope::File,
+    "/usr/bin/iwyu_tool.py", command_project, command_build, {analysis_sources.front()});
+  expect(analysis_command.arguments == std::vector<std::string>{"/usr/bin/iwyu_tool.py",
+      "-p", command_build.string(), analysis_sources.front().string()},
+    "IWYU tool command uses compile_commands without shell interpolation");
+  const auto sanitizer_directory = command_build / ".tuiide-sanitizers";
+  const auto sanitizer_configure = tuiide::makeSanitizerConfigureCommand(
+    "/usr/bin/cmake", command_project, sanitizer_directory);
+  expect(std::ranges::find(sanitizer_configure.arguments,
+      "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer")
+        != sanitizer_configure.arguments.end(),
+    "sanitizer configure enables ASan and UBSan in a separate build directory");
+  const auto sanitizer_build = tuiide::makeSanitizerBuildCommand(
+    "/usr/bin/cmake", sanitizer_directory, 0, "demo");
+  expect(sanitizer_build.arguments == std::vector<std::string>{"/usr/bin/cmake", "--build",
+      sanitizer_directory.string(), "--parallel", "1", "--target", "demo"},
+    "sanitizer target build clamps invalid parallelism and keeps target separate");
+  const auto sanitizer_run = tuiide::makeSanitizerRunCommand(
+    sanitizer_directory / "demo", {"--sample", "value with spaces"}, command_project);
+  expect(sanitizer_run.arguments == std::vector<std::string>{
+      (sanitizer_directory / "demo").string(), "--sample", "value with spaces"}
+      && sanitizer_run.working_directory == command_project,
+    "sanitizer executable preserves configured arguments and working directory");
   std::filesystem::remove_all(preset_source, cleanup_error);
 
   std::vector<tuiide::CTestCase> ctest_cases;

@@ -79,6 +79,7 @@ target_link_libraries(finalcut_vendor PUBLIC Threads::Threads ${GPM_LIBRARY} ${T
 set_target_properties(finalcut_vendor PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(tuiide_core
+  src/analysis_session.cpp
   src/cli.cpp
   src/build_command.cpp
   src/build_diagnostic.cpp

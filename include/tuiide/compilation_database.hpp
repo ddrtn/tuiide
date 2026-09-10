@@ -18,6 +18,8 @@ class CompilationDatabase {
   [[nodiscard]] auto available() const -> bool;
   [[nodiscard]] auto contains(const std::filesystem::path& source) const -> bool;
   [[nodiscard]] auto size() const -> std::size_t;
+  [[nodiscard]] auto sources() const noexcept
+    -> const std::unordered_set<std::filesystem::path>& { return sources_; }
   [[nodiscard]] auto path() const -> const std::filesystem::path&;
 
  private:

@@ -15,11 +15,14 @@ struct ExternalToolStatus {
   std::string purpose;
 };
 
-/** Результат одной проверки CMake, clangd, GDB и clipboard helper. */
+/** Результат проверки IDE toolchain, анализаторов и clipboard helper. */
 struct ExternalTools {
   std::optional<std::filesystem::path> cmake;
   std::optional<std::filesystem::path> clangd;
   std::optional<std::filesystem::path> gdb;
+  std::optional<std::filesystem::path> clang_tidy;
+  std::optional<std::filesystem::path> cppcheck;
+  std::optional<std::filesystem::path> include_what_you_use;
   std::vector<ExternalToolStatus> clipboard;
 };
 

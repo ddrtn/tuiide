@@ -43,6 +43,11 @@ auto loadCMakeExecutableTargets(const std::filesystem::path& build_directory, st
     const auto codemodel_file = index.at("reply").at("codemodel-v2").at("jsonFile").get<std::string>();
     const auto codemodel = readJson(reply_directory / codemodel_file);
     if (!codemodel.is_object()) throw std::runtime_error("invalid codemodel");
+    auto top_source_root = std::filesystem::path{};
+    if (const auto paths = codemodel.find("paths"); paths != codemodel.end() && paths->is_object()) {
+      const auto source = paths->find("source");
+      if (source != paths->end() && source->is_string()) top_source_root = source->get<std::string>();
+    }
     std::vector<CMakeTarget> result;
     for (const auto& configuration : codemodel.at("configurations")) {
       const auto configuration_name = configuration.value("name", std::string{});
@@ -51,8 +56,25 @@ auto loadCMakeExecutableTargets(const std::filesystem::path& build_directory, st
         if (!target.is_object() || target.value("type", std::string{}) != "EXECUTABLE" || !target.contains("artifacts") || target["artifacts"].empty()) continue;
         auto artifact = std::filesystem::path(target["artifacts"][0].at("path").get<std::string>());
         if (artifact.is_relative()) artifact = build_directory / artifact;
+        std::vector<std::filesystem::path> sources;
+        auto source_root = std::filesystem::path{};
+        if (const auto paths = target.find("paths"); paths != target.end() && paths->is_object()) {
+          const auto source = paths->find("source");
+          if (source != paths->end() && source->is_string()) source_root = source->get<std::string>();
+        }
+        if (source_root.is_relative()) source_root = top_source_root / source_root;
+        if (const auto entries = target.find("sources"); entries != target.end() && entries->is_array()) {
+          for (const auto& entry : *entries) {
+            if (!entry.is_object()) continue;
+            const auto path_value = entry.find("path");
+            if (path_value == entry.end() || !path_value->is_string()) continue;
+            auto source = std::filesystem::path(path_value->get<std::string>());
+            if (source.is_relative()) source = source_root / source;
+            sources.push_back(std::filesystem::absolute(source).lexically_normal());
+          }
+        }
         result.push_back({target.value("name", reference.value("name", std::string{})), configuration_name,
-          std::filesystem::absolute(artifact).lexically_normal()});
+          std::filesystem::absolute(artifact).lexically_normal(), std::move(sources)});
       }
     }
     std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {

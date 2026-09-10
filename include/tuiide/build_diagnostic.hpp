@@ -21,5 +21,8 @@ struct BuildDiagnostic {
 
 auto parseCompilerDiagnostic(std::string_view line, const std::filesystem::path& project_root)
   -> std::optional<BuildDiagnostic>;
+/** Распознаёт итоговую строку ASan/UBSan с исходным файлом и позицией. */
+auto parseSanitizerDiagnostic(std::string_view line,
+  const std::filesystem::path& project_root) -> std::optional<BuildDiagnostic>;
 
 }  // namespace tuiide

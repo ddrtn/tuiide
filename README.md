@@ -18,6 +18,8 @@ CMake, clangd и GDB/MI. Исходный текст и интерфейс ра�
 - Асинхронные Configure/Build/Clean/Rebuild, список проблем и журнал вывода.
 - Интеграция CTest: JSON-discovery, запуск всех, выбранного или ранее упавших
   тестов, test presets и переход к строке сбоя из панели Tests.
+- Асинхронный анализ текущего файла, CMake target или проекта через clang-tidy,
+  cppcheck и IWYU; отдельная ASan/UBSan-сборка без изменения обычного build.
 - Именованные конфигурации Run/Debug с клонированием и быстрым выбором; запуск в
   интегрированном PTY или внешнем терминале, аргументы, среда и `stdin`.
 - Отладка через GDB: breakpoints/logpoints, стек, потоки, локальные переменные,
@@ -30,11 +32,11 @@ CMake, clangd и GDB/MI. Исходный текст и интерфейс ра�
 Поддерживается только Linux на amd64. Для Debian/Ubuntu установите зависимости:
 
 ```sh
-sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb
+sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb clang-tidy cppcheck iwyu
 ```
 
-`clangd`, `clang-format` и GDB нужны для соответствующих функций. IDE запускается
-без них, но явно сообщает о недоступной возможности в панели Output. Для буфера
+`clangd`, `clang-format`, GDB и анализаторы нужны для соответствующих функций.
+IDE запускается без них, но явно сообщает о недоступной возможности в панели Output. Для буфера
 обмена рабочего стола дополнительно можно установить `wl-clipboard` (Wayland) либо
 `xclip`/`xsel` (X11).
 
@@ -97,7 +99,9 @@ ctest --test-dir tuiide-build --output-on-failure
 нажмите `Space`, чтобы запустить выбранный тест, и `Enter`, чтобы открыть первую
 строку его сбоя. Discovery и групповые запуски находятся в **Run → Tests**.
 Внизу размещены
-**Output**, **Problems**, **Build** и интерактивный **Terminal**.
+**Output**, **Problems**, **Build**, интерактивный **Terminal** и **Analysis**.
+Анализ запускается через **Tools → Run static checks**; распознанные сообщения
+также появляются в Problems.
 
 ## Структура репозитория
 

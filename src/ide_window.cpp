@@ -220,9 +220,11 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   lower_tabs_.addTab("Problems", problems_);
   lower_tabs_.addTab("Build", build_output_);
   lower_tabs_.addTab("Terminal", console_);
+  lower_tabs_.addTab("Analysis", analysis_output_);
   notification_.hide();
   output_.setText("Output");
   build_output_.setText("Build output");
+  analysis_output_.setText("Analysis output");
   problems_.insert("No problems");
   problems_.setCommandHandler([this](finalcut::FKey key) {
     if (key == finalcut::FKey::Return) { openSelectedProblem(); return true; }
@@ -362,7 +364,8 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
 
 IdeWindow::~IdeWindow() {
   if (debug_state_dirty_) saveDebugState();
-  lsp_.stop(); gdb_.stop(); build_session_.reset(); ctest_session_.stop(); run_session_.stop(); console_.setControlEnabled(false);
+  lsp_.stop(); gdb_.stop(); build_session_.reset(); ctest_session_.stop(); analysis_session_.stop();
+  run_session_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
   execution_file_.clear(); execution_line_ = 0;
 }
@@ -386,7 +389,7 @@ void IdeWindow::setupMenus() {
   run_menu_.test_separator.setSeparator();
   debug_menu_.separator1.setSeparator(); debug_menu_.separator2.setSeparator();
   tools_menu_.separator.setSeparator(); tools_menu_.separator2.setSeparator(); tools_menu_.separator3.setSeparator();
-  tools_menu_.separator4.setSeparator();
+  tools_menu_.separator4.setSeparator(); tools_menu_.separator_analysis.setSeparator();
   window_menu_.separator.setSeparator();
   help_menu_.separator.setSeparator();
 
@@ -600,6 +603,14 @@ void IdeWindow::setupMenus() {
   tools_menu_.format_selection.addCallback("clicked", [this] {
     deferred_command_ = [this] { formatDocument(true); };
   });
+  tools_menu_.run_analysis.setStatusBarMessage("Run clang-tidy, cppcheck, sanitizers, or include-what-you-use");
+  tools_menu_.run_analysis.addCallback("clicked", [this] {
+    deferred_command_ = [this] { runAnalysis(); };
+  });
+  tools_menu_.stop_analysis.setStatusBarMessage("Stop the active static-analysis process");
+  tools_menu_.stop_analysis.addCallback("clicked", [this] {
+    deferred_command_ = [this] { stopAnalysis(); };
+  });
   bind(tools_menu_.command_palette, finalcut::FKey::Meta_k, "Search and execute an IDE command");
   tools_menu_.configure_shortcut.setStatusBarMessage("Configure a user-wide command shortcut");
   tools_menu_.configure_shortcut.addCallback("clicked", [this] {
@@ -643,7 +654,7 @@ void IdeWindow::setupMenus() {
   togglePanel(window_menu_.debug, 3);
   togglePanel(window_menu_.breakpoints, 4);
   togglePanel(window_menu_.tests, 5);
-  window_menu_.clear_lower.setStatusBarMessage("Clear Output, Problems, Build, or Terminal content");
+  window_menu_.clear_lower.setStatusBarMessage("Clear Output, Problems, Build, Terminal, or Analysis content");
   window_menu_.clear_lower.addCallback("clicked", [this] { deferred_command_ = [this] { clearLowerPanel(); }; });
   window_menu_.copy_lower.setStatusBarMessage("Copy all text from the active lower panel");
   window_menu_.copy_lower.addCallback("clicked", [this] { deferred_command_ = [this] { copyLowerPanel(); }; });
@@ -1641,6 +1652,7 @@ void IdeWindow::unloadProject() {
   clearRecovery(recovery_file_);
   if (debug_state_dirty_ && !root_.empty()) saveDebugState();
   lsp_.stop(); gdb_.stop(); build_session_.reset(); ctest_session_.clear(); ctest_preset_.clear();
+  analysis_session_.prepare(); analysis_text_.clear(); sanitizer_build_dir_.clear(); sanitizer_target_.clear();
   run_session_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
   execution_file_.clear(); execution_line_ = 0;
@@ -1655,7 +1667,7 @@ void IdeWindow::unloadProject() {
   problems_.clear(); problems_.insert("No problems");
   outline_.clear(); outline_.insert("Open a C/C++ file for outline"); outline_positions_.clear();
   refreshTestsPanel();
-  event_log_.clear(); output_.clear(); build_output_.clear(); console_.clear();
+  event_log_.clear(); output_.clear(); build_output_.clear(); console_.clear(); analysis_output_.clear();
   applyShortcutAccelerators();
   editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
   debug_ui_.reset(); debug_state_dirty_ = false;
@@ -1669,6 +1681,7 @@ void IdeWindow::unloadProject() {
       && !lsp_.running() && lsp_.diagnostics().empty() && lsp_.semanticTokens().empty()
       && !build_session_.running() && !run_session_.running() && !run_session_.consoleRunning()
       && !ctest_session_.running() && ctest_session_.tests().empty()
+      && !analysis_session_.running() && analysis_session_.diagnostics().empty()
       && !gdb_.running() && gdb_.breakpoints().empty() && gdb_.watches().empty()
       && cmake_session_.targets().empty() && cmake_session_.configurePresets().empty()
       && cmake_session_.buildPresets().empty() && !project_session_.open();
@@ -2623,12 +2636,14 @@ void IdeWindow::goToLine() {
 void IdeWindow::showProblems() {
   refreshProblemsPanel();
   lower_tabs_.setCurrentIndex(1, true);
-  if (problem_rows_.empty()) publishEvent(EventSource::Editor, EventSeverity::Warning, "No build or clangd diagnostics\n");
+  if (problem_rows_.empty()) publishEvent(EventSource::Editor, EventSeverity::Warning, "No build, analysis, or clangd diagnostics\n");
 }
 
 void IdeWindow::refreshProblemsPanel() {
   std::string signature = problems_filter_;
   for (const auto& diagnostic : build_session_.diagnostics()) signature += diagnostic.path.string()
+    + std::to_string(diagnostic.line) + std::to_string(diagnostic.column) + diagnostic.message;
+  for (const auto& diagnostic : analysis_session_.diagnostics()) signature += diagnostic.path.string()
     + std::to_string(diagnostic.line) + std::to_string(diagnostic.column) + diagnostic.message;
   for (const auto& diagnostic : lsp_.diagnostics()) signature += diagnostic.path.string()
     + std::to_string(diagnostic.position.line) + std::to_string(diagnostic.position.column) + diagnostic.message;
@@ -2651,6 +2666,16 @@ void IdeWindow::refreshProblemsPanel() {
       (diagnostic.severity == DiagnosticSeverity::Warning ? "warning" : "note");
     auto label = std::string("[build ") + severity + "] " + relative_label(diagnostic.path) + ":"
       + std::to_string(diagnostic.line + 1) + ":" + std::to_string(diagnostic.column + 1) + " " + diagnostic.message;
+    if (!visible(label)) continue;
+    problems_.insert(finalcut::FString(label)); problems_text_ += label + '\n';
+    problem_rows_.push_back({diagnostic.path, {diagnostic.line, diagnostic.column}, false, diagnostic.message});
+  }
+  for (const auto& diagnostic : analysis_session_.diagnostics()) {
+    const auto severity = diagnostic.severity == DiagnosticSeverity::Error ? "error" :
+      (diagnostic.severity == DiagnosticSeverity::Warning ? "warning" : "note");
+    auto label = std::string("[analysis ") + severity + "] " + relative_label(diagnostic.path) + ":"
+      + std::to_string(diagnostic.line + 1) + ":" + std::to_string(diagnostic.column + 1)
+      + " " + diagnostic.message;
     if (!visible(label)) continue;
     problems_.insert(finalcut::FString(label)); problems_text_ += label + '\n';
     problem_rows_.push_back({diagnostic.path, {diagnostic.line, diagnostic.column}, false, diagnostic.message});
@@ -2700,13 +2725,16 @@ void IdeWindow::clearLowerPanel() {
   switch (lower_tabs_.currentIndex()) {
     case 0: event_log_.clear(EventChannel::Output); output_.clear(); break;
     case 1:
-      build_session_.clearDiagnostics(); lsp_.clearDiagnostics(); problems_signature_.clear(); refreshProblemsPanel(); break;
+      build_session_.clearDiagnostics(); analysis_session_.clearDiagnostics(); lsp_.clearDiagnostics();
+      problems_signature_.clear(); refreshProblemsPanel(); break;
     case 2: event_log_.clear(EventChannel::Build); build_output_.clear(); break;
     case 3: console_.clear(); break;
+    case 4: analysis_session_.clearDiagnostics(); analysis_text_.clear(); analysis_output_.clear();
+      problems_signature_.clear(); refreshProblemsPanel(); break;
     default: break;
   }
   const std::string message = panel == 0 ? "Output cleared" : panel == 1 ? "Problems cleared"
-    : panel == 2 ? "Build output cleared" : "Terminal cleared";
+    : panel == 2 ? "Build output cleared" : panel == 3 ? "Terminal cleared" : "Analysis output cleared";
   showNotification(message, NotificationKind::Information);
   publishEvent(EventSource::System, EventSeverity::Information, message + "\n");
 }
@@ -2716,6 +2744,7 @@ void IdeWindow::copyLowerPanel() {
   switch (lower_tabs_.currentIndex()) {
     case 0: text = event_log_.text(EventChannel::Output); break; case 1: text = problems_text_; break;
     case 2: text = event_log_.text(EventChannel::Build); break; case 3: text = console_.text(); break;
+    case 4: text = analysis_text_; break;
     default: break;
   }
   if (text.empty()) { publishEvent(EventSource::Editor, EventSeverity::Warning, "Copy panel unavailable: active panel is empty\n"); return; }
@@ -2853,7 +2882,7 @@ void IdeWindow::restoreRecovery() {
 
 void IdeWindow::build() {
   if (root_.empty()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Build unavailable: no project is open\n"); return; }
-  if (ctest_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Build unavailable: CTest is running\n"); return; }
+  if (ctest_session_.running() || analysis_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Build unavailable: tests or analysis are running\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Build unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(true)) return;
   build_session_.begin(BuildOperation::Build, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
@@ -2863,7 +2892,7 @@ void IdeWindow::build() {
 
 void IdeWindow::configure() {
   if (root_.empty()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Configure unavailable: no project is open\n"); return; }
-  if (ctest_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Configure unavailable: CTest is running\n"); return; }
+  if (ctest_session_.running() || analysis_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Configure unavailable: tests or analysis are running\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Configure unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(true)) return;
   build_session_.begin(BuildOperation::Configure, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
@@ -2872,7 +2901,7 @@ void IdeWindow::configure() {
 
 void IdeWindow::rebuild() {
   if (root_.empty()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Rebuild unavailable: no project is open\n"); return; }
-  if (ctest_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Rebuild unavailable: CTest is running\n"); return; }
+  if (ctest_session_.running() || analysis_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Rebuild unavailable: tests or analysis are running\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Rebuild unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(true)) return;
   build_session_.begin(BuildOperation::Rebuild, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
@@ -2882,7 +2911,7 @@ void IdeWindow::rebuild() {
 
 void IdeWindow::clean() {
   if (root_.empty()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Clean unavailable: no project is open\n"); return; }
-  if (ctest_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Clean unavailable: CTest is running\n"); return; }
+  if (ctest_session_.running() || analysis_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Clean unavailable: tests or analysis are running\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Build, EventSeverity::Warning, "Clean unavailable: a CMake operation is already running\n"); return; }
   if (!beginBuildOperation(false)) return;
   build_session_.begin(BuildOperation::Clean, std::filesystem::exists(build_dir_ / "CMakeCache.txt"));
@@ -3106,7 +3135,8 @@ void IdeWindow::discoverTests() {
       "CTest discovery unavailable: configure a CMake project with tests first\n");
     return;
   }
-  if (build_session_.running() || run_session_.running() || gdb_.running() || ctest_session_.running()) {
+  if (build_session_.running() || run_session_.running() || gdb_.running()
+      || ctest_session_.running() || analysis_session_.running()) {
     publishEvent(EventSource::Test, EventSeverity::Warning,
       "CTest discovery unavailable while another build, run, debug, or test operation is active\n");
     return;
@@ -3129,7 +3159,8 @@ void IdeWindow::runAllTests() {
       "Run Tests unavailable: discover tests first\n");
     return;
   }
-  if (build_session_.running() || run_session_.running() || gdb_.running() || ctest_session_.running()) {
+  if (build_session_.running() || run_session_.running() || gdb_.running()
+      || ctest_session_.running() || analysis_session_.running()) {
     publishEvent(EventSource::Test, EventSeverity::Warning,
       "Run Tests unavailable while another operation is active\n");
     return;
@@ -3151,7 +3182,8 @@ void IdeWindow::runSelectedTest() {
       "Run Selected Test unavailable: select a discovered test\n");
     return;
   }
-  if (build_session_.running() || run_session_.running() || gdb_.running() || ctest_session_.running()) {
+  if (build_session_.running() || run_session_.running() || gdb_.running()
+      || ctest_session_.running() || analysis_session_.running()) {
     publishEvent(EventSource::Test, EventSeverity::Warning,
       "Run Selected Test unavailable while another operation is active\n");
     return;
@@ -3171,7 +3203,8 @@ void IdeWindow::rerunFailedTests() {
       "Rerun Failed Tests unavailable: CTest has no failed-test log\n");
     return;
   }
-  if (build_session_.running() || run_session_.running() || gdb_.running() || ctest_session_.running()) {
+  if (build_session_.running() || run_session_.running() || gdb_.running()
+      || ctest_session_.running() || analysis_session_.running()) {
     publishEvent(EventSource::Test, EventSeverity::Warning,
       "Rerun Failed Tests unavailable while another operation is active\n");
     return;
@@ -3200,7 +3233,8 @@ void IdeWindow::selectCTestPreset() {
     labels.push_back(preset.display_name + (preset.display_name == preset.name ? "" : " [" + preset.name + "]"));
   const auto selection = choose("CTest preset", labels);
   if (selection == 0 || selection > presets.size()) return;
-  if (build_session_.running() || run_session_.running() || gdb_.running() || ctest_session_.running()) {
+  if (build_session_.running() || run_session_.running() || gdb_.running()
+      || ctest_session_.running() || analysis_session_.running()) {
     publishEvent(EventSource::Test, EventSeverity::Warning,
       "Test preset unavailable while another operation is active\n"); return;
   }
@@ -3263,9 +3297,162 @@ void IdeWindow::openSelectedTestFailure() {
       + std::to_string(location.line + 1) + "\n");
 }
 
+void IdeWindow::runAnalysis() {
+  if (root_.empty()) {
+    publishEvent(EventSource::Analysis, EventSeverity::Warning,
+      "Analysis unavailable: no project is open\n"); return;
+  }
+  if (analysis_session_.running() || build_session_.running() || ctest_session_.running()
+      || run_session_.running() || gdb_.running()) {
+    publishEvent(EventSource::Analysis, EventSeverity::Warning,
+      "Analysis unavailable while another build, test, run, debug, or analysis operation is active\n");
+    return;
+  }
+  const std::vector<std::string> tools{
+    "clang-tidy" + std::string(external_tools_.clang_tidy ? "" : "  [unavailable]"),
+    "cppcheck" + std::string(external_tools_.cppcheck ? "" : "  [unavailable]"),
+    "include-what-you-use" + std::string(external_tools_.include_what_you_use ? "" : "  [unavailable]"),
+    "AddressSanitizer + UndefinedBehaviorSanitizer"};
+  const auto tool_selection = choose("Static analysis tool", tools);
+  if (tool_selection == 0 || tool_selection > tools.size()) return;
+  const auto tool = static_cast<AnalysisTool>(tool_selection - 1);
+  const std::vector<std::string> scopes = tool == AnalysisTool::Sanitizers
+    ? std::vector<std::string>{"Selected CMake target", "Whole project"}
+    : std::vector<std::string>{"Active file", "Selected CMake target", "Whole project"};
+  const auto scope_selection = choose("Analysis scope", scopes);
+  if (scope_selection == 0 || scope_selection > scopes.size()) return;
+  const auto scope = tool == AnalysisTool::Sanitizers
+    ? (scope_selection == 1 ? AnalysisScope::Target : AnalysisScope::Project)
+    : static_cast<AnalysisScope>(scope_selection - 1);
+
+  std::vector<std::filesystem::path> sources;
+  sanitizer_target_.clear();
+  if (scope == AnalysisScope::File) {
+    if (!document_ || document_->path().empty() || !isCppSource(document_->path())) {
+      publishEvent(EventSource::Analysis, EventSeverity::Warning,
+        "File analysis unavailable: open a saved C or C++ source file\n"); return;
+    }
+    sources.push_back(document_->path());
+  } else if (scope == AnalysisScope::Target) {
+    refreshCMakeTargets();
+    if (!cmake_session_.selectedTarget()) selectCMakeTarget();
+    const auto* target = cmake_session_.selectedTarget();
+    if (!target) {
+      publishEvent(EventSource::Analysis, EventSeverity::Warning,
+        "Target analysis unavailable: select a CMake executable target\n"); return;
+    }
+    sanitizer_target_ = target->name;
+    sources = target->sources;
+    if (!compilation_database_.available()) refreshCompilationDatabase(true);
+    std::erase_if(sources, [this](const auto& path) {
+      return !isCppSource(path) || (compilation_database_.available()
+        && !compilation_database_.contains(path));
+    });
+    if (tool != AnalysisTool::Sanitizers && sources.empty()) {
+      publishEvent(EventSource::Analysis, EventSeverity::Warning,
+        "Target analysis unavailable: CMake File API returned no C/C++ sources\n"); return;
+    }
+  } else {
+    if (!compilation_database_.available()) refreshCompilationDatabase(true);
+    sources.assign(compilation_database_.sources().begin(), compilation_database_.sources().end());
+    std::ranges::sort(sources);
+    if (tool != AnalysisTool::Sanitizers && sources.empty()) {
+      publishEvent(EventSource::Analysis, EventSeverity::Warning,
+        "Project analysis unavailable: configure the project to create compile_commands.json\n"); return;
+    }
+  }
+  if (!saveAllDocuments()) return;
+
+  std::optional<std::filesystem::path> executable;
+  if (tool == AnalysisTool::ClangTidy) executable = external_tools_.clang_tidy;
+  else if (tool == AnalysisTool::Cppcheck) executable = external_tools_.cppcheck;
+  else if (tool == AnalysisTool::IncludeWhatYouUse) executable = external_tools_.include_what_you_use;
+  else executable = external_tools_.cmake;
+  if (!executable) {
+    publishEvent(EventSource::Analysis, EventSeverity::Error,
+      std::string(analysisToolName(tool)) + " is unavailable; install it or add it to PATH\n");
+    return;
+  }
+
+  analysis_session_.prepare(); analysis_text_.clear(); analysis_output_.clear();
+  problems_signature_.clear(); diagnostic_index_ = 0;
+  AnalysisCommand command;
+  auto stage = AnalysisStage::Check;
+  if (tool == AnalysisTool::Sanitizers) {
+    sanitizer_build_dir_ = build_dir_ / ".tuiide-sanitizers";
+    std::string query_error;
+    if (!createCMakeFileApiQuery(sanitizer_build_dir_, query_error)) {
+      publishEvent(EventSource::Analysis, EventSeverity::Error,
+        "Sanitizer CMake model: " + query_error + "\n"); return;
+    }
+    command = makeSanitizerConfigureCommand(*executable, root_, sanitizer_build_dir_,
+      project_settings_.generator, project_settings_.toolchain,
+      project_settings_.c_compiler, project_settings_.cpp_compiler);
+    stage = AnalysisStage::SanitizerConfigure;
+  } else command = makeAnalysisCommand(tool, scope, *executable, root_, build_dir_, sources);
+  analysis_text_ = "$ " + command.display + "\n";
+  analysis_output_.setText(finalcut::FString(analysis_text_));
+  lower_tabs_.setCurrentIndex(4);
+  if (!analysis_session_.start(std::move(command), tool, scope, stage,
+      project_settings_.environment)) {
+    publishEvent(EventSource::Analysis, EventSeverity::Error,
+      "Failed to start " + std::string(analysisToolName(tool)) + "\n"); return;
+  }
+  menu_state_.reset();
+  publishEvent(EventSource::Analysis, EventSeverity::Information,
+    "Started " + std::string(analysisToolName(tool)) + " for "
+      + std::string(analysisScopeName(scope)) + "\n");
+}
+
+auto IdeWindow::startSanitizerBuild() -> bool {
+  if (!external_tools_.cmake) return false;
+  auto command = makeSanitizerBuildCommand(*external_tools_.cmake,
+    sanitizer_build_dir_, project_settings_.build_jobs, sanitizer_target_);
+  analysis_text_ += "$ " + command.display + "\n";
+  analysis_output_.setText(finalcut::FString(analysis_text_));
+  return analysis_session_.start(std::move(command), AnalysisTool::Sanitizers,
+    sanitizer_target_.empty() ? AnalysisScope::Project : AnalysisScope::Target,
+    AnalysisStage::SanitizerBuild, project_settings_.environment);
+}
+
+auto IdeWindow::startSanitizerRun() -> bool {
+  std::string error;
+  const auto targets = loadCMakeExecutableTargets(sanitizer_build_dir_, error);
+  const auto found = std::ranges::find_if(targets, [this](const auto& target) {
+    return target.name == sanitizer_target_;
+  });
+  if (found == targets.end()) {
+    publishEvent(EventSource::Analysis, EventSeverity::Error,
+      "Sanitizer executable unavailable for target " + sanitizer_target_
+        + (error.empty() ? "" : ": " + error) + "\n");
+    return false;
+  }
+  auto working_directory = project_settings_.launch.working_directory;
+  if (working_directory.empty()) working_directory = found->artifact.parent_path();
+  else if (working_directory.is_relative()) working_directory = root_ / working_directory;
+  auto command = makeSanitizerRunCommand(found->artifact,
+    project_settings_.launch.arguments, working_directory);
+  analysis_text_ += "$ " + command.display + "\n";
+  analysis_output_.setText(finalcut::FString(analysis_text_));
+  return analysis_session_.start(std::move(command), AnalysisTool::Sanitizers,
+    AnalysisScope::Target, AnalysisStage::SanitizerRun,
+    project_settings_.environment);
+}
+
+void IdeWindow::stopAnalysis() {
+  if (!analysis_session_.running()) {
+    publishEvent(EventSource::Analysis, EventSeverity::Warning,
+      "Stop Analysis unavailable: no analyzer is running\n"); return;
+  }
+  analysis_session_.stop(); menu_state_.reset();
+  analysis_text_ += "\nAnalysis stopped by user\n";
+  analysis_output_.setText(finalcut::FString(analysis_text_));
+  publishEvent(EventSource::Analysis, EventSeverity::Warning, "Analysis stopped\n");
+}
+
 void IdeWindow::run() {
   if (root_.empty()) { publishEvent(EventSource::Run, EventSeverity::Warning, "Run unavailable: no project is open\n"); return; }
-  if (ctest_session_.running()) { publishEvent(EventSource::Run, EventSeverity::Warning, "Run unavailable: CTest is running\n"); return; }
+  if (ctest_session_.running() || analysis_session_.running()) { publishEvent(EventSource::Run, EventSeverity::Warning, "Run unavailable: tests or analysis are running\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Run, EventSeverity::Warning, "Run unavailable: a CMake operation is in progress\n"); return; }
   if (!saveAllDocuments()) { publishEvent(EventSource::Run, EventSeverity::Warning, "Run cancelled because not all documents were saved\n"); return; }
   if (project_settings_.launch.pre_launch_build) {
@@ -3307,9 +3494,9 @@ void IdeWindow::stopRun() {
 }
 
 void IdeWindow::debugRun() {
-  if (ctest_session_.running()) {
+  if (ctest_session_.running() || analysis_session_.running()) {
     publishEvent(EventSource::Debug, EventSeverity::Warning,
-      "Debug unavailable: CTest is running\n");
+      "Debug unavailable: tests or analysis are running\n");
     return;
   }
   if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: no project is open\n"); return; }
@@ -3555,26 +3742,28 @@ void IdeWindow::updateMenuState() {
   enabled(project_menu_.new_directory, state.project_panel);
   enabled(project_menu_.rename_move, state.project_panel);
   enabled(project_menu_.delete_directory, state.project_panel);
-  enabled(run_menu_.configure, state.build);
-  enabled(run_menu_.build, state.build);
-  enabled(run_menu_.rebuild, state.build);
-  enabled(run_menu_.clean, state.build);
+  const bool analysis_idle = !analysis_session_.running();
+  enabled(run_menu_.configure, state.build && analysis_idle);
+  enabled(run_menu_.build, state.build && analysis_idle);
+  enabled(run_menu_.rebuild, state.build && analysis_idle);
+  enabled(run_menu_.clean, state.build && analysis_idle);
   enabled(run_menu_.cancel_build, state.cancel_build);
-  enabled(run_menu_.run, state.run);
+  enabled(run_menu_.run, state.run && analysis_idle);
   enabled(run_menu_.stop_run, state.stop_run);
   enabled(run_menu_.launch_select, state.cmake_configuration);
   enabled(run_menu_.launch_settings, state.cmake_configuration);
   enabled(run_menu_.configure_preset, state.cmake_configuration);
   enabled(run_menu_.build_preset, state.cmake_configuration);
   enabled(run_menu_.target, state.cmake_configuration);
-  const bool test_idle = state.cmake_configuration && !ctest_session_.running();
+  const bool test_idle = state.cmake_configuration && !ctest_session_.running()
+    && !analysis_session_.running();
   enabled(run_menu_.discover_tests, test_idle);
   enabled(run_menu_.run_all_tests, test_idle && !ctest_session_.tests().empty());
   enabled(run_menu_.run_selected_test, test_idle && !ctest_session_.tests().empty());
   enabled(run_menu_.rerun_failed_tests, test_idle);
   enabled(run_menu_.test_preset, test_idle);
   enabled(run_menu_.stop_tests, ctest_session_.running());
-  enabled(debug_menu_.start, state.debug_start);
+  enabled(debug_menu_.start, state.debug_start && analysis_idle);
   enabled(debug_menu_.pause, state.debug_pause);
   enabled(debug_menu_.stop, state.debug_stop);
   enabled(debug_menu_.restart, state.debug_restart);
@@ -3604,6 +3793,8 @@ void IdeWindow::updateMenuState() {
   enabled(tools_menu_.type_hierarchy, state.hierarchy);
   enabled(tools_menu_.format_document, state.format_document);
   enabled(tools_menu_.format_selection, state.format_selection);
+  enabled(tools_menu_.run_analysis, state.cmake_configuration && !analysis_session_.running());
+  enabled(tools_menu_.stop_analysis, analysis_session_.running());
   enabled(tools_menu_.project_settings, state.cmake_configuration);
   enabled(window_menu_.previous, state.switch_document);
   enabled(window_menu_.next, state.switch_document);
@@ -3651,6 +3842,8 @@ void IdeWindow::updateStatus() {
     text << ' ' << static_cast<unsigned>(build_session_.stageElapsed()) << 's';
   }
   text << " | tests: " << (ctest_session_.running() ? "running" : std::to_string(ctest_session_.tests().size()));
+  text << " | analysis: " << (analysis_session_.running()
+    ? std::string(analysisToolName(analysis_session_.tool())) : "idle");
   const auto* selected_target = cmake_session_.selectedTarget();
   text
        << " | preset: " << (cmake_session_.configurePreset().empty()
@@ -3881,16 +4074,25 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
     case finalcut::FKey::Ctrl_b: build(); return true;
     case finalcut::FKey::F32: {
       const auto& diagnostics = lsp_.diagnostics();
-      const auto count = build_session_.diagnostics().size() + diagnostics.size();
-      if (count == 0) { publishEvent(EventSource::Build, EventSeverity::Warning, "No build or clangd diagnostics\n"); return true; }
+      const auto build_count = build_session_.diagnostics().size();
+      const auto analysis_count = analysis_session_.diagnostics().size();
+      const auto count = build_count + analysis_count + diagnostics.size();
+      if (count == 0) { publishEvent(EventSource::Build, EventSeverity::Warning, "No build, analysis, or clangd diagnostics\n"); return true; }
       diagnostic_index_ %= count;
-      if (diagnostic_index_ < build_session_.diagnostics().size()) {
+      if (diagnostic_index_ < build_count) {
         const auto& diagnostic = build_session_.diagnostics()[diagnostic_index_];
         openFile(diagnostic.path);
         if (document_ && document_->path() == diagnostic.path) editor_.reveal({diagnostic.line, diagnostic.column});
         publishEvent(EventSource::Build, EventSeverity::Information, "Build diagnostic: " + diagnostic.message + "\n");
+      } else if (diagnostic_index_ < build_count + analysis_count) {
+        const auto& diagnostic = analysis_session_.diagnostics()[diagnostic_index_ - build_count];
+        openFile(diagnostic.path);
+        if (document_ && document_->path() == diagnostic.path)
+          editor_.reveal({diagnostic.line, diagnostic.column});
+        publishEvent(EventSource::Analysis, EventSeverity::Information,
+          "Analysis diagnostic: " + diagnostic.message + "\n");
       } else {
-        const auto& diagnostic = diagnostics[diagnostic_index_ - build_session_.diagnostics().size()];
+        const auto& diagnostic = diagnostics[diagnostic_index_ - build_count - analysis_count];
         if (!document_ || diagnostic.path != document_->path()) openFile(diagnostic.path);
         if (document_ && document_->path() == diagnostic.path) {
           auto position = diagnostic.position;
@@ -4134,6 +4336,45 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
         finishBuildOperation(0, {});
       }
     }
+  }
+  const auto analysis_stage = analysis_session_.stage();
+  const auto analysis_tool = analysis_session_.tool();
+  auto analysis_poll = analysis_session_.poll(root_);
+  for (const auto& chunk : analysis_poll.output) analysis_text_ += chunk;
+  if (analysis_text_.size() > 300000) analysis_text_.erase(0, analysis_text_.size() - 240000);
+  if (!analysis_poll.output.empty()) {
+    analysis_output_.setText(finalcut::FString(analysis_text_));
+    lower_tabs_.redrawCurrentPage();
+  }
+  if (analysis_poll.diagnostics_added != 0) {
+    problems_signature_.clear(); refreshProblemsPanel();
+  }
+  if (analysis_poll.completion) {
+    const auto code = *analysis_poll.completion;
+    if (analysis_stage == AnalysisStage::SanitizerConfigure && code == 0) {
+      if (!startSanitizerBuild()) {
+        analysis_text_ += "Failed to start sanitizer build\n";
+        analysis_output_.setText(finalcut::FString(analysis_text_));
+        publishEvent(EventSource::Analysis, EventSeverity::Error,
+          "Failed to start sanitizer build\n");
+      }
+    } else if (analysis_stage == AnalysisStage::SanitizerBuild && code == 0
+        && !sanitizer_target_.empty()) {
+      if (!startSanitizerRun()) {
+        analysis_text_ += "Failed to start sanitizer executable\n";
+        analysis_output_.setText(finalcut::FString(analysis_text_));
+      }
+    } else {
+      const auto label = std::string(analysisToolName(analysis_tool));
+      analysis_text_ += "\n" + label + " finished with exit code " + std::to_string(code) + "\n";
+      analysis_output_.setText(finalcut::FString(analysis_text_));
+      publishEvent(EventSource::Analysis,
+        code == 0 ? EventSeverity::Success : EventSeverity::Error,
+        label + " finished with exit code " + std::to_string(code) + "\n");
+      showNotification(label + (code == 0 ? " completed" : " failed"),
+        code == 0 ? NotificationKind::Success : NotificationKind::Error);
+    }
+    menu_state_.reset();
   }
   const auto ctest_operation = ctest_session_.operation();
   auto ctest_poll = ctest_session_.poll();

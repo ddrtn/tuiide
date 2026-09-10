@@ -11,6 +11,7 @@ struct CMakeTarget {
   std::string name;
   std::string configuration;
   std::filesystem::path artifact;
+  std::vector<std::filesystem::path> sources;
 };
 
 auto createCMakeFileApiQuery(const std::filesystem::path& build_directory, std::string& error) -> bool;

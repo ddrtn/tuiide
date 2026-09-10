@@ -21,6 +21,8 @@ source code and user interface use UTF-8.
   Output panels.
 - CTest JSON discovery, all/selected/failed runs, test presets, and source
   navigation from failed tests in the Tests panel.
+- Asynchronous file, CMake-target, or project analysis with clang-tidy,
+  cppcheck, and IWYU, plus an isolated ASan/UBSan build.
 - Named Run/Debug configurations support cloning and quick selection; programs
   run in an integrated PTY or external terminal with arguments, environment,
   and standard input.
@@ -35,7 +37,7 @@ source code and user interface use UTF-8.
 Only Linux on amd64 is supported. On Debian or Ubuntu, install the dependencies:
 
 ```sh
-sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb
+sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb clang-tidy cppcheck iwyu
 ```
 
 clangd, clang-format, and GDB are required only for their corresponding
@@ -99,8 +101,10 @@ select commands inside an open menu. Configure global shortcuts through
 The sidebar contains **Open files**, **Project**, **Outline**, **Debug**,
 **Breakpoints**, and **Tests**. Toggle individual pages from **Window**. In
 Tests, press `Space` to run the selected test and `Enter` to open its first
-failure location; discovery and grouped runs are under **Run → Tests**. The lower area
-contains **Output**, **Problems**, **Build**, and an interactive **Terminal**.
+failure location; discovery and grouped runs are under **Run → Tests**. The
+lower area contains **Output**, **Problems**, **Build**, an interactive **Terminal**, and
+**Analysis**. Start analyzers from **Tools → Run static checks**; recognized
+diagnostics are also listed in Problems.
 
 ## Repository Layout
 

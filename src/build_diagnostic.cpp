@@ -1,6 +1,7 @@
 #include "tuiide/build_diagnostic.hpp"
 
 #include <charconv>
+#include <regex>
 
 namespace tuiide {
 namespace {
@@ -38,6 +39,7 @@ auto parseCompilerDiagnostic(std::string_view text, const std::filesystem::path&
   };
   if (!find_severity(": fatal error: ", DiagnosticSeverity::Error)
       && !find_severity(": error: ", DiagnosticSeverity::Error)
+      && !find_severity(": runtime error: ", DiagnosticSeverity::Error)
       && !find_severity(": warning: ", DiagnosticSeverity::Warning)
       && !find_severity(": note: ", DiagnosticSeverity::Note)) return std::nullopt;
 
@@ -62,6 +64,24 @@ auto parseCompilerDiagnostic(std::string_view text, const std::filesystem::path&
   const auto message_at = text.find(": ", location_end + 1);
   const auto message = message_at == std::string_view::npos ? std::string{} : std::string(text.substr(message_at + 2));
   return BuildDiagnostic{std::filesystem::absolute(path).lexically_normal(), line_number - 1, column_number - 1, severity, message};
+}
+
+auto parseSanitizerDiagnostic(std::string_view text,
+    const std::filesystem::path& project_root) -> std::optional<BuildDiagnostic> {
+  static const std::regex pattern(
+    R"(^SUMMARY: (?:AddressSanitizer|UndefinedBehaviorSanitizer): (.*?) ((?:/|\.\.?/).+\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)):(\d+)(?::(\d+))?.*$)");
+  const std::string line{text};
+  std::smatch match;
+  if (!std::regex_match(line, match, pattern)) return std::nullopt;
+  std::size_t line_number{};
+  std::size_t column_number{1};
+  if (!parseNumber(match[3].str(), line_number)) return std::nullopt;
+  if (match[4].matched && !parseNumber(match[4].str(), column_number)) return std::nullopt;
+  auto path = std::filesystem::path(match[2].str());
+  if (path.is_relative()) path = project_root / path;
+  return BuildDiagnostic{std::filesystem::absolute(path).lexically_normal(),
+    line_number - 1, column_number - 1, DiagnosticSeverity::Error,
+    match[1].str()};
 }
 
 }  // namespace tuiide

@@ -25,7 +25,7 @@
   configurations с созданием, клонированием, удалением и быстрым выбором.
 - [x] Интегрировать CTest: discovery через JSON, запуск всех/выбранных/упавших
   тестов, test presets, панель Tests и переход из failure в исходный файл.
-- [ ] Добавить запуск clang-tidy, cppcheck, sanitizers и include-what-you-use для
+- [x] Добавить запуск clang-tidy, cppcheck, sanitizers и include-what-you-use для
   файла/target/проекта с выводом результатов в Analysis и Problems.
 - [ ] Добавить менеджер toolchain/kits: обнаружение GCC/Clang, GDB/LLDB,
   Ninja/Make, sysroot и CMake toolchain files с проверкой версий.

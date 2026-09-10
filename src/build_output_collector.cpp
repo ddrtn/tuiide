@@ -35,7 +35,9 @@ void BuildOutputCollector::reset() {
 void BuildOutputCollector::consumeLine(std::string_view line,
     const std::filesystem::path& project_root, BuildOutputUpdate& update) {
   if (const auto progress = parseBuildProgress(line)) update.progress = progress;
-  if (auto diagnostic = parseCompilerDiagnostic(line, project_root)) {
+  auto diagnostic = parseCompilerDiagnostic(line, project_root);
+  if (!diagnostic) diagnostic = parseSanitizerDiagnostic(line, project_root);
+  if (diagnostic) {
     diagnostics_.push_back(std::move(*diagnostic));
     ++update.diagnostics_added;
   }

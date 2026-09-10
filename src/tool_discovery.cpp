@@ -33,6 +33,11 @@ auto discoverExternalTools() -> ExternalTools {
   tools.cmake = findExecutable("cmake", path);
   tools.clangd = findExecutable("clangd", path);
   tools.gdb = findExecutable("gdb", path);
+  tools.clang_tidy = findExecutable("clang-tidy", path);
+  tools.cppcheck = findExecutable("cppcheck", path);
+  tools.include_what_you_use = findExecutable("iwyu_tool.py", path);
+  if (!tools.include_what_you_use)
+    tools.include_what_you_use = findExecutable("iwyu_tool", path);
   for (const auto* name : {"wl-copy", "wl-paste", "xclip", "xsel"})
     tools.clipboard.push_back({name, findExecutable(name, path), "native system clipboard"});
   return tools;
@@ -52,6 +57,12 @@ auto externalToolMessages(const ExternalTools& tools, bool include_available)
     "clangd unavailable: install clangd or add it to PATH; C/C++ completion and code navigation are disabled.");
   add("GDB", tools.gdb,
     "GDB unavailable: install gdb or add it to PATH; debugging is disabled.");
+  add("clang-tidy", tools.clang_tidy,
+    "clang-tidy unavailable: install it or add it to PATH; clang-tidy analysis is disabled.");
+  add("cppcheck", tools.cppcheck,
+    "cppcheck unavailable: install it or add it to PATH; cppcheck analysis is disabled.");
+  add("include-what-you-use", tools.include_what_you_use,
+    "include-what-you-use unavailable: install iwyu_tool.py; IWYU analysis is disabled.");
 
   bool wayland_copy{};
   bool wayland_paste{};

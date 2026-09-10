@@ -761,7 +761,8 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   const bool step_unavailable = unavailableCommand("\033[18~", "Step into unavailable");
   const bool next_unavailable = unavailableCommand("\033[19~", "Next unavailable");
   const bool finish_unavailable = unavailableCommand("\033[19;3~", "Step out unavailable");
-  const bool diagnostic_unavailable = unavailableCommand("\033[19;5~", "No build or clangd diagnostics");
+  const bool diagnostic_unavailable = unavailableCommand(
+    "\033[19;5~", "No build, analysis, or clangd diagnostics");
   const bool preset_unavailable = unavailableCommand("\020", "Configure preset unavailable");
   const bool watch_unavailable = unavailableCommand("\014", "Add watch unavailable");
   const bool registers_unavailable = unavailableCommand("\022", "Registers unavailable");
@@ -1407,11 +1408,9 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     send("\r");
     return menu;
   };
-  const auto selectWindowFromStart = [&](int down_count) {
+  const auto selectWindowMnemonic = [&](char mnemonic) {
     const bool menu = openTopMenu(7, "Show Open files");
-    screen.clear();
-    for (int index = 0; index < down_count; ++index) send("\033[B");
-    send("\r");
+    screen.clear(); send(std::string(1, mnemonic)); settle();
     return menu;
   };
 
@@ -1526,7 +1525,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     const bool step_out = waitFor(pump, [&] { return logged("Step out unavailable"); }, 5s);
     screen.clear(); send("\033[19;5~");
     const bool next_diagnostic = waitFor(pump, [&] {
-      return logged("No build or clangd diagnostics");
+      return logged("No build, analysis, or clangd diagnostics");
     }, 5s);
     screen.clear(); send("\021");
     int panel_status{};
@@ -1627,15 +1626,12 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
   settle();
 
   bool panel_menus = true;
-  for (int panel = 0; panel < 5; ++panel) {
-    panel_menus = selectWindowFromStart(panel) && panel_menus;
-    settle();
-  }
+  for (const char mnemonic : std::string{"foudbe"})
+    panel_menus = selectWindowMnemonic(mnemonic) && panel_menus;
   const bool last_panel_protected = waitFor(pump, [&] {
     return logged("At least one sidebar panel must remain visible");
   }, 5s);
-  const bool panel_restored = selectWindowFromStart(0);
-  settle();
+  const bool panel_restored = selectWindowMnemonic('f');
 
   const bool resize_menu = selectWindowFromEnd(4);
   const bool size_changed = waitFor(pump, [&] {
@@ -2080,9 +2076,9 @@ auto exerciseSearchDialogsPty(const std::filesystem::path& tuiide,
     && screen.find("secondary.cpp") != std::string::npos;
   screen.clear(); send("\033c"); settle();
 
-  screen.clear(); send("\033e");
+  screen.clear(); send(std::string(1, static_cast<char>(11)));  // Ctrl+K
   const bool no_problems = waitFor(pump, [&] {
-    return logged("No build or clangd diagnostics");
+    return logged("No build, analysis, or clangd diagnostics");
   }, 5s);
 
   screen.clear(); send(std::string(1, static_cast<char>(23)));
@@ -2954,7 +2950,7 @@ auto exercisePresetDialogsPty(const std::filesystem::path& tuiide,
   };
 
   const bool started = visible("Open files");
-  const bool configure_key = send("\033p");
+  const bool configure_key = send(std::string(1, static_cast<char>(16)));  // Ctrl+P
   const bool configure_manager = visible("CMake configure presets")
     && visible("CMakePresets.json");
   const bool add_key = send("\033a");
