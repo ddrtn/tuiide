@@ -15,6 +15,9 @@ source code and user interface use UTF-8.
   and references.
 - Document and project search and replace, `clang-format`, outline, code
   actions, symbol rename, and clangd hierarchy queries.
+- Additional clangd language insights under **Tools → Language insights**:
+  inlay hints, document highlights, folding/selection ranges, code lens,
+  completion resolve, and include hierarchy with source positions in Output.
 - Creation, import, and configuration of CMake projects, including targets,
   configure/build presets, generators, build directories, and parallel jobs.
 - Asynchronous Configure, Build, Clean, and Rebuild commands with Problems and

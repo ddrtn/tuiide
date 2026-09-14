@@ -26,6 +26,7 @@ struct LspUiChanges {
 /** Снимок всех готовых ответов clangd за один проход UI-цикла. */
 struct LspEventBatch {
   std::vector<LspCompletionItem> completions;
+  std::optional<LspCompletionItem> resolved_completion;
   std::vector<LspSignature> signatures;
   std::string hover;
   std::vector<SourceLocation> definitions;
@@ -38,6 +39,12 @@ struct LspEventBatch {
   std::vector<LspNavigationItem> workspace_symbols;
   std::optional<LspHierarchy> call_hierarchy;
   std::optional<LspHierarchy> type_hierarchy;
+  std::vector<LspInlayHint> inlay_hints;
+  std::vector<LspDocumentHighlight> document_highlights;
+  std::vector<LspFoldingRange> folding_ranges;
+  std::vector<LspSelectionRange> selection_ranges;
+  std::vector<LspCodeLens> code_lens;
+  std::vector<LspIncludeRelation> include_relations;
   std::vector<LspFeedback> feedback;
   std::size_t discarded_completions{};
   std::size_t discarded_code_actions{};

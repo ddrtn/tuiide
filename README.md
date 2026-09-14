@@ -13,6 +13,9 @@ CMake, clangd и GDB/MI. Исходный текст и интерфейс ра�
   clangd, диагностикой, completion, hover, переходами к определению и ссылкам.
 - Поиск и замена в документе и проекте, форматирование через `clang-format`,
   outline, code actions, rename symbol и hierarchy-запросы clangd.
+- Дополнительные clangd language insights через **Tools → Language insights**:
+  inlay hints, подсветка символов, folding/selection ranges, code lens,
+  completion resolve и include hierarchy с позициями в Output.
 - Создание, импорт и настройка CMake-проектов; targets, configure/build presets,
   выбор генератора, build-каталога и количества задач сборки.
 - Асинхронные Configure/Build/Clean/Rebuild, список проблем и журнал вывода.

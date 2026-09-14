@@ -609,6 +609,10 @@ void IdeWindow::setupMenus() {
   tools_menu_.toolchain_kits.addCallback("clicked", [this] {
     deferred_command_ = [this] { manageToolchainKits(); };
   });
+  tools_menu_.language_insights.setStatusBarMessage("Request clangd inlay hints, folding, code lens, and include hierarchy");
+  tools_menu_.language_insights.addCallback("clicked", [this] {
+    deferred_command_ = [this] { requestLanguageInsights(); };
+  });
   tools_menu_.run_analysis.setStatusBarMessage("Run clang-tidy, cppcheck, sanitizers, or include-what-you-use");
   tools_menu_.run_analysis.addCallback("clicked", [this] {
     deferred_command_ = [this] { runAnalysis(); };
@@ -1819,6 +1823,38 @@ void IdeWindow::manageToolchainKits() {
   publishEvent(EventSource::Project, EventSeverity::Success,
     "Toolchain kit selected: " + project_settings_.kit + "\n");
   updateStatus();
+}
+
+void IdeWindow::requestLanguageInsights() {
+  if (!document_ || !isCppSource(document_->path())) {
+    publishEvent(EventSource::Lsp, EventSeverity::Warning,
+      "Language insights unavailable: open a C or C++ source file\n");
+    return;
+  }
+  if (!lsp_.ready()) {
+    publishEvent(EventSource::Lsp, EventSeverity::Warning,
+      "Language insights unavailable: clangd is not ready\n");
+    return;
+  }
+  const std::vector<std::string> choices{
+    "Inlay hints", "Document highlights", "Folding ranges",
+    "Selection ranges", "Code lens", "Include hierarchy"};
+  delTimer(timer_id_);
+  SelectionDialog dialog("clangd language insights", choices, this);
+  const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
+  timer_id_ = addTimer(100);
+  if (!accepted) return;
+  switch (dialog.selected()) {
+    case 1: lsp_.requestInlayHints(*document_); break;
+    case 2: lsp_.requestDocumentHighlights(*document_); break;
+    case 3: lsp_.requestFoldingRanges(*document_); break;
+    case 4: lsp_.requestSelectionRange(*document_, document_->cursor()); break;
+    case 5: lsp_.requestCodeLens(*document_); break;
+    case 6: lsp_.requestIncludeHierarchy(*document_); break;
+    default: return;
+  }
+  publishEvent(EventSource::Lsp, EventSeverity::Information,
+    "Requested " + choices[dialog.selected() - 1] + " from clangd\n");
 }
 
 void IdeWindow::launchSettings() {
@@ -3857,6 +3893,7 @@ void IdeWindow::updateMenuState() {
   enabled(tools_menu_.format_document, state.format_document);
   enabled(tools_menu_.format_selection, state.format_selection);
   enabled(tools_menu_.toolchain_kits, state.cmake_configuration && analysis_idle);
+  enabled(tools_menu_.language_insights, context.source_document && lsp_.ready());
   enabled(tools_menu_.run_analysis, state.cmake_configuration && !analysis_session_.running());
   enabled(tools_menu_.stop_analysis, analysis_session_.running());
   enabled(tools_menu_.project_settings, state.cmake_configuration);
@@ -4250,6 +4287,7 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
       const auto selection = choose("clangd completion", labels);
       if (selection > 0 && selection <= unique.size() && document_) {
         const auto& completion = unique[selection - 1];
+        lsp_.resolveCompletion(completion);
         if (completion.edit && completion.edit->start.line < document_->lines().size()
             && completion.edit->end.line < document_->lines().size()) {
           auto start = completion.edit->start; auto end = completion.edit->end;
@@ -4263,6 +4301,9 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
       }
     }
   }
+  if (lsp_events.resolved_completion && !lsp_events.resolved_completion->documentation.empty())
+    publishEvent(EventSource::Lsp, EventSeverity::Information,
+      "Completion documentation: " + lsp_events.resolved_completion->documentation + "\n");
   auto signatures = std::move(lsp_events.signatures);
   if (!signatures.empty()) {
     std::ostringstream text;
@@ -4363,6 +4404,41 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
   };
   showHierarchy("Call Hierarchy", std::move(lsp_events.call_hierarchy));
   showHierarchy("Type Hierarchy", std::move(lsp_events.type_hierarchy));
+  const auto showInsight = [this](std::string title, std::vector<std::string> rows) {
+    std::string text = std::move(title) + ": " + std::to_string(rows.size()) + " item(s)\n";
+    for (const auto& row : rows) text += "  " + row + "\n";
+    publishEvent(EventSource::Lsp, rows.empty() ? EventSeverity::Information : EventSeverity::Success,
+      std::move(text));
+  };
+  if (!lsp_events.inlay_hints.empty() || !lsp_events.document_highlights.empty()
+      || !lsp_events.folding_ranges.empty() || !lsp_events.selection_ranges.empty()
+      || !lsp_events.code_lens.empty() || !lsp_events.include_relations.empty()) {
+    std::vector<std::string> rows;
+    rows.reserve(lsp_events.inlay_hints.size() + lsp_events.document_highlights.size()
+      + lsp_events.folding_ranges.size() + lsp_events.selection_ranges.size()
+      + lsp_events.code_lens.size() + lsp_events.include_relations.size());
+    for (const auto& hint : lsp_events.inlay_hints)
+      rows.push_back("inlay " + std::to_string(hint.position.line + 1) + ":"
+        + std::to_string(hint.position.column + 1) + " " + hint.label);
+    for (const auto& highlight : lsp_events.document_highlights)
+      rows.push_back("highlight " + std::to_string(highlight.start.line + 1) + ":"
+        + std::to_string(highlight.start.column + 1) + "-"
+        + std::to_string(highlight.end.line + 1) + ":" + std::to_string(highlight.end.column + 1));
+    for (const auto& range : lsp_events.folding_ranges)
+      rows.push_back("fold " + std::to_string(range.start_line + 1) + "-"
+        + std::to_string(range.end_line + 1) + (range.kind.empty() ? std::string{} : " [" + range.kind + "]"));
+    for (const auto& range : lsp_events.selection_ranges)
+      rows.push_back("selection " + std::to_string(range.start.line + 1) + ":"
+        + std::to_string(range.start.column + 1) + "-" + std::to_string(range.end.line + 1)
+        + ":" + std::to_string(range.end.column + 1));
+    for (const auto& lens : lsp_events.code_lens)
+      rows.push_back("lens " + std::to_string(lens.start.line + 1) + ": " + lens.title
+        + (lens.command.empty() ? std::string{} : " (" + lens.command + ")"));
+    for (const auto& relation : lsp_events.include_relations)
+      rows.push_back(relation.relation + " include " + relation.path.string() + ":"
+        + std::to_string(relation.line + 1));
+    showInsight("clangd language insights", std::move(rows));
+  }
   for (const auto& feedback : lsp_events.feedback) {
     publishEvent(EventSource::Lsp, feedback.error ? EventSeverity::Error : EventSeverity::Information,
       std::string(lspOperationLabel(feedback.operation))

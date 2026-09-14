@@ -29,7 +29,7 @@
   файла/target/проекта с выводом результатов в Analysis и Problems.
 - [x] Добавить менеджер toolchain/kits: обнаружение GCC/Clang, GDB/LLDB,
   Ninja/Make, sysroot и CMake toolchain files с проверкой версий.
-- [ ] Расширить clangd: inlay hints, document highlights, folding ranges,
+- [x] Расширить clangd: inlay hints, document highlights, folding ranges,
   completion resolve, selection ranges, code lens и include hierarchy.
 - [ ] Расширить отладку: Attach to Process, core dump, сигналы inferior и
   опциональный LLDB backend через DAP.

@@ -96,6 +96,7 @@ struct LspCompletionItem {
   std::optional<LspTextEdit> edit;
   std::filesystem::path source_path;
   int source_version{};
+  nlohmann::json resolve_payload;
 };
 
 struct LspSignature {
@@ -118,6 +119,45 @@ struct LspDocumentSymbols {
   std::filesystem::path path;
   int version{};
   std::vector<LspDocumentSymbol> symbols;
+};
+
+struct LspInlayHint {
+  Position position;
+  std::string label;
+  int kind{};
+};
+
+struct LspDocumentHighlight {
+  Position start;
+  Position end;
+  int kind{};
+};
+
+struct LspFoldingRange {
+  std::size_t start_line{};
+  std::size_t start_character{};
+  std::size_t end_line{};
+  std::size_t end_character{};
+  std::string kind;
+};
+
+struct LspSelectionRange {
+  Position start;
+  Position end;
+  std::optional<std::size_t> parent;
+};
+
+struct LspCodeLens {
+  Position start;
+  Position end;
+  std::string title;
+  std::string command;
+};
+
+struct LspIncludeRelation {
+  std::filesystem::path path;
+  std::size_t line{};
+  std::string relation;
 };
 
 struct LspCodeAction {
@@ -148,7 +188,8 @@ auto parseDocumentSymbols(const nlohmann::json& result,
 
 enum class LspOperation {
   Server, Completion, SignatureHelp, Hover, Definition, References, Rename, DocumentSymbols,
-  CodeActions, OrganizeIncludes, SwitchSourceHeader, WorkspaceSymbols, CallHierarchy, TypeHierarchy
+  CodeActions, OrganizeIncludes, SwitchSourceHeader, WorkspaceSymbols, CallHierarchy, TypeHierarchy,
+  InlayHints, DocumentHighlights, FoldingRanges, SelectionRanges, CodeLens, IncludeHierarchy
 };
 
 struct LspFeedback {
@@ -177,6 +218,7 @@ class LspClient {
   void close(const Document& document);
   void setActiveDocument(const Document* document);
   void requestCompletion(const Document& document);
+  void resolveCompletion(const LspCompletionItem& item);
   void requestSignatureHelp(const Document& document);
   void requestHover(const Document& document);
   void requestDefinition(const Document& document);
@@ -189,11 +231,18 @@ class LspClient {
   void requestWorkspaceSymbols(std::string query);
   void requestCallHierarchy(const Document& document);
   void requestTypeHierarchy(const Document& document);
+  void requestInlayHints(const Document& document);
+  void requestDocumentHighlights(const Document& document);
+  void requestFoldingRanges(const Document& document);
+  void requestSelectionRange(const Document& document, Position position);
+  void requestCodeLens(const Document& document);
+  void requestIncludeHierarchy(const Document& document);
   void poll();
 
   [[nodiscard]] auto running() const -> bool;
   [[nodiscard]] auto ready() const -> bool;
   auto takeCompletions() -> std::vector<LspCompletionItem>;
+  auto takeResolvedCompletion() -> std::optional<LspCompletionItem>;
   auto takeSignatures() -> std::vector<LspSignature>;
   auto takeHover() -> std::string;
   auto takeDefinitions() -> std::vector<SourceLocation>;
@@ -207,6 +256,12 @@ class LspClient {
   auto takeWorkspaceSymbols() -> std::vector<LspNavigationItem>;
   auto takeCallHierarchy() -> std::optional<LspHierarchy>;
   auto takeTypeHierarchy() -> std::optional<LspHierarchy>;
+  auto takeInlayHints() -> std::vector<LspInlayHint>;
+  auto takeDocumentHighlights() -> std::vector<LspDocumentHighlight>;
+  auto takeFoldingRanges() -> std::vector<LspFoldingRange>;
+  auto takeSelectionRanges() -> std::vector<LspSelectionRange>;
+  auto takeCodeLens() -> std::vector<LspCodeLens>;
+  auto takeIncludeRelations() -> std::vector<LspIncludeRelation>;
   auto takeFeedback() -> std::vector<LspFeedback>;
   void clearDiagnostics();
   [[nodiscard]] auto diagnostics() const -> const std::vector<Diagnostic>&;
@@ -236,6 +291,9 @@ class LspClient {
   int completion_id_{};
   std::filesystem::path completion_path_;
   int completion_version_{};
+  int completion_resolve_id_{};
+  std::filesystem::path completion_resolve_path_;
+  int completion_resolve_version_{};
   int signature_id_{};
   int hover_id_{};
   int definition_id_{};
@@ -258,10 +316,18 @@ class LspClient {
   int type_supertypes_id_{};
   int type_subtypes_id_{};
   int type_pending_{};
+  int inlay_hints_id_{};
+  int document_highlights_id_{};
+  int folding_ranges_id_{};
+  int selection_ranges_id_{};
+  int code_lens_id_{};
+  int incoming_includes_id_{};
+  int outgoing_includes_id_{};
   bool initialized_{};
   bool process_started_{};
   bool exit_reported_{};
   std::vector<LspCompletionItem> completions_;
+  std::optional<LspCompletionItem> resolved_completion_;
   std::vector<LspSignature> signatures_;
   std::string hover_;
   std::vector<SourceLocation> definitions_;
@@ -276,6 +342,12 @@ class LspClient {
   LspHierarchy type_hierarchy_;
   bool call_hierarchy_ready_{};
   bool type_hierarchy_ready_{};
+  std::vector<LspInlayHint> inlay_hints_;
+  std::vector<LspDocumentHighlight> document_highlights_;
+  std::vector<LspFoldingRange> folding_ranges_;
+  std::vector<LspSelectionRange> selection_ranges_;
+  std::vector<LspCodeLens> code_lens_;
+  std::vector<LspIncludeRelation> include_relations_;
   std::vector<LspFeedback> feedback_;
   std::vector<Diagnostic> diagnostics_;
   std::unordered_map<std::filesystem::path, nlohmann::json> diagnostic_payloads_;

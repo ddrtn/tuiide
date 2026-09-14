@@ -13,6 +13,26 @@ using json = nlohmann::json;
 
 namespace {
 
+auto parseLspPosition(const json& value) -> Position {
+  if (!value.is_object()) return {};
+  return {jsonValueOr(value, "line", 0U), jsonValueOr(value, "character", 0U)};
+}
+
+auto parseLspRange(const json& value) -> std::pair<Position, Position> {
+  if (!value.is_object()) return {};
+  return {parseLspPosition(jsonValueOr(value, "start", json{})),
+    parseLspPosition(jsonValueOr(value, "end", json{}))};
+}
+
+auto lspLabel(const json& value) -> std::string {
+  if (value.is_string()) return value.get<std::string>();
+  if (!value.is_array()) return jsonValueOr(value, "value", std::string{});
+  std::string result;
+  for (const auto& part : value) result += part.is_string() ? part.get<std::string>()
+    : jsonValueOr(part, "value", std::string{});
+  return result;
+}
+
 auto contentLength(std::string_view header) -> std::optional<std::size_t> {
   const auto begin = header.find("Content-Length:");
   if (begin == std::string_view::npos) return std::nullopt;
@@ -243,6 +263,11 @@ auto LspClient::start(const std::filesystem::path& root,
       {"codeAction", {{"codeActionLiteralSupport", {{"codeActionKind", {{"valueSet", json::array({
         "quickfix", "refactor", "source.organizeImports"})}}}}}}},
       {"callHierarchy", json::object()}, {"typeHierarchy", json::object()},
+      {"inlayHint", {{"dynamicRegistration", false}, {"resolveSupport", {{"properties", json::array({"tooltip", "textEdits", "label.tooltip"})}}}}},
+      {"documentHighlight", {{"dynamicRegistration", false}}},
+      {"foldingRange", {{"dynamicRegistration", false}, {"lineFoldingOnly", false}}},
+      {"selectionRange", {{"dynamicRegistration", false}}},
+      {"codeLens", {{"dynamicRegistration", false}}},
       {"documentSymbol", {{"hierarchicalDocumentSymbolSupport", true}}}, {"semanticTokens", {{"requests", {{"full", true}}},
         {"tokenTypes", json::array()}, {"tokenModifiers", json::array()}, {"formats", json::array({"relative"})}}}}}}}});
   return true;
@@ -263,10 +288,15 @@ void LspClient::stop() {
   }
   process_.stop();
   initialized_ = false; initialize_id_ = 0; exit_reported_ = false;
-  receive_buffer_.clear(); completions_.clear(); signatures_.clear(); hover_.clear(); definitions_.clear(); references_.clear();
+  receive_buffer_.clear(); completions_.clear(); resolved_completion_.reset(); completion_resolve_id_ = 0;
+  signatures_.clear(); hover_.clear(); definitions_.clear(); references_.clear();
   rename_edit_.reset(); workspace_apply_requests_.clear(); document_symbols_.reset(); code_actions_.clear(); switched_source_header_.reset();
   workspace_symbols_.clear(); call_hierarchy_ = {}; type_hierarchy_ = {};
   call_hierarchy_ready_ = false; type_hierarchy_ready_ = false; call_pending_ = 0; type_pending_ = 0;
+  inlay_hints_.clear(); document_highlights_.clear(); folding_ranges_.clear();
+  selection_ranges_.clear(); code_lens_.clear(); include_relations_.clear();
+  inlay_hints_id_ = 0; document_highlights_id_ = 0; folding_ranges_id_ = 0;
+  selection_ranges_id_ = 0; code_lens_id_ = 0; incoming_includes_id_ = 0; outgoing_includes_id_ = 0;
   feedback_.clear();
   diagnostics_.clear(); diagnostic_payloads_.clear(); semantic_tokens_.clear(); semantic_token_types_.clear(); semantic_requests_.clear(); semantic_dirty_.clear();
   open_documents_.clear(); document_requests_.clear(); pending_requests_.clear(); active_document_path_.clear();
@@ -344,6 +374,14 @@ void LspClient::requestCompletion(const Document& document) {
   completion_path_ = document.path(); completion_version_ = document.version();
   completion_id_ = request("textDocument/completion", {{"textDocument", {{"uri", uri(document.path())}}}, {"position", position(document)}});
   trackDocumentRequest(completion_id_, document);
+}
+
+void LspClient::resolveCompletion(const LspCompletionItem& item) {
+  cancelRequest(completion_resolve_id_); resolved_completion_.reset();
+  if (!item.resolve_payload.is_object() || item.source_path.empty()) return;
+  completion_resolve_path_ = item.source_path; completion_resolve_version_ = item.source_version;
+  completion_resolve_id_ = request("completionItem/resolve", item.resolve_payload);
+  document_requests_[completion_resolve_id_] = {completion_resolve_path_, completion_resolve_version_};
 }
 
 void LspClient::requestSignatureHelp(const Document& document) {
@@ -448,6 +486,55 @@ void LspClient::requestTypeHierarchy(const Document& document) {
   trackDocumentRequest(type_prepare_id_, document);
 }
 
+void LspClient::requestInlayHints(const Document& document) {
+  flushChange(document.path()); cancelRequest(inlay_hints_id_); inlay_hints_.clear();
+  inlay_hints_id_ = request("textDocument/inlayHint", {{"textDocument", {{"uri", uri(document.path())}}},
+    {"range", {{"start", {{"line", 0}, {"character", 0}}},
+      {"end", {{"line", document.lines().size()}, {"character", 0}}}}}});
+  trackDocumentRequest(inlay_hints_id_, document);
+}
+
+void LspClient::requestDocumentHighlights(const Document& document) {
+  flushChange(document.path()); cancelRequest(document_highlights_id_); document_highlights_.clear();
+  document_highlights_id_ = request("textDocument/documentHighlight",
+    {{"textDocument", {{"uri", uri(document.path())}}}, {"position", position(document)}});
+  trackDocumentRequest(document_highlights_id_, document);
+}
+
+void LspClient::requestFoldingRanges(const Document& document) {
+  flushChange(document.path()); cancelRequest(folding_ranges_id_); folding_ranges_.clear();
+  folding_ranges_id_ = request("textDocument/foldingRange",
+    {{"textDocument", {{"uri", uri(document.path())}}}});
+  trackDocumentRequest(folding_ranges_id_, document);
+}
+
+void LspClient::requestSelectionRange(const Document& document, Position requested_position) {
+  flushChange(document.path()); cancelRequest(selection_ranges_id_); selection_ranges_.clear();
+  requested_position.column = document.utf16Column(requested_position.line, requested_position.column);
+  selection_ranges_id_ = request("textDocument/selectionRange",
+    {{"textDocument", {{"uri", uri(document.path())}}}, {"positions", json::array({{
+      {"line", requested_position.line}, {"character", requested_position.column}}})}});
+  trackDocumentRequest(selection_ranges_id_, document);
+}
+
+void LspClient::requestCodeLens(const Document& document) {
+  flushChange(document.path()); cancelRequest(code_lens_id_); code_lens_.clear();
+  code_lens_id_ = request("textDocument/codeLens",
+    {{"textDocument", {{"uri", uri(document.path())}}}});
+  trackDocumentRequest(code_lens_id_, document);
+}
+
+void LspClient::requestIncludeHierarchy(const Document& document) {
+  flushChange(document.path()); cancelRequest(incoming_includes_id_); cancelRequest(outgoing_includes_id_);
+  include_relations_.clear();
+  incoming_includes_id_ = request("textDocument/clangd.incomingIncludes",
+    {{"textDocument", {{"uri", uri(document.path())}}}});
+  outgoing_includes_id_ = request("textDocument/clangd.outgoingIncludes",
+    {{"textDocument", {{"uri", uri(document.path())}}}});
+  trackDocumentRequest(incoming_includes_id_, document);
+  trackDocumentRequest(outgoing_includes_id_, document);
+}
+
 void LspClient::poll() {
   flushChanges();
   for (auto& chunk : process_.drain()) receive_buffer_ += chunk;
@@ -482,6 +569,9 @@ void LspClient::poll() {
 auto LspClient::running() const -> bool { return process_.running(); }
 auto LspClient::ready() const -> bool { return initialized_; }
 auto LspClient::takeCompletions() -> std::vector<LspCompletionItem> { std::vector<LspCompletionItem> result; result.swap(completions_); return result; }
+auto LspClient::takeResolvedCompletion() -> std::optional<LspCompletionItem> {
+  auto result = std::move(resolved_completion_); resolved_completion_.reset(); return result;
+}
 auto LspClient::takeSignatures() -> std::vector<LspSignature> { std::vector<LspSignature> result; result.swap(signatures_); return result; }
 auto LspClient::takeHover() -> std::string { std::string result; result.swap(hover_); return result; }
 auto LspClient::takeDefinitions() -> std::vector<SourceLocation> { std::vector<SourceLocation> result; result.swap(definitions_); return result; }
@@ -514,6 +604,24 @@ auto LspClient::takeCallHierarchy() -> std::optional<LspHierarchy> {
 auto LspClient::takeTypeHierarchy() -> std::optional<LspHierarchy> {
   if (!type_hierarchy_ready_) return std::nullopt;
   type_hierarchy_ready_ = false; return std::move(type_hierarchy_);
+}
+auto LspClient::takeInlayHints() -> std::vector<LspInlayHint> {
+  std::vector<LspInlayHint> result; result.swap(inlay_hints_); return result;
+}
+auto LspClient::takeDocumentHighlights() -> std::vector<LspDocumentHighlight> {
+  std::vector<LspDocumentHighlight> result; result.swap(document_highlights_); return result;
+}
+auto LspClient::takeFoldingRanges() -> std::vector<LspFoldingRange> {
+  std::vector<LspFoldingRange> result; result.swap(folding_ranges_); return result;
+}
+auto LspClient::takeSelectionRanges() -> std::vector<LspSelectionRange> {
+  std::vector<LspSelectionRange> result; result.swap(selection_ranges_); return result;
+}
+auto LspClient::takeCodeLens() -> std::vector<LspCodeLens> {
+  std::vector<LspCodeLens> result; result.swap(code_lens_); return result;
+}
+auto LspClient::takeIncludeRelations() -> std::vector<LspIncludeRelation> {
+  std::vector<LspIncludeRelation> result; result.swap(include_relations_); return result;
 }
 auto LspClient::takeFeedback() -> std::vector<LspFeedback> { std::vector<LspFeedback> result; result.swap(feedback_); return result; }
 auto LspClient::diagnostics() const -> const std::vector<Diagnostic>& { return diagnostics_; }
@@ -596,7 +704,7 @@ void LspClient::handle(const json& message) {
       document_requests_.erase(context);
     }
     const auto operation = [this, id]() -> std::optional<LspOperation> {
-      if (id == completion_id_) return LspOperation::Completion;
+      if (id == completion_id_ || id == completion_resolve_id_) return LspOperation::Completion;
       if (id == signature_id_) return LspOperation::SignatureHelp;
       if (id == hover_id_) return LspOperation::Hover;
       if (id == definition_id_) return LspOperation::Definition;
@@ -611,6 +719,13 @@ void LspClient::handle(const json& message) {
         return LspOperation::CallHierarchy;
       if (id == type_prepare_id_ || id == type_supertypes_id_ || id == type_subtypes_id_)
         return LspOperation::TypeHierarchy;
+      if (id == inlay_hints_id_) return LspOperation::InlayHints;
+      if (id == document_highlights_id_) return LspOperation::DocumentHighlights;
+      if (id == folding_ranges_id_) return LspOperation::FoldingRanges;
+      if (id == selection_ranges_id_) return LspOperation::SelectionRanges;
+      if (id == code_lens_id_) return LspOperation::CodeLens;
+      if (id == incoming_includes_id_ || id == outgoing_includes_id_)
+        return LspOperation::IncludeHierarchy;
       return std::nullopt;
     };
     const auto response_error = lspResponseError(message);
@@ -679,6 +794,66 @@ void LspClient::handle(const json& message) {
         ++semantic_tokens_revision_;
       } else semantic_dirty_.insert(path);
       queueSemanticTokens(path);
+    } else if (id == inlay_hints_id_) {
+      for (const auto& item : jsonValueOr(message, "result", json::array())) {
+        if (!item.is_object()) continue;
+        const auto label = lspLabel(jsonValueOr(item, "label", json{}));
+        if (!label.empty()) inlay_hints_.push_back({parseLspPosition(
+          jsonValueOr(item, "position", json{})), label, jsonValueOr(item, "kind", 0)});
+      }
+    } else if (id == document_highlights_id_) {
+      for (const auto& item : jsonValueOr(message, "result", json::array())) {
+        if (!item.is_object()) continue;
+        const auto range = parseLspRange(jsonValueOr(item, "range", json{}));
+        document_highlights_.push_back({range.first, range.second,
+          jsonValueOr(item, "kind", 0)});
+      }
+    } else if (id == folding_ranges_id_) {
+      for (const auto& item : jsonValueOr(message, "result", json::array())) {
+        if (!item.is_object()) continue;
+        folding_ranges_.push_back({jsonValueOr(item, "startLine", 0U),
+          jsonValueOr(item, "startCharacter", 0U), jsonValueOr(item, "endLine", 0U),
+          jsonValueOr(item, "endCharacter", 0U), jsonValueOr(item, "kind", std::string{})});
+      }
+    } else if (id == selection_ranges_id_) {
+      for (const auto& item : jsonValueOr(message, "result", json::array())) {
+        auto current = item;
+        std::optional<std::size_t> parent;
+        while (current.is_object()) {
+          const auto range = parseLspRange(jsonValueOr(current, "range", json{}));
+          selection_ranges_.push_back({range.first, range.second, parent});
+          parent = selection_ranges_.size() - 1;
+          current = jsonValueOr(current, "parent", json{});
+        }
+      }
+    } else if (id == code_lens_id_) {
+      for (const auto& item : jsonValueOr(message, "result", json::array())) {
+        if (!item.is_object()) continue;
+        const auto range = parseLspRange(jsonValueOr(item, "range", json{}));
+        const auto command = jsonValueOr(item, "command", json{});
+        const auto title = command.is_object() ? jsonValueOr(command, "title", std::string{})
+          : std::string{};
+        const auto command_id = command.is_object() ? jsonValueOr(command, "command", std::string{})
+          : std::string{};
+        if (!title.empty()) code_lens_.push_back({range.first, range.second, title, command_id});
+      }
+    } else if (id == incoming_includes_id_ || id == outgoing_includes_id_) {
+      const auto relation = id == incoming_includes_id_ ? "incoming" : "outgoing";
+      for (const auto& item : jsonValueOr(message, "result", json::array())) {
+        if (!item.is_object()) continue;
+        auto source = jsonValueOr(item, "source", json{});
+        auto uri_value = jsonValueOr(item, "uri", std::string{});
+        if (uri_value.empty() && source.is_object()) uri_value = jsonValueOr(source, "uri", std::string{});
+        if (uri_value.empty()) continue;
+        auto ranges = jsonValueOr(item, "ranges", json::array());
+        if (!ranges.is_array() || ranges.empty()) ranges = json::array({item});
+        for (const auto& range : ranges) {
+          const auto value = range.is_object() && range.contains("start")
+            ? parseLspPosition(jsonValueOr(range, "start", json{})).line
+            : jsonValueOr(range, "line", 0U);
+          include_relations_.push_back({pathFromUri(uri_value), value, relation});
+        }
+      }
     } else if (id == completion_id_) {
       const auto result = jsonValueOr(message, "result", json{});
       const auto items = result.is_array() ? result
@@ -715,9 +890,22 @@ void LspClient::handle(const json& message) {
             : jsonValueOr(documentation, "value", std::string{});
         }
         completion.source_path = completion_path_; completion.source_version = completion_version_;
+        completion.resolve_payload = item;
         if (!completion.label.empty()) completions_.push_back(std::move(completion));
       }
       if (completions_.empty()) feedback_.push_back({LspOperation::Completion, false, "no completion items"});
+    } else if (id == completion_resolve_id_) {
+      const auto item = jsonValueOr(message, "result", json{});
+      if (item.is_object()) {
+        LspCompletionItem completion;
+        completion.label = jsonValueOr(item, "label", std::string{});
+        completion.insertion = jsonValueOr(item, "insertText", completion.label);
+        completion.detail = jsonValueOr(item, "detail", std::string{});
+        completion.documentation = lspLabel(jsonValueOr(item, "documentation", json{}));
+        completion.kind = jsonValueOr(item, "kind", 0);
+        completion.source_path = completion_resolve_path_; completion.source_version = completion_resolve_version_;
+        if (!completion.label.empty()) resolved_completion_ = std::move(completion);
+      }
     } else if (id == signature_id_) {
       const auto result = jsonValueOr(message, "result", json{});
       const auto items = result.is_object()

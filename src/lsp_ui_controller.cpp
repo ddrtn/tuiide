@@ -31,6 +31,7 @@ auto LspUiController::observe(bool ready, std::uint64_t diagnostics_revision,
 auto LspUiController::collect(LspClient& client) const -> LspEventBatch {
   return {
     .completions = client.takeCompletions(),
+    .resolved_completion = client.takeResolvedCompletion(),
     .signatures = client.takeSignatures(),
     .hover = client.takeHover(),
     .definitions = client.takeDefinitions(),
@@ -43,6 +44,12 @@ auto LspUiController::collect(LspClient& client) const -> LspEventBatch {
     .workspace_symbols = client.takeWorkspaceSymbols(),
     .call_hierarchy = client.takeCallHierarchy(),
     .type_hierarchy = client.takeTypeHierarchy(),
+    .inlay_hints = client.takeInlayHints(),
+    .document_highlights = client.takeDocumentHighlights(),
+    .folding_ranges = client.takeFoldingRanges(),
+    .selection_ranges = client.takeSelectionRanges(),
+    .code_lens = client.takeCodeLens(),
+    .include_relations = client.takeIncludeRelations(),
     .feedback = client.takeFeedback()
   };
 }
@@ -56,6 +63,9 @@ auto LspUiController::route(LspEventBatch events,
     return !responseMatches({item.source_path, item.source_version}, active_document);
   });
   events.discarded_completions = completion_size - events.completions.size();
+  if (events.resolved_completion && !responseMatches({events.resolved_completion->source_path,
+      events.resolved_completion->source_version}, active_document))
+    events.resolved_completion.reset();
   const auto action_size = events.code_actions.size();
   std::erase_if(events.code_actions, [&active_document](const auto& item) {
     return !responseMatches({item.source_path, item.source_version}, active_document);
@@ -127,6 +137,12 @@ auto lspOperationLabel(LspOperation operation) noexcept -> std::string_view {
     case LspOperation::WorkspaceSymbols: return "Workspace Symbols";
     case LspOperation::CallHierarchy: return "Call Hierarchy";
     case LspOperation::TypeHierarchy: return "Type Hierarchy";
+    case LspOperation::InlayHints: return "Inlay Hints";
+    case LspOperation::DocumentHighlights: return "Document Highlights";
+    case LspOperation::FoldingRanges: return "Folding Ranges";
+    case LspOperation::SelectionRanges: return "Selection Ranges";
+    case LspOperation::CodeLens: return "Code Lens";
+    case LspOperation::IncludeHierarchy: return "Include Hierarchy";
     case LspOperation::Server: return "clangd";
   }
   return "clangd";
