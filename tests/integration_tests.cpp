@@ -213,7 +213,8 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   screen.clear();
   const char enter = '\r';
   (void)::write(master, &enter, 1);
-  const auto menu_opened = waitFor(pumpScreen, [&] { return screen.find("pen...") != std::string::npos; }, 5s);
+  // Начальная горячая буква O может быть отделена ANSI-кодами оформления.
+  const auto menu_opened = waitFor(pumpScreen, [&] { return screen.find("pen Project...") != std::string::npos; }, 5s);
   constexpr std::string_view menu_right{"\033[C"};
   const std::vector<std::string_view> menu_markers{
     "Undo", "Find...", "Refresh tree", "Configure", "Start / Continue",
@@ -222,9 +223,11 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   for (const auto marker : menu_markers) {
     screen.clear();
     (void)::write(master, menu_right.data(), menu_right.size());
-    all_top_menus_visible = waitFor(pumpScreen, [&] {
+    const auto marker_visible = waitFor(pumpScreen, [&] {
       return screen.find(marker) != std::string::npos;
-    }, 3s) && all_top_menus_visible;
+    }, 3s);
+    if (!marker_visible) std::cerr << "PTY menu marker missing: " << marker << '\n';
+    all_top_menus_visible = marker_visible && all_top_menus_visible;
   }
   const char escape = 27;
   screen.clear();
@@ -1797,7 +1800,11 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
 
   (void)openToolsFromEnd(5);
   (void)visible("Configure shortcuts", 5s);
-  send("\033c"); settle(); send("\033"); settle();
+  // ESC-prefix обрабатывается с задержкой: ждём отмены Capture до ввода текста.
+  screen.clear(); send("\033c");
+  const bool reserved_capture_started = visible("Press the desired key now", 5s);
+  screen.clear(); send("\033");
+  const bool reserved_capture_cancelled = visible("Capture cancelled.", 5s);
   screen.clear(); send(std::string(120, '\177')); send("Ctrl+L");
   const bool shortcut_reserved = visible("reserved by Final Cut", 5s);
   send("\023"); settle();
@@ -1829,7 +1836,8 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
     if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &status, 0); }
     ::close(master);
     const bool success = started && conflicts_dialog
-      && legacy_shortcut_warning && shortcut_reserved && shortcut_reserved_safe
+      && legacy_shortcut_warning && reserved_capture_started && reserved_capture_cancelled
+      && shortcut_reserved && shortcut_reserved_safe
       && shortcut_cancelled && shortcut_error_picker && shortcut_error
       && shortcut_error_safe && shortcut_normal_picker && shortcut_capture
       && shortcut_saved && shortcut_persisted && shortcut_active && exited
@@ -1838,6 +1846,7 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
       std::cerr << "Shortcut PTY: started=" << started << " conflicts=" << conflicts_dialog
         << " legacy=" << legacy_shortcut_warning << " reserved=" << shortcut_reserved
         << "/" << shortcut_reserved_safe
+        << " capture-state=" << reserved_capture_started << "/" << reserved_capture_cancelled
         << " cancel_dialog=" << shortcut_cancel_dialog << " cancelled=" << shortcut_cancelled
         << " error_picker=" << shortcut_error_picker << " conflict=" << shortcut_error
         << " error_safe=" << shortcut_error_safe << " normal_picker=" << shortcut_normal_picker
@@ -1856,8 +1865,12 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
 
   const bool theme_normal_menu = openToolsFromEnd(3);
   const bool theme_normal_dialog = visible("High contrast", 5s);
-  settle(); screen.clear(); send("\033[B\r");
-  const bool theme_saved = waitFor(pump, [&] { return logged("Editor theme: Light"); }, 5s);
+  // Сначала приводим список к известной строке и ждём отрисовки выбора Light.
+  send("\033[H"); settle(); screen.clear(); send("\033[B");
+  const bool theme_selection_visible = visible("Light", 5s);
+  send("\r");
+  const bool theme_saved = theme_selection_visible
+    && waitFor(pump, [&] { return logged("Editor theme: Light"); }, 5s);
   const bool theme_persisted = readFile(settings_file).find("\"theme\": \"Light\"")
     != std::string::npos;
 
@@ -1906,6 +1919,8 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   (void)color_cancel_dialog;
 
   const bool success = started && sidebar_shortcut && lower_shortcut && conflicts_dialog
+    && legacy_shortcut_warning && reserved_capture_started && reserved_capture_cancelled
+    && shortcut_reserved && shortcut_reserved_safe
     && shortcut_cancelled
     && shortcut_error && shortcut_error_safe
     && shortcut_capture && shortcut_saved && shortcut_persisted && shortcut_active
@@ -1922,12 +1937,15 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
       << " shortcut_error_safe=" << shortcut_error_safe << " shortcut_saved=" << shortcut_saved
       << " shortcut_capture=" << shortcut_capture << " shortcut_persisted=" << shortcut_persisted
       << " shortcut_active=" << shortcut_active
+      << " reserved=" << reserved_capture_started << "/" << reserved_capture_cancelled
+      << "/" << shortcut_reserved << "/" << shortcut_reserved_safe
+      << " theme_selection=" << theme_selection_visible
       << " theme_cancel=" << theme_cancelled << " theme_saved=" << theme_saved
       << " theme_persisted=" << theme_persisted << " color_cancel=" << color_cancelled
       << " color_role=" << color_role_dialog << " color_value=" << color_value_dialog
       << " color_saved=" << color_saved << " color_persisted=" << color_persisted
       << " project_closed=" << project_closed
-      << " exited=" << exited << " status=" << status << '\n';
+      << " exited=" << exited << " status=" << status << "\nLog:\n" << readFile(log) << '\n';
   }
   return success;
 }

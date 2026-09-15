@@ -383,6 +383,7 @@ void ShortcutEditorDialog::updateCurrentValue() {
 void ShortcutEditorDialog::capture() {
   capturing_ = true;
   validation_.setText("Press the desired key now (Escape cancels capture).");
+  validation_.redraw();
   setWindowFocusWidget(&current_);
   current_.setFocus();
 }
@@ -390,10 +391,17 @@ void ShortcutEditorDialog::capture() {
 auto ShortcutEditorDialog::captureKey(finalcut::FKey key) -> bool {
   if (!capturing_) return false;
   if (key == finalcut::FKey::Escape) {
-    capturing_ = false; validation_.setText("Capture cancelled."); return true;
+    capturing_ = false;
+    validation_.setText("Capture cancelled.");
+    validation_.redraw();
+    return true;
   }
   const auto value = shortcutForKey(key);
-  if (value.empty()) { validation_.setText("Unsupported key. Use Ctrl/Alt combinations, Ctrl+F8, or F1-F12."); return true; }
+  if (value.empty()) {
+    validation_.setText("Unsupported key. Use Ctrl/Alt combinations, Ctrl+F8, or F1-F12.");
+    validation_.redraw();
+    return true;
+  }
   capturing_ = false;
   updating_ = true; current_.setText(finalcut::FString(value)); updating_ = false;
   updateCurrentValue();
