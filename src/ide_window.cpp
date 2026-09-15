@@ -567,6 +567,8 @@ void IdeWindow::setupMenus() {
   debug_menu_.memory.setStatusBarMessage("Read a bounded memory range as hex and ASCII");
   debug_menu_.memory.addCallback("clicked", [this] { deferred_command_ = [this] { showMemory(); }; });
   bind(debug_menu_.registers, finalcut::FKey::Ctrl_r, "Show or hide amd64 registers");
+  debug_menu_.signals.setStatusBarMessage("Inspect signal policies, configure handling, or send a signal and continue");
+  debug_menu_.signals.addCallback("clicked", [this] { deferred_command_ = [this] { manageSignals(); }; });
 
   bind(tools_menu_.completion, finalcut::FKey::Ctrl_space, "Request clangd completion");
   tools_menu_.signature.setStatusBarMessage("Show clangd function signature help");
@@ -1509,6 +1511,42 @@ void IdeWindow::showDisassembly() {
   if (address.empty()) return;
   if (!gdb_.disassemble(address)) publishEvent(EventSource::Debug, EventSeverity::Information, "Disassembly request rejected\n");
   else publishEvent(EventSource::Debug, EventSeverity::Information, "Disassembling near " + address + "\n");
+}
+
+void IdeWindow::manageSignals() {
+  if (!gdb_.running() || !gdb_.active() || !gdb_.stopped()) return;
+  const auto action = choose("Signals", {"Inspect policies (Output)", "Configure handling", "Send signal and continue"});
+  if (!action) return;
+  if (action == 1) {
+    if (gdb_.inspectSignals()) lower_tabs_.setCurrentIndex(0, true);
+    return;
+  }
+  auto signals = gdbSignals();
+  if (action == 3) {
+    signals.insert(signals.begin(), "0 (suppress pending signal)");
+    signals.push_back("SIGINT"); signals.push_back("SIGTRAP");
+  }
+  const auto selected = choose("Select signal", signals);
+  if (!selected) return;
+  const auto signal = action == 3 && selected == 1 ? std::string("0") : signals[selected - 1];
+  if (action == 3) {
+    // signal продолжает процесс и может завершить его: обязательно подтверждение.
+    const auto confirmation = choose("Send " + signal + " and resume? May terminate program",
+      {"Cancel", "Send and continue"});
+    if (confirmation != 2) return;
+    if (gdb_.sendSignal(signal))
+      publishEvent(EventSource::Debug, EventSeverity::Information, "Sending " + signal + " and continuing\n");
+    return;
+  }
+  const auto policy = choose("Handling of " + signal, {
+    "Stop, print, pass", "Stop, print, suppress", "No stop, print, pass",
+    "No stop, print, suppress", "No stop, silent, pass", "No stop, silent, suppress"});
+  if (!policy) return;
+  if (gdb_.setSignalPolicy(signal, policy <= 2, policy <= 4, policy % 2 == 1)) {
+    lower_tabs_.setCurrentIndex(0, true);
+    publishEvent(EventSource::Debug, EventSeverity::Information,
+      "Changing " + signal + " policy for this GDB session (see response below)\n");
+  }
 }
 
 void IdeWindow::showMemory() {
@@ -3880,6 +3918,7 @@ void IdeWindow::updateMenuState() {
   enabled(debug_menu_.disassembly, state.debug_step);
   enabled(debug_menu_.memory, state.debug_step);
   enabled(debug_menu_.registers, state.registers);
+  enabled(debug_menu_.signals, state.debug_step);
   enabled(tools_menu_.completion, state.completion);
   enabled(tools_menu_.signature, state.signature_help);
   enabled(tools_menu_.hover, state.hover);

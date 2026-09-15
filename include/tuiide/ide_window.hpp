@@ -170,6 +170,7 @@ class IdeWindow final : public finalcut::FDialog {
   void editVariableValue();
   void showDisassembly();
   void showMemory();
+  void manageSignals();
   void removeSelectedWatch();
   void loadDebugState();
   void saveDebugState();
@@ -464,6 +465,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem disassembly{"Disassembl&y...", &menu};
     finalcut::FMenuItem memory{"&Memory...", &menu};
     finalcut::FMenuItem registers{finalcut::FKey::Ctrl_r, "Toggle re&gisters", &menu};
+    finalcut::FMenuItem signals{"Signal &handling...", &menu};
   };
   struct ToolsMenu {
     explicit ToolsMenu(finalcut::FMenuBar& bar) : menu{"&Tools", &bar} {}

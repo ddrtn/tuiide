@@ -5,6 +5,13 @@
 
 ## P0 — стабильность
 
+- [ ] Устранить конфликт Add watch с Ctrl+L (Final Cut перехватывает клавишу
+  для redraw); учитывать зарезервированные библиотекой клавиши при настройке
+  shortcuts. Alt+W занят меню Window; через Debug → Add watch диалог работает.
+- [ ] Разобрать воспроизводимый сбой общего PTY-сценария
+  `tuiide_integration_tests`: не подтверждается защита изменённого файла при
+  удалении из проекта, затем нарушаются проверки переключения проектов.
+  Проверки GDB и отдельные тесты диалогов проходят; причину ещё нужно установить.
 - [x] Сделать разбор всех ответов clangd устойчивым к `null`, отсутствующим
   полям и неверным JSON-типам; показывать ошибку протокола вместо молчаливого
   игнорирования и покрыть completion/hover/diagnostics regression-тестами.
@@ -31,8 +38,12 @@
   Ninja/Make, sysroot и CMake toolchain files с проверкой версий.
 - [x] Расширить clangd: inlay hints, document highlights, folding ranges,
   completion resolve, selection ranges, code lens и include hierarchy.
-- [ ] Расширить отладку: Attach to Process, core dump, сигналы inferior и
-  опциональный LLDB backend через DAP.
+- [ ] Расширить отладку:
+  - [ ] Attach to Process с безопасным отсоединением от живого процесса.
+  - [ ] Открытие core dump с выбором executable и режимом только чтения.
+  - [x] Сигналы inferior: просмотр политик, stop/print/pass и отправка сигнала
+    с продолжением (включая подавление текущего сигнала через `signal 0`).
+  - [ ] Опциональный LLDB backend через DAP.
 
 ## P2 — развитие и качество
 

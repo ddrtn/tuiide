@@ -76,6 +76,48 @@ auto gdbReadMemoryCommand(std::string_view address, std::size_t bytes) -> std::s
   return "-data-read-memory-bytes " + quoteMiArgument(address) + " " + std::to_string(bytes);
 }
 
+auto gdbSignals() -> const std::vector<std::string>& {
+  // SIGINT/SIGTRAP принадлежат самому GDB; SIGKILL/SIGSTOP нельзя перехватить.
+  static const std::vector<std::string> signals{
+    "SIGHUP", "SIGQUIT", "SIGILL", "SIGABRT", "SIGBUS", "SIGFPE", "SIGUSR1",
+    "SIGSEGV", "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM", "SIGCHLD", "SIGCONT",
+    "SIGTSTP", "SIGTTIN", "SIGTTOU", "SIGURG", "SIGXCPU", "SIGXFSZ", "SIGVTALRM",
+    "SIGPROF", "SIGWINCH", "SIGIO", "SIGPWR", "SIGSYS"};
+  return signals;
+}
+auto gdbSignalCommand(std::string_view signal) -> std::string {
+  if (signal != "0" && signal != "SIGINT" && signal != "SIGTRAP"
+      && std::find(gdbSignals().begin(), gdbSignals().end(), signal) == gdbSignals().end()) return {};
+  return "-interpreter-exec console " + quoteMiArgument("signal " + std::string(signal));
+}
+auto gdbSignalPolicyCommand(std::string_view signal, bool stop, bool print, bool pass) -> std::string {
+  // stop подразумевает print, noprint подразумевает nostop: противоречия запрещены.
+  if ((stop && !print)
+      || std::find(gdbSignals().begin(), gdbSignals().end(), signal) == gdbSignals().end()) return {};
+  return "-interpreter-exec console " + quoteMiArgument("handle " + std::string(signal)
+    + (stop ? " stop" : " nostop") + (print ? " print" : " noprint")
+    + (pass ? " pass" : " nopass"));
+}
+
+auto GdbClient::sendSignal(std::string_view signal) -> bool {
+  const auto request = gdbSignalCommand(signal);
+  if (!running() || !active() || !stopped_ || request.empty() || pending_signal_) return false;
+  pending_signal_ = command(request);
+  stopped_ = false;
+  return true;
+}
+auto GdbClient::setSignalPolicy(std::string_view signal, bool stop, bool print, bool pass) -> bool {
+  const auto request = gdbSignalPolicyCommand(signal, stop, print, pass);
+  if (!running() || !stopped_ || request.empty()) return false;
+  command(request);
+  return true;
+}
+auto GdbClient::inspectSignals() -> bool {
+  if (!running() || !stopped_) return false;
+  command("-interpreter-exec console \"info signals\"");
+  return true;
+}
+
 auto GdbClient::start(const std::filesystem::path& executable,
     const std::filesystem::path& working_directory,
     const std::map<std::string, std::string>& environment,
@@ -86,6 +128,7 @@ auto GdbClient::start(const std::filesystem::path& executable,
   arguments.insert(arguments.end(), program_arguments.begin(), program_arguments.end());
   if (!process_.start(arguments, true, working_directory, environment)) return false;
   inferior_active_ = false; stopped_ = false; inferior_exited_ = false; run_requested_ = false;
+  pending_signal_ = 0;
   selected_frame_ = 0; ++variable_generation_; pending_variables_.clear(); pending_children_.clear();
   pending_expressions_.clear(); results_.clear();
   stdin_file_ = stdin_file;
@@ -102,6 +145,7 @@ auto GdbClient::start(const std::filesystem::path& executable,
 void GdbClient::stop() {
   if (process_.running()) command("-gdb-exit");
   process_.stop(); inferior_active_ = false; stopped_ = false; inferior_exited_ = false; run_requested_ = false;
+  pending_signal_ = 0;
   breakpoint_numbers_.clear(); pending_breakpoints_.clear(); pending_breakpoint_commands_.clear(); pending_watches_.clear();
   pending_variables_.clear(); pending_children_.clear(); ++variable_generation_; selected_frame_ = 0;
   pending_expressions_.clear(); results_.clear();
@@ -311,6 +355,14 @@ void GdbClient::poll() {
     }
     if (mi.token) {
       const auto token = *mi.token;
+      if (token == pending_signal_ && mi.prefix == '^') {
+        pending_signal_ = 0;
+        if (mi.klass == "error") {
+          // Отказ GDB не должен оставлять пошаговые команды заблокированными.
+          stopped_ = true;
+          refreshState();
+        }
+      }
         if (const auto pending = pending_expressions_.find(token); pending != pending_expressions_.end()) {
           DebugResult result;
           result.kind = pending->second.kind; result.expression = pending->second.expression;

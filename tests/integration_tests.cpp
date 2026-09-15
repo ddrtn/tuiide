@@ -2479,16 +2479,17 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
   screen.clear(); send("\177main.cpp\r");
   const bool opened = visible("1 file(s)", 5s);
 
-  screen.clear(); send("\033w");
+  // Проверяем диалог через меню: Alt+W занят Window, Ctrl+L перехватывает Final Cut.
+  screen.clear(); (void)debugCommand('w');
   const bool watch_cancel_prompt = visible("Add watch", 5s) && screen.find("Expression:") != std::string::npos;
   closeTextDialog();
   const auto before_watch = readSession();
-  screen.clear(); send("\033w"); (void)visible("Expression:", 5s);
+  screen.clear(); (void)debugCommand('w'); (void)visible("Expression:", 5s);
   screen.clear(); send("value\r");
   const bool watch_added = waitFor(pump, [&] {
     return readSession().find("\"value\"") != std::string::npos;
   }, 5s);
-  screen.clear(); send("\033w"); (void)visible("Expression:", 5s);
+  screen.clear(); (void)debugCommand('w'); (void)visible("Expression:", 5s);
   screen.clear(); send("value\r");
   const bool watch_duplicate = waitFor(pump, [&] {
     return logged("Watch already exists or is empty: value");
@@ -2580,6 +2581,22 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
   const bool memory_error = visible("Memory error", 8s);
   closeTextDialog();
 
+  (void)debugCommand('h');
+  const bool signals_dialog = visible("Inspect policies", 5s);
+  closeTextDialog();
+  (void)debugCommand('h');
+  (void)visible("Inspect policies", 5s); screen.clear(); send("\r");
+  const bool signals_inspected = waitFor(pump, [&] { return logged("SIGUSR1"); }, 5s);
+  (void)debugCommand('h');
+  (void)visible("Inspect policies", 5s); screen.clear(); send("\033[B\r");
+  const bool signals_picker = visible("Select signal", 5s);
+  screen.clear(); send("\r");
+  const bool signal_policy_dialog = visible("Handling of SIGHUP", 5s);
+  screen.clear(); send("\r");
+  const bool signal_policy_requested = waitFor(pump, [&] {
+    return logged("Changing SIGHUP policy");
+  }, 5s);
+
   const bool stop_menu = debugCommand('t');
   const bool debug_stopped_by_user = waitFor(pump, [&] { return logged("Debug session stopped"); }, 8s);
   screen.clear(); send("\033f"); (void)visible("Exit", 3s); send("x");
@@ -2618,7 +2635,8 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
     && evaluate_cancel_prompt && evaluation_result && evaluation_error
     && assignment_result && disassembly_result && disassembly_error
     && memory_cancel_prompt && memory_invalid
-    && memory_result && memory_error && debug_stopped_by_user
+    && memory_result && memory_error && signals_dialog && signals_inspected
+    && signals_picker && signal_policy_dialog && signal_policy_requested && debug_stopped_by_user
     && exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
   if (!success) {
     std::ifstream log_input(log);
@@ -2636,6 +2654,8 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
       << " assignment=" << assignment_expression << "/" << assignment_value << "/" << assignment_result
       << " disassembly=" << disassembly_result << "/" << disassembly_error
       << " memory=" << memory_invalid << "/" << memory_result << "/" << memory_error
+      << " signals=" << signals_dialog << "/" << signals_inspected << "/" << signals_picker
+      << "/" << signal_policy_dialog << "/" << signal_policy_requested
       << " stop=" << debug_stopped_by_user << " exited=" << exited << " status=" << status
       << "\nSession:\n" << readSession() << "\nLog:\n" << log_text << '\n';
   }
@@ -3579,7 +3599,21 @@ int main(int argc, char** argv) {
     expect(!gdb.readMemory("$sp", 4097) && !gdb.disassemble("$pc", 4097),
       "debug memory operations reject oversized requests");
     expect(!gdb.toggleBreakpoint(project.path / "main.cpp", 10), "GDB breakpoint is removed before continuing to exit");
-    gdb.continueExecution();
+    expect(gdb.setSignalPolicy("SIGUSR1", false, false, false),
+      "GDB accepts a signal suppression policy while stopped");
+    expect(gdb.inspectSignals(), "GDB accepts inspection of current signal policies");
+    expect(waitFor([&] {
+      gdb.poll();
+      auto lines = gdb.takeOutput();
+      gdb_log.insert(gdb_log.end(), std::make_move_iterator(lines.begin()), std::make_move_iterator(lines.end()));
+    }, [&] {
+      return std::any_of(gdb_log.begin(), gdb_log.end(), [](const auto& line) {
+        return line.find("SIGUSR1") != std::string::npos && line.find("No") != std::string::npos;
+      });
+    }), "GDB reports the applied SIGUSR1 policy in its console output");
+    expect(!gdb.sendSignal("not-a-signal") && gdb.stopped(),
+      "invalid signal delivery preserves the stopped debugger state");
+    expect(gdb.sendSignal("0"), "GDB resumes with the pending signal suppressed");
     expect(waitFor([&] { gdb.poll(); }, [&] { return gdb.running() && gdb.exited() && !gdb.active(); }),
       "GDB reports a completed inferior separately from the live debugger process");
     expect(!gdb.stopped() && gdb.frames().empty() && gdb.variables().empty() && gdb.threads().empty(),
@@ -3613,6 +3647,17 @@ int main(int argc, char** argv) {
       return line.find("result logpoint") != std::string::npos;
     }), "GDB logpoint prints its message and continues without stopping");
     debug_terminal.stop();
+    gdb.stop();
+    gdb.clearBreakpoints();
+    expect(gdb.addBreakpoint(project.path / "main.cpp", 10)
+        && gdb.start(build / "smoke_app"),
+      "signal delivery regression starts a fresh stopped inferior");
+    gdb.run();
+    expect(waitFor([&] { gdb.poll(); }, [&] { return gdb.stopped(); }),
+      "signal delivery regression reaches its breakpoint");
+    expect(gdb.sendSignal("SIGTERM"), "GDB sends a named signal to the inferior");
+    expect(waitFor([&] { gdb.poll(); }, [&] { return gdb.exited() && !gdb.active(); }),
+      "fatal signal delivery reports inferior exit without hanging the debug session");
   }
   gdb.stop();
 

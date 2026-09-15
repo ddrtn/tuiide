@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -75,6 +76,11 @@ struct DebugBreakpoint {
   std::size_t bytes) -> std::string;
 [[nodiscard]] auto gdbReadMemoryCommand(std::string_view address,
   std::size_t bytes) -> std::string;
+/** Имена Linux-сигналов, безопасные для handle (без служебных сигналов GDB). */
+[[nodiscard]] auto gdbSignals() -> const std::vector<std::string>&;
+[[nodiscard]] auto gdbSignalCommand(std::string_view signal) -> std::string;
+[[nodiscard]] auto gdbSignalPolicyCommand(std::string_view signal,
+  bool stop, bool print, bool pass) -> std::string;
 
 /**
  * Асинхронный клиент GDB/MI.
@@ -99,6 +105,10 @@ class GdbClient {
   void next();
   void step();
   void finish();
+  /** Передаёт сигнал и продолжает inferior; "0" подавляет текущий сигнал. */
+  auto sendSignal(std::string_view signal) -> bool;
+  auto setSignalPolicy(std::string_view signal, bool stop, bool print, bool pass) -> bool;
+  auto inspectSignals() -> bool;
   void selectThread(const std::string& id);
   auto selectFrame(int level) -> bool;
   auto toggleVariable(std::size_t index) -> bool;
@@ -183,6 +193,7 @@ class GdbClient {
   int selected_frame_{};
   std::filesystem::path stdin_file_;
   bool run_requested_{};
+  int pending_signal_{};
 };
 
 }  // namespace tuiide

@@ -34,6 +34,10 @@ source code and user interface use UTF-8.
 - GDB debugging with breakpoints and logpoints, stack frames, threads, locals,
   watches, registers, expression evaluation, memory, and disassembly; the editor
   highlights the current stopped source line.
+- **Debug → Signal handling** inspects policies in Output, configures stop/print/pass,
+  and sends a signal with confirmation before resuming. `0` suppresses the
+  pending signal. Policies apply to the current GDB session only;
+  debugger-owned SIGINT/SIGTRAP are excluded from handling configuration.
 - Project tree and templates for C/C++ source files and classes that update the
   relevant CMake files.
 

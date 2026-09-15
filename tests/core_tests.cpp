@@ -1379,6 +1379,25 @@ int main() {
   std::filesystem::remove(session_path, cleanup_error);
 
   tuiide::GdbClient debugger;
+  expect(tuiide::gdbSignalCommand("SIGUSR1") == "-interpreter-exec console \"signal SIGUSR1\""
+      && tuiide::gdbSignalCommand("0") == "-interpreter-exec console \"signal 0\"",
+    "GDB signal delivery supports named signals and suppression of a pending signal");
+  expect(tuiide::gdbSignalCommand("SIGUSR1\nquit").empty()
+      && tuiide::gdbSignalCommand("СИГНАЛ").empty()
+      && tuiide::gdbSignalCommand("SIGKILL").empty(),
+    "GDB rejects command injection, unknown UTF-8 names and uncatchable signals");
+  expect(tuiide::gdbSignalPolicyCommand("SIGUSR1", true, true, false)
+      == "-interpreter-exec console \"handle SIGUSR1 stop print nopass\""
+      && tuiide::gdbSignalPolicyCommand("SIGUSR2", false, false, true)
+        == "-interpreter-exec console \"handle SIGUSR2 nostop noprint pass\"",
+    "GDB signal handling distinguishes stopping, reporting and delivery to the inferior");
+  expect(tuiide::gdbSignalPolicyCommand("SIGINT", true, true, true).empty()
+      && tuiide::gdbSignalPolicyCommand("SIGTRAP", false, false, false).empty()
+      && tuiide::gdbSignalPolicyCommand("SIGUSR1", true, false, true).empty(),
+    "GDB policies reject debugger-owned signals and contradictory stop/silent settings");
+  expect(!debugger.sendSignal("SIGUSR1") && !debugger.inspectSignals()
+      && !debugger.setSignalPolicy("SIGUSR1", true, true, true),
+    "GDB signal operations require a stopped debug session");
   expect(tuiide::gdbEvaluateCommand("result + pair.right")
       == "-data-evaluate-expression \"result + pair.right\""
       && tuiide::gdbEvaluateCommand("name == \"value\"")
