@@ -1,4 +1,5 @@
 #include "tuiide/ui_dialogs.hpp"
+#include "tuiide/user_settings.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -37,6 +38,7 @@ auto canonicalShortcut(std::string value) -> std::string {
     {"ALT+F8", "Alt+F8"},
     {"ALT+P", "Alt+P"}, {"ALT+R", "Alt+R"}, {"ALT+S", "Alt+S"}, {"ALT+T", "Alt+T"},
     {"ALT+U", "Alt+U"}, {"ALT+W", "Alt+W"}, {"ALT+SHIFT+W", "Alt+Shift+W"},
+    {"ALT+SHIFT+U", "Alt+Shift+U"},
     {"F1", "F1"}, {"F2", "F2"}, {"F3", "F3"}, {"F4", "F4"},
     {"F5", "F5"}, {"F6", "F6"}, {"F7", "F7"}, {"F8", "F8"},
     {"F9", "F9"}, {"F10", "F10"}, {"F11", "F11"}, {"F12", "F12"},
@@ -72,6 +74,7 @@ auto shortcutForKey(finalcut::FKey key) -> std::string {
     {finalcut::FKey::Meta_r, "Alt+R"}, {finalcut::FKey::Meta_s, "Alt+S"},
     {finalcut::FKey::Meta_t, "Alt+T"},
     {finalcut::FKey::Meta_u, "Alt+U"}, {finalcut::FKey::Meta_w, "Alt+W"},
+    {finalcut::FKey::Meta_U, "Alt+Shift+U"},
     {finalcut::FKey::Meta_W, "Alt+Shift+W"}, {finalcut::FKey::F1, "F1"},
     {finalcut::FKey::F2, "F2"}, {finalcut::FKey::F3, "F3"}, {finalcut::FKey::F4, "F4"},
     {finalcut::FKey::F5, "F5"}, {finalcut::FKey::F6, "F6"}, {finalcut::FKey::F7, "F7"},
@@ -253,6 +256,8 @@ TextDialog::TextDialog(std::string title, std::string text, finalcut::FWidget* p
   text_.setGeometry({2, 1}, {width - 3, height - 4});
   text_.setText(finalcut::FString(std::move(text)));
   close_.setGeometry({static_cast<int>(width - 15), static_cast<int>(height - 2)}, {12, 1});
+  // В текстовом диалоге Enter закрывает справку, как в обычном MessageBox.
+  close_.addAccelerator(finalcut::FKey::Return);
   close_.addCallback("clicked", [this] { done(ResultCode::Accept); });
   text_.setFocus();
 }
@@ -427,14 +432,7 @@ void ShortcutEditorDialog::validate() {
     if (value.empty()) continue;
     const auto canonical = canonicalShortcut(value);
     if (canonical.empty()) { error = "Unsupported shortcut: " + value; break; }
-    if (canonical == "Alt+K") { error = "Alt+K is reserved for the command palette."; break; }
-    static const std::vector<std::string> menu_mnemonics{"Alt+F", "Alt+E", "Alt+S", "Alt+R",
-      "Alt+P", "Alt+D", "Alt+T", "Alt+W", "Alt+H"};
-    if (std::find(menu_mnemonics.begin(), menu_mnemonics.end(), canonical) != menu_mnemonics.end()) {
-      error = canonical + " is reserved for a top-level menu.";
-      break;
-    }
-    if (canonical == "F10") { error = "F10 is reserved for the menu bar."; break; }
+    if (const auto reason = reservedShortcutReason(canonical); !reason.empty()) { error = reason; break; }
     const auto [owner, inserted] = owners.emplace(canonical, command.title);
     if (!inserted) { error = "Conflict: " + canonical + " is assigned to " + owner->second + " and " + command.title + "."; break; }
   }

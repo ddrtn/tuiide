@@ -100,6 +100,10 @@ ctest --test-dir tuiide-build --output-on-failure
 - `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+W` — новый файл, открыть, сохранить, закрыть.
 - `Ctrl+F` — поиск/замена; `Ctrl+Space` — completion; `Alt+K` — command palette.
 - `Alt+L` — менеджер конфигураций Run/Debug; `Alt+Shift+L` — быстрый выбор.
+- `Alt+Shift+U` — добавить watch; `Alt+U` — вновь открыть закрытый файл.
+- `Ctrl+L` зарезервирован Final Cut для перерисовки экрана и не назначается на
+  команды IDE. Старые запрещённые назначения игнорируются с предупреждением;
+  остальные пользовательские предпочтения сохраняются.
 - `Alt+PageUp/PageDown` — вкладки боковой панели; `Alt+Shift+PageUp/PageDown` —
   вкладки нижней панели.
 

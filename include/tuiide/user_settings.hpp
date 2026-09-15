@@ -20,6 +20,9 @@ struct UserSettings {
   std::vector<std::filesystem::path> recent_files;
 };
 
+/** Причина запрета клавиши, перехватываемой Final Cut или служебным меню IDE. */
+[[nodiscard]] auto reservedShortcutReason(std::string shortcut) -> std::string;
+
 /** Нормализует, дедуплицирует и ограничивает историю существующих файлов. */
 [[nodiscard]] auto normalizeRecentFiles(const std::vector<std::filesystem::path>& files,
   std::size_t limit = 10) -> std::vector<std::filesystem::path>;
@@ -30,8 +33,9 @@ void rememberRecentFile(std::vector<std::filesystem::path>& files,
 /** Возвращает XDG-путь `$XDG_CONFIG_HOME/tuiide/settings.json`. */
 [[nodiscard]] auto defaultUserSettingsPath() -> std::filesystem::path;
 [[nodiscard]] auto validateUserSettings(const UserSettings& settings, std::string& error) -> bool;
+/** Загружает предпочтения; старые запрещённые shortcuts удаляет с предупреждениями. */
 [[nodiscard]] auto loadUserSettings(const std::filesystem::path& path, UserSettings& settings,
-  std::string& error) -> bool;
+  std::string& error, std::vector<std::string>* warnings = nullptr) -> bool;
 /** Проверяет и атомарно сохраняет настройки, не повреждая прежний файл при ошибке. */
 auto saveUserSettings(const std::filesystem::path& path, const UserSettings& settings,
   std::string& error) -> bool;

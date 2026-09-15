@@ -56,7 +56,7 @@ auto ideCommands() -> const std::vector<IdeCommand>& {
     {"debug.stepInto", "Debug: Step Into", finalcut::FKey::F7, "F7"},
     {"debug.stepOver", "Debug: Step Over / Next", finalcut::FKey::F8, "F8"},
     {"debug.stepOut", "Debug: Step Out", finalcut::FKey::F56, "Alt+F8"},
-    {"debug.watch", "Debug: Add Watch", finalcut::FKey::Ctrl_l, "Ctrl+L"},
+    {"debug.watch", "Debug: Add Watch", finalcut::FKey::Meta_U, "Alt+Shift+U"},
     {"tools.completion", "Tools: Completion", finalcut::FKey::Ctrl_space, "Ctrl+Space"},
     {"tools.hover", "Tools: Symbol Information", finalcut::FKey::F1, "F1"},
     {"tools.rename", "Tools: Rename Symbol", finalcut::FKey::F2, "F2"},
@@ -72,6 +72,7 @@ auto ideCommands() -> const std::vector<IdeCommand>& {
 }
 
 auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
+  if (!reservedShortcutReason(value).empty()) return std::nullopt;
   value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char character) {
     return std::isspace(character) != 0;
   }), value.end());
@@ -104,6 +105,7 @@ auto shortcutKey(std::string value) -> std::optional<finalcut::FKey> {
     {"ALT+R", finalcut::FKey::Meta_r}, {"ALT+S", finalcut::FKey::Meta_s},
     {"ALT+T", finalcut::FKey::Meta_t},
     {"ALT+U", finalcut::FKey::Meta_u}, {"ALT+W", finalcut::FKey::Meta_w},
+    {"ALT+SHIFT+U", finalcut::FKey::Meta_U},
     {"ALT+SHIFT+W", finalcut::FKey::Meta_W},
     {"F1", finalcut::FKey::F1}, {"F2", finalcut::FKey::F2}, {"F3", finalcut::FKey::F3},
     {"F4", finalcut::FKey::F4}, {"F5", finalcut::FKey::F5}, {"F6", finalcut::FKey::F6},
@@ -183,7 +185,8 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
       document_(document_session_.activeDocument()), active_document_(document_session_.activeIndex()),
       external_tools_(discoverExternalTools()), diagnostic_mode_(diagnostic) {
   std::string user_settings_error;
-  if (!loadUserSettings(user_settings_file_, user_settings_, user_settings_error)) user_settings_ = {};
+  std::vector<std::string> shortcut_warnings;
+  if (!loadUserSettings(user_settings_file_, user_settings_, user_settings_error, &shortcut_warnings)) user_settings_ = {};
   setText("TUI IDE — C/C++");
   unsetBorder();
   unsetTitleBarButtonVisibility();
@@ -340,6 +343,8 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   if (!user_settings_error.empty())
     publishEvent(EventSource::System, EventSeverity::Error,
       "User settings: " + user_settings_error + "; defaults are used\n");
+  for (const auto& warning : shortcut_warnings)
+    publishEvent(EventSource::System, EventSeverity::Warning, warning + "\n");
   if (diagnostic_mode_) {
     publishEvent(EventSource::System, EventSeverity::Information,
       "Diagnostic mode enabled (hardware threads: "
@@ -557,7 +562,7 @@ void IdeWindow::setupMenus() {
   bind(debug_menu_.next, finalcut::FKey::F8, "Step over the current source line");
   bind(debug_menu_.step, finalcut::FKey::F7, "Step into the current call");
   bind(debug_menu_.finish, finalcut::FKey::F56, "Finish the current stack frame");
-  bind(debug_menu_.watch, finalcut::FKey::Ctrl_l, "Add a GDB watch expression");
+  bind(debug_menu_.watch, finalcut::FKey::Meta_U, "Add a GDB watch expression");
   debug_menu_.evaluate.setStatusBarMessage("Evaluate a C/C++ expression in the selected stack frame");
   debug_menu_.evaluate.addCallback("clicked", [this] { deferred_command_ = [this] { evaluateExpression(); }; });
   debug_menu_.set_variable.setStatusBarMessage("Change a variable in the selected stack frame");
@@ -746,7 +751,8 @@ void IdeWindow::showAbout() {
 }
 
 void IdeWindow::showKeyboardHelp() {
-  finalcut::FMessageBox::info(this, "Keyboard shortcuts",
+  // Прокрутка и адаптивный размер сохраняют начало справки на низком терминале.
+  showTextDialog("Keyboard shortcuts",
     "F10 or Alt+F/E/S/R/P/D/T/W/H  Menu; underlines local, shortcuts global\n"
     "Ctrl+N/O/S/W  Files\n"
     "F1/F2/F3/F4  Info/Rename/Definition/References\n"
@@ -758,6 +764,8 @@ void IdeWindow::showKeyboardHelp() {
     "Ctrl+F       Find/Replace text or project\n"
     "Ctrl+P, Alt+B, Ctrl+T  Configure/Build preset/Target\n"
     "Alt+L / Alt+Shift+L  Manage / select Run/Debug configuration\n"
+    "Alt+Shift+U  Add a GDB watch expression\n"
+    "Ctrl+L       Redraw screen (reserved by Final Cut)\n"
     "Alt+K        Search the command palette\n"
     "Alt+A        clangd Code Actions / Quick Fixes\n"
     "Ctrl+E       Focus Project explorer\n"
@@ -817,6 +825,8 @@ void IdeWindow::showShortcutConflicts() {
   table << "Effective shortcut table\n\n";
   owners[finalcut::FKey::Meta_k].push_back("Tools: Command Palette (reserved)");
   table << "Alt+K\tTools: Command Palette (reserved)\n";
+  owners[finalcut::FKey::Ctrl_l].push_back("Final Cut: Redraw screen (reserved)");
+  table << "Ctrl+L\tFinal Cut: Redraw screen (reserved)\n";
   for (const auto& command : ideCommands()) {
     const auto custom = user_settings_.shortcuts.find(std::string(command.id));
     const auto label = custom == user_settings_.shortcuts.end()
@@ -4137,7 +4147,7 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       if (document_ && isCMakePath(document_->path())) deferred_command_ = [this] { showCMakeCompletion(); };
       else if (requireLspDocument("Completion")) lsp_.requestCompletion(*document_);
       return true;
-    case finalcut::FKey::Ctrl_l:
+    case finalcut::FKey::Meta_U:
       if (root_.empty()) publishEvent(EventSource::Debug, EventSeverity::Warning, "Add watch unavailable: no project is open\n");
       else deferred_command_ = [this] { addWatch(); };
       return true;

@@ -764,7 +764,7 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   const bool diagnostic_unavailable = unavailableCommand(
     "\033[19;5~", "No build, analysis, or clangd diagnostics");
   const bool preset_unavailable = unavailableCommand("\020", "Configure preset unavailable");
-  const bool watch_unavailable = unavailableCommand("\014", "Add watch unavailable");
+  const bool watch_unavailable = unavailableCommand("\033U", "Add watch unavailable");
   const bool registers_unavailable = unavailableCommand("\022", "Registers unavailable");
   const char quit = 4;
   screen.clear();
@@ -1707,7 +1707,8 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   std::filesystem::create_directories(settings_file.parent_path());
   {
     std::ofstream file(settings_file);
-    file << "{\"version\":1,\"theme\":\"Dark\",\"shortcuts\":{\"file.open\":\"Ctrl+U\"}}\n";
+    file << "{\"version\":1,\"theme\":\"Dark\",\"shortcuts\":{\"file.open\":\"Ctrl+U\","
+      "\"debug.watch\":\"Ctrl+L\"}}\n";
   }
   const auto readFile = [](const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
@@ -1778,6 +1779,7 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   screen.clear(); send("\033"); settle();
 
   const auto initial_settings = readFile(settings_file);
+  const bool legacy_shortcut_warning = logged("Ignored shortcut debug.watch: Ctrl+L is reserved by Final Cut");
   const bool shortcut_cancel_menu = openToolsFromEnd(5);
   const bool shortcut_cancel_dialog = visible("Configure shortcuts", 5s)
     && visible("Default: Ctrl+N", 5s) && visible("Capture", 5s);
@@ -1792,6 +1794,16 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   const bool shortcut_error = conflict_captured && readFile(settings_file) == initial_settings;
   screen.clear(); send("\033"); settle();
   const bool shortcut_error_safe = readFile(settings_file) == initial_settings;
+
+  (void)openToolsFromEnd(5);
+  (void)visible("Configure shortcuts", 5s);
+  send("\033c"); settle(); send("\033"); settle();
+  screen.clear(); send(std::string(120, '\177')); send("Ctrl+L");
+  const bool shortcut_reserved = visible("reserved by Final Cut", 5s);
+  send("\023"); settle();
+  const bool shortcut_reserved_safe = readFile(settings_file) == initial_settings
+    && screen.find("reserved by Final Cut") != std::string::npos;
+  send("\033"); settle();
 
   const bool shortcut_normal_menu = openToolsFromEnd(5);
   const bool shortcut_normal_picker = visible("File: New", 5s);
@@ -1817,12 +1829,15 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
     if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &status, 0); }
     ::close(master);
     const bool success = started && conflicts_dialog
+      && legacy_shortcut_warning && shortcut_reserved && shortcut_reserved_safe
       && shortcut_cancelled && shortcut_error_picker && shortcut_error
       && shortcut_error_safe && shortcut_normal_picker && shortcut_capture
       && shortcut_saved && shortcut_persisted && shortcut_active && exited
       && WIFEXITED(status) && WEXITSTATUS(status) == 0;
     if (!success) {
       std::cerr << "Shortcut PTY: started=" << started << " conflicts=" << conflicts_dialog
+        << " legacy=" << legacy_shortcut_warning << " reserved=" << shortcut_reserved
+        << "/" << shortcut_reserved_safe
         << " cancel_dialog=" << shortcut_cancel_dialog << " cancelled=" << shortcut_cancelled
         << " error_picker=" << shortcut_error_picker << " conflict=" << shortcut_error
         << " error_safe=" << shortcut_error_safe << " normal_picker=" << shortcut_normal_picker
@@ -2479,12 +2494,14 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
   screen.clear(); send("\177main.cpp\r");
   const bool opened = visible("1 file(s)", 5s);
 
-  // Проверяем диалог через меню: Alt+W занят Window, Ctrl+L перехватывает Final Cut.
-  screen.clear(); (void)debugCommand('w');
+  // Ctrl+L должен только перерисовывать экран, новая клавиша открывает watch.
+  screen.clear(); send("\014"); settle();
+  const bool redraw_only = screen.find("Add watch") == std::string::npos;
+  screen.clear(); send("\033U");
   const bool watch_cancel_prompt = visible("Add watch", 5s) && screen.find("Expression:") != std::string::npos;
   closeTextDialog();
   const auto before_watch = readSession();
-  screen.clear(); (void)debugCommand('w'); (void)visible("Expression:", 5s);
+  screen.clear(); send("\033U"); (void)visible("Expression:", 5s);
   screen.clear(); send("value\r");
   const bool watch_added = waitFor(pump, [&] {
     return readSession().find("\"value\"") != std::string::npos;
@@ -2627,7 +2644,7 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
   (void)disassembly_prompt;
   (void)memory_invalid_count;
   const bool success = started && opened
-    && watch_cancel_prompt && watch_cancelled && watch_added && watch_duplicate
+    && redraw_only && watch_cancel_prompt && watch_cancelled && watch_added && watch_duplicate
     && breakpoint_set && panel_focused
     && properties_cancel_dialog && properties_cancelled
     && properties_error && properties_error_safe && properties_saved

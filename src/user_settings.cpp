@@ -3,10 +3,12 @@
 #include "tuiide/document.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace tuiide {
@@ -21,6 +23,23 @@ const std::vector<std::string> color_names{"Black", "Blue", "Green", "Cyan", "Re
   "Brown", "LightGray", "DarkGray", "LightBlue", "LightGreen", "LightCyan", "LightRed",
   "LightMagenta", "Yellow", "White"};
 }  // namespace
+
+auto reservedShortcutReason(std::string shortcut) -> std::string {
+  shortcut.erase(std::remove_if(shortcut.begin(), shortcut.end(), [](unsigned char character) {
+    return std::isspace(character) != 0;
+  }), shortcut.end());
+  std::transform(shortcut.begin(), shortcut.end(), shortcut.begin(), [](unsigned char character) {
+    return static_cast<char>(std::toupper(character));
+  });
+  if (shortcut == "CTRL+L") return "Ctrl+L is reserved by Final Cut for screen redraw.";
+  if (shortcut == "F10") return "F10 is reserved for the menu bar.";
+  if (shortcut == "ALT+K") return "Alt+K is reserved for the command palette.";
+  static const std::vector<std::string> menus{
+    "ALT+F", "ALT+E", "ALT+S", "ALT+R", "ALT+P", "ALT+D", "ALT+T", "ALT+W", "ALT+H"};
+  if (std::find(menus.begin(), menus.end(), shortcut) != menus.end())
+    return shortcut + " is reserved for a top-level menu.";
+  return {};
+}
 
 auto normalizeRecentFiles(const std::vector<std::filesystem::path>& files, std::size_t limit)
     -> std::vector<std::filesystem::path> {
@@ -63,6 +82,12 @@ auto validateUserSettings(const UserSettings& settings, std::string& error) -> b
     error = "Unsupported user settings version: " + std::to_string(settings.version);
     return false;
   }
+  for (const auto& [command, shortcut] : settings.shortcuts) {
+    if (const auto reason = reservedShortcutReason(shortcut); !reason.empty()) {
+      error = command + ": " + reason;
+      return false;
+    }
+  }
   for (const auto& [name, base] : settings.custom_themes) {
     if (name.empty() || std::find(themes.begin(), themes.end(), name) != themes.end()
         || std::find(themes.begin(), themes.end(), base) == themes.end()) {
@@ -89,9 +114,10 @@ auto validateUserSettings(const UserSettings& settings, std::string& error) -> b
 }
 
 auto loadUserSettings(const std::filesystem::path& path, UserSettings& settings,
-    std::string& error) -> bool {
+    std::string& error, std::vector<std::string>* warnings) -> bool {
   settings = {};
   error.clear();
+  if (warnings) warnings->clear();
   if (path.empty() || !std::filesystem::exists(path)) return true;
   std::ifstream input(path, std::ios::binary);
   if (!input) {
@@ -115,7 +141,17 @@ auto loadUserSettings(const std::filesystem::path& path, UserSettings& settings,
     error = "Cannot parse user settings: " + std::string(exception.what());
     return false;
   }
-  return validateUserSettings(settings, error);
+  // Старые ошибочные назначения не должны лишать пользователя темы и истории.
+  std::vector<std::string> ignored;
+  for (auto iterator = settings.shortcuts.begin(); iterator != settings.shortcuts.end();) {
+    const auto reason = reservedShortcutReason(iterator->second);
+    if (reason.empty()) { ++iterator; continue; }
+    ignored.push_back("Ignored shortcut " + iterator->first + ": " + reason);
+    iterator = settings.shortcuts.erase(iterator);
+  }
+  if (!validateUserSettings(settings, error)) return false;
+  if (warnings) *warnings = std::move(ignored);
+  return true;
 }
 
 auto saveUserSettings(const std::filesystem::path& path, const UserSettings& settings,

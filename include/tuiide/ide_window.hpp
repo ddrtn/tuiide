@@ -459,7 +459,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem step{finalcut::FKey::F7, "Step &into", &menu};
     finalcut::FMenuItem finish{finalcut::FKey::F56, "Step &out", &menu};
     finalcut::FMenuItem separator2{&menu};
-    finalcut::FMenuItem watch{finalcut::FKey::Ctrl_l, "Add &watch...", &menu};
+    finalcut::FMenuItem watch{finalcut::FKey::Meta_U, "Add &watch...", &menu};
     finalcut::FMenuItem evaluate{"&Evaluate expression...", &menu};
     finalcut::FMenuItem set_variable{"Set &variable value...", &menu};
     finalcut::FMenuItem disassembly{"Disassembl&y...", &menu};

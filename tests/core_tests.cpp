@@ -1890,6 +1890,36 @@ int main() {
     std::ifstream input(user_settings_path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
   }();
+  expect(tuiide::reservedShortcutReason("  ctrl + l \t").find("Final Cut") != std::string::npos
+      && !tuiide::reservedShortcutReason("alt+w").empty()
+      && !tuiide::reservedShortcutReason("F10").empty()
+      && !tuiide::reservedShortcutReason("Alt+K").empty()
+      && tuiide::reservedShortcutReason("Alt+Shift+U").empty()
+      && tuiide::reservedShortcutReason("").empty(),
+    "reserved shortcut policy normalizes case and whitespace without rejecting free or disabled bindings");
+  const auto legacy_shortcuts_path = settings_project / "legacy-shortcuts.json";
+  {
+    std::ofstream file(legacy_shortcuts_path);
+    file << "{\"version\":1,\"theme\":\"Light\",\"colors\":{\"keyword\":\"Yellow\"},"
+      "\"shortcuts\":{\"debug.watch\":\" ctrl + l \",\"file.open\":\"Ctrl+B\","
+      "\"file.new\":\"\",\"search.find\":\"Alt+W\",\"команда\":\"F10\"}}\n";
+  }
+  std::vector<std::string> shortcut_warnings;
+  tuiide::UserSettings legacy_shortcuts;
+  expect(tuiide::loadUserSettings(legacy_shortcuts_path, legacy_shortcuts, session_error, &shortcut_warnings)
+      && session_error.empty() && shortcut_warnings.size() == 3
+      && legacy_shortcuts.shortcuts.size() == 2
+      && legacy_shortcuts.shortcuts.at("file.open") == "Ctrl+B"
+      && legacy_shortcuts.shortcuts.at("file.new").empty()
+      && legacy_shortcuts.theme == "Light" && legacy_shortcuts.colors.at("keyword") == "Yellow",
+    "legacy reserved bindings are ignored with diagnostics while valid shortcuts and appearance survive");
+  expect(tuiide::loadUserSettings(user_settings_path, loaded_user_settings, session_error, &shortcut_warnings)
+      && shortcut_warnings.empty(), "loading clean settings clears stale shortcut warnings");
+  auto reserved_settings = user_settings;
+  reserved_settings.shortcuts["debug.watch"] = "Ctrl+L";
+  expect(!tuiide::saveUserSettings(user_settings_path, reserved_settings, session_error)
+      && session_error.find("Final Cut") != std::string::npos,
+    "reserved shortcut updates are rejected before the installed settings file is overwritten");
   auto invalid_user_settings = user_settings;
   invalid_user_settings.colors["keyword"] = "Invisible";
   expect(!tuiide::saveUserSettings(user_settings_path, invalid_user_settings, session_error),

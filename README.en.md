@@ -104,6 +104,10 @@ select commands inside an open menu. Configure global shortcuts through
 - `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, and `Ctrl+W`: new, open, save, and close file.
 - `Ctrl+F`: find/replace; `Ctrl+Space`: completion; `Alt+K`: command palette.
 - `Alt+L`: manage Run/Debug configurations; `Alt+Shift+L`: quick selection.
+- `Alt+Shift+U`: add a watch; `Alt+U`: reopen a closed file.
+- `Ctrl+L` is reserved by Final Cut for screen redraw and cannot be assigned to
+  IDE commands. Legacy reserved bindings are ignored with a warning, while
+  other user preferences are preserved.
 - `Alt+PageUp/PageDown`: sidebar tabs;
   `Alt+Shift+PageUp/PageDown`: lower-panel tabs.
 
