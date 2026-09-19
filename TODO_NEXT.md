@@ -43,7 +43,8 @@
 - [x] Расширить clangd: inlay hints, document highlights, folding ranges,
   completion resolve, selection ranges, code lens и include hierarchy.
 - [ ] Расширить отладку:
-  - [ ] Attach to Process с безопасным отсоединением от живого процесса.
+  - [x] Attach to Process: выбор Linux-процесса из `/proc`, отдельный режим
+    GDB/MI и подтверждаемое отсоединение, оставляющее внешний процесс живым.
   - [ ] Открытие core dump с выбором executable и режимом только чтения.
   - [x] Сигналы inferior: просмотр политик, stop/print/pass и отправка сигнала
     с продолжением (включая подавление текущего сигнала через `signal 0`).

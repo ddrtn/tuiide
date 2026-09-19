@@ -1379,6 +1379,33 @@ int main() {
   std::filesystem::remove(session_path, cleanup_error);
 
   tuiide::GdbClient debugger;
+  expect(tuiide::gdbAttachCommand(42) == "-target-attach 42"
+      && tuiide::gdbAttachCommand(0).empty() && tuiide::gdbAttachCommand(-7).empty(),
+    "GDB attach command accepts only a positive PID");
+  const auto fake_proc = std::filesystem::temp_directory_path()
+    / ("tuiide-proc-" + std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(fake_proc / "17");
+  std::filesystem::create_directories(fake_proc / "3");
+  std::filesystem::create_directories(fake_proc / "not-a-pid");
+  {
+    std::ofstream cmdline(fake_proc / "17/cmdline", std::ios::binary);
+    std::string value{"demo"}; value.push_back('\0');
+    value += "--name"; value.push_back('\n');
+    value += "тест"; value.push_back('\0');
+    cmdline.write(value.data(), static_cast<std::streamsize>(value.size()));
+    std::ofstream comm(fake_proc / "3/comm"); comm << "worker\n";
+    std::error_code link_error;
+    std::filesystem::create_symlink("/usr/bin/demo", fake_proc / "17/exe", link_error);
+  }
+  const auto process_list = tuiide::debugProcesses(fake_proc);
+  expect(process_list.size() == 2 && process_list[0].pid == 3
+      && process_list[0].command == "worker" && process_list[1].pid == 17
+      && process_list[1].command == "demo --name тест"
+      && process_list[1].executable == "/usr/bin/demo",
+    "procfs process discovery sorts PIDs and sanitizes control-separated UTF-8 arguments");
+  std::error_code proc_cleanup_error;
+  std::filesystem::remove_all(fake_proc, proc_cleanup_error);
   expect(tuiide::gdbSignalCommand("SIGUSR1") == "-interpreter-exec console \"signal SIGUSR1\""
       && tuiide::gdbSignalCommand("0") == "-interpreter-exec console \"signal 0\"",
     "GDB signal delivery supports named signals and suppression of a pending signal");

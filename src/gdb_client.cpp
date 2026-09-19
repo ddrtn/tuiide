@@ -3,9 +3,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <fstream>
 #include <iomanip>
 #include <iterator>
 #include <sstream>
+#include <thread>
 
 namespace tuiide {
 namespace {
@@ -99,6 +102,48 @@ auto gdbSignalPolicyCommand(std::string_view signal, bool stop, bool print, bool
     + (pass ? " pass" : " nopass"));
 }
 
+auto gdbAttachCommand(int pid) -> std::string {
+  return pid > 0 ? "-target-attach " + std::to_string(pid) : std::string{};
+}
+
+auto debugProcesses(const std::filesystem::path& proc_root) -> std::vector<DebugProcess> {
+  std::vector<DebugProcess> result;
+  std::error_code error;
+  for (std::filesystem::directory_iterator entries(proc_root, error), end;
+       !error && entries != end; entries.increment(error)) {
+    const auto name = entries->path().filename().string();
+    if (name.empty() || !std::all_of(name.begin(), name.end(), [](unsigned char character) {
+          return std::isdigit(character) != 0;
+        })) continue;
+    int pid{};
+    try { pid = std::stoi(name); } catch (...) { continue; }
+    if (pid <= 0) continue;
+
+    std::string command;
+    {
+      std::ifstream input(entries->path() / "cmdline", std::ios::binary);
+      command.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+      for (auto& character : command) {
+        const auto byte = static_cast<unsigned char>(character);
+        if (byte < 0x20 || byte == 0x7f) character = ' ';
+      }
+      while (!command.empty() && command.back() == ' ') command.pop_back();
+    }
+    if (command.empty()) {
+      std::ifstream input(entries->path() / "comm");
+      std::getline(input, command);
+    }
+    if (command.empty()) continue;
+    auto executable = std::filesystem::read_symlink(entries->path() / "exe", error);
+    if (error) { error.clear(); executable.clear(); }
+    result.push_back({pid, std::move(command), std::move(executable)});
+  }
+  std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+    return left.pid < right.pid;
+  });
+  return result;
+}
+
 auto GdbClient::sendSignal(std::string_view signal) -> bool {
   const auto request = gdbSignalCommand(signal);
   if (!running() || !active() || !stopped_ || request.empty() || pending_signal_) return false;
@@ -118,6 +163,8 @@ auto GdbClient::inspectSignals() -> bool {
   return true;
 }
 
+GdbClient::~GdbClient() { (void)stop(); }
+
 auto GdbClient::start(const std::filesystem::path& executable,
     const std::filesystem::path& working_directory,
     const std::map<std::string, std::string>& environment,
@@ -128,7 +175,8 @@ auto GdbClient::start(const std::filesystem::path& executable,
   arguments.insert(arguments.end(), program_arguments.begin(), program_arguments.end());
   if (!process_.start(arguments, true, working_directory, environment)) return false;
   inferior_active_ = false; stopped_ = false; inferior_exited_ = false; run_requested_ = false;
-  pending_signal_ = 0;
+  pending_signal_ = 0; pending_attach_ = 0; pending_detach_ = 0;
+  mode_ = DebugSessionMode::Launch;
   selected_frame_ = 0; ++variable_generation_; pending_variables_.clear(); pending_children_.clear();
   pending_expressions_.clear(); results_.clear();
   stdin_file_ = stdin_file;
@@ -142,10 +190,42 @@ auto GdbClient::start(const std::filesystem::path& executable,
   for (const auto& [key, breakpoint] : desired_breakpoints_) { (void)breakpoint; insertBreakpoint(key); }
   return true;
 }
-void GdbClient::stop() {
+auto GdbClient::attach(int pid, const std::filesystem::path& working_directory) -> bool {
+  const auto request = gdbAttachCommand(pid);
+  if (request.empty() || process_.running()
+      || !process_.start({"gdb", "--quiet", "--interpreter=mi3"}, true, working_directory)) return false;
+  inferior_active_ = false; stopped_ = false; inferior_exited_ = false; run_requested_ = false;
+  pending_signal_ = 0; pending_attach_ = 0; pending_detach_ = 0;
+  mode_ = DebugSessionMode::Attach;
+  selected_frame_ = 0; ++variable_generation_; pending_variables_.clear(); pending_children_.clear();
+  pending_expressions_.clear(); results_.clear(); stdin_file_.clear();
+  command("-gdb-set pagination off");
+  command("-gdb-set print pretty on");
+  command("-enable-pretty-printing");
+  breakpoint_numbers_.clear(); pending_breakpoints_.clear(); pending_breakpoint_commands_.clear();
+  register_names_.clear(); registers_.clear();
+  for (const auto& [key, breakpoint] : desired_breakpoints_) { (void)breakpoint; insertBreakpoint(key); }
+  pending_attach_ = command(request);
+  return true;
+}
+auto GdbClient::stop() -> bool {
+  const bool detach_required = process_.running() && mode_ == DebugSessionMode::Attach
+    && (inferior_active_ || pending_attach_ != 0);
+  detach_confirmed_ = !detach_required;
+  if (detach_required) {
+    pending_detach_ = command("-target-detach");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+    while (process_.running() && pending_detach_ != 0
+        && std::chrono::steady_clock::now() < deadline) {
+      poll();
+      if (pending_detach_ != 0) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (pending_detach_ != 0)
+      output_.push_back("GDB warning: target detach was not acknowledged before shutdown");
+  }
   if (process_.running()) command("-gdb-exit");
   process_.stop(); inferior_active_ = false; stopped_ = false; inferior_exited_ = false; run_requested_ = false;
-  pending_signal_ = 0;
+  pending_signal_ = 0; pending_attach_ = 0; pending_detach_ = 0; mode_ = DebugSessionMode::None;
   breakpoint_numbers_.clear(); pending_breakpoints_.clear(); pending_breakpoint_commands_.clear(); pending_watches_.clear();
   pending_variables_.clear(); pending_children_.clear(); ++variable_generation_; selected_frame_ = 0;
   pending_expressions_.clear(); results_.clear();
@@ -155,12 +235,14 @@ void GdbClient::stop() {
   }
   stdin_file_.clear();
   markWatchesUnavailable("debugger not stopped");
+  return detach_confirmed_;
 }
 void GdbClient::clearSessionState() {
   desired_breakpoints_.clear(); watches_.clear(); registers_enabled_ = false;
   output_.clear(); partial_.clear(); results_.clear(); pending_expressions_.clear();
 }
 void GdbClient::run() {
+  if (!running() || mode_ != DebugSessionMode::Launch) return;
   inferior_active_ = true; stopped_ = false; inferior_exited_ = false; selected_frame_ = 0;
   frames_.clear(); variables_.clear(); ++variable_generation_; pending_variables_.clear(); pending_children_.clear();
   threads_.clear(); registers_.clear(); pending_watches_.clear(); markWatchesUnavailable("program running");
@@ -311,6 +393,7 @@ auto GdbClient::running() const -> bool { return process_.running(); }
 auto GdbClient::active() const -> bool { return inferior_active_; }
 auto GdbClient::stopped() const -> bool { return stopped_; }
 auto GdbClient::exited() const -> bool { return inferior_exited_; }
+auto GdbClient::mode() const -> DebugSessionMode { return mode_; }
 auto GdbClient::frames() const -> const std::vector<DebugFrame>& { return frames_; }
 auto GdbClient::variables() const -> const std::vector<DebugVariable>& { return variables_; }
 auto GdbClient::threads() const -> const std::vector<DebugThread>& { return threads_; }
@@ -355,6 +438,22 @@ void GdbClient::poll() {
     }
     if (mi.token) {
       const auto token = *mi.token;
+      if (token == pending_attach_ && mi.prefix == '^') {
+        pending_attach_ = 0;
+        if (mi.klass == "done") {
+          inferior_active_ = true; stopped_ = true; inferior_exited_ = false;
+          refreshState();
+        } else {
+          inferior_active_ = false; stopped_ = false; inferior_exited_ = true;
+        }
+      }
+      if (token == pending_detach_ && mi.prefix == '^') {
+        pending_detach_ = 0;
+        if (mi.klass == "done") {
+          detach_confirmed_ = true;
+          inferior_active_ = false; stopped_ = false; inferior_exited_ = false;
+        }
+      }
       if (token == pending_signal_ && mi.prefix == '^') {
         pending_signal_ = 0;
         if (mi.klass == "error") {

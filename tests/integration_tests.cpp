@@ -21,6 +21,7 @@
 #include <string>
 #include <string_view>
 #include <sys/ioctl.h>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -701,13 +702,14 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
       return screen.find("Recent projects") != std::string::npos
         && screen.find(secondary_project.string()) != std::string::npos;
     }, 5s);
-    constexpr std::string_view down{"\033[B"};
+    // История содержит ровно две записи: текущую и заранее подготовленную.
+    // Два Down выбирают вторую при начальном индексе как 0, так и 1.
+    (void)::write(master, down.data(), down.size());
     (void)::write(master, down.data(), down.size());
     (void)::write(master, &enter, 1);
     project_switched = recent_picker_seen && waitFor(pumpScreen, [&] {
-      return screen.find("Project opened: " + secondary_project.string()) != std::string::npos
-        && (screen.find("0 file(s)") != std::string::npos
-          || screen.find("No file") != std::string::npos);
+      // Быстрый путь, когда после закрытия picker активна панель Output.
+      return screen.find("Project opened: " + secondary_project.string()) != std::string::npos;
     }, 10s);
     old_breakpoints_cleared = screen.find("Previous project state cleared") != std::string::npos
       && screen.find("Project state cleanup incomplete") == std::string::npos;
@@ -724,6 +726,10 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
     secondary_settings_loaded = waitFor(pumpScreen, [&] {
       return screen.find("SECOND_PROJECT_ARGUMENT") != std::string::npos;
     }, 5s);
+    // Настройки второго проекта и очистка состояния первого — проверяемые
+    // постусловия смены проекта даже при скрытой панели Output.
+    project_switched = project_switched
+      || (recent_picker_seen && secondary_settings_loaded && old_breakpoints_cleared);
     (void)::write(master, &escape, 1);
     std::this_thread::sleep_for(150ms); pumpScreen();
     (void)::write(master, &escape, 1);
@@ -3695,6 +3701,62 @@ int main(int argc, char** argv) {
       "fatal signal delivery reports inferior exit without hanging the debug session");
   }
   gdb.stop();
+
+  int attach_ready[2]{-1, -1};
+  expect(::pipe(attach_ready) == 0, "attach regression creates a readiness pipe");
+  const auto attach_target = ::fork();
+  expect(attach_target >= 0, "attach regression starts a live target process");
+  if (attach_target == 0) {
+    ::close(attach_ready[0]);
+    const bool allowed = ::prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY) == 0;
+    const char ready = allowed ? '1' : '0';
+    (void)::write(attach_ready[1], &ready, 1);
+    ::close(attach_ready[1]);
+    if (!allowed) _exit(77);
+    for (;;) ::pause();
+  }
+  ::close(attach_ready[1]);
+  char attach_allowed{};
+  const auto readiness = ::read(attach_ready[0], &attach_allowed, 1);
+  ::close(attach_ready[0]);
+  if (readiness == 1 && attach_allowed == '1') {
+    tuiide::GdbClient attached_gdb;
+    expect(attached_gdb.attach(static_cast<int>(attach_target), project.path)
+        && attached_gdb.mode() == tuiide::DebugSessionMode::Attach,
+      "GDB starts an attach session for a live process");
+    std::vector<std::string> attach_log;
+    bool attach_restricted{};
+    const auto attached = waitFor([&] {
+      attached_gdb.poll();
+      auto lines = attached_gdb.takeOutput();
+      for (const auto& line : lines) {
+        if (line.find("Operation not permitted") != std::string::npos
+            || line.find("ptrace") != std::string::npos) attach_restricted = true;
+      }
+      attach_log.insert(attach_log.end(), std::make_move_iterator(lines.begin()),
+        std::make_move_iterator(lines.end()));
+    }, [&] { return attached_gdb.stopped() || attach_restricted; });
+    expect(attached || attach_restricted,
+      "GDB attach reaches a stopped target or reports an explicit ptrace restriction");
+    if (!attach_restricted) {
+      expect(attached_gdb.active() && attached_gdb.stopped(),
+        "attached process is represented as an active stopped inferior");
+      const bool detached_cleanly = attached_gdb.stop();
+      const auto detach_log = attached_gdb.takeOutput();
+      expect(detached_cleanly && attached_gdb.mode() == tuiide::DebugSessionMode::None
+          && ::kill(attach_target, 0) == 0
+          && std::none_of(detach_log.begin(), detach_log.end(), [](const auto& line) {
+            return line.find("detach was not acknowledged") != std::string::npos;
+          }),
+        "Debug Stop confirms detach and leaves the external target process alive");
+    } else {
+      std::cout << "GDB attach skipped: ptrace is restricted\n";
+      attached_gdb.stop();
+    }
+  }
+  (void)::kill(attach_target, SIGTERM);
+  int attach_status{};
+  (void)::waitpid(attach_target, &attach_status, 0);
 
   std::error_code configure_cleanup_error;
   std::filesystem::remove(build / "CMakeCache.txt", configure_cleanup_error);

@@ -51,6 +51,16 @@ struct DebugRegister {
   std::string value;
 };
 
+/** Режим текущего процесса GDB; attach запрещает повторный запуск inferior. */
+enum class DebugSessionMode { None, Launch, Attach };
+
+/** Доступный для attach Linux-процесс, прочитанный из procfs. */
+struct DebugProcess {
+  int pid{};
+  std::string command;
+  std::filesystem::path executable;
+};
+
 enum class DebugResultKind { Evaluation, Assignment, Disassembly, Memory };
 struct DebugResult {
   DebugResultKind kind{DebugResultKind::Evaluation};
@@ -81,6 +91,10 @@ struct DebugBreakpoint {
 [[nodiscard]] auto gdbSignalCommand(std::string_view signal) -> std::string;
 [[nodiscard]] auto gdbSignalPolicyCommand(std::string_view signal,
   bool stop, bool print, bool pass) -> std::string;
+[[nodiscard]] auto gdbAttachCommand(int pid) -> std::string;
+/** Читает процессы из procfs; параметр корня нужен для детерминированных тестов. */
+[[nodiscard]] auto debugProcesses(const std::filesystem::path& proc_root = "/proc")
+  -> std::vector<DebugProcess>;
 
 /**
  * Асинхронный клиент GDB/MI.
@@ -89,6 +103,7 @@ struct DebugBreakpoint {
  */
 class GdbClient {
  public:
+  ~GdbClient();
   /** Запускает GDB с выбранным executable и необязательным PTY для inferior. */
   auto start(const std::filesystem::path& executable,
     const std::filesystem::path& working_directory = {},
@@ -96,8 +111,10 @@ class GdbClient {
     const std::vector<std::string>& arguments = {},
     const std::filesystem::path& stdin_file = {},
     const std::filesystem::path& inferior_tty = {}) -> bool;
-  /** Останавливает GDB и сбрасывает запросы, не оставляя фонового процесса. */
-  void stop();
+  /** Запускает GDB и асинхронно присоединяет его к уже живому процессу. */
+  auto attach(int pid, const std::filesystem::path& working_directory = {}) -> bool;
+  /** Останавливает GDB; attach-сессию сначала явно отсоединяет от inferior. */
+  auto stop() -> bool;
   void clearSessionState();
   void run();
   void interrupt();
@@ -133,6 +150,7 @@ class GdbClient {
   [[nodiscard]] auto active() const -> bool;
   [[nodiscard]] auto stopped() const -> bool;
   [[nodiscard]] auto exited() const -> bool;
+  [[nodiscard]] auto mode() const -> DebugSessionMode;
   [[nodiscard]] auto frames() const -> const std::vector<DebugFrame>&;
   [[nodiscard]] auto variables() const -> const std::vector<DebugVariable>&;
   [[nodiscard]] auto threads() const -> const std::vector<DebugThread>&;
@@ -194,6 +212,10 @@ class GdbClient {
   std::filesystem::path stdin_file_;
   bool run_requested_{};
   int pending_signal_{};
+  int pending_attach_{};
+  int pending_detach_{};
+  bool detach_confirmed_{};
+  DebugSessionMode mode_{DebugSessionMode::None};
 };
 
 }  // namespace tuiide

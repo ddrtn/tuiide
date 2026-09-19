@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <thread>
 #include <unordered_set>
+#include <unistd.h>
 
 namespace tuiide {
 namespace {
@@ -550,6 +551,8 @@ void IdeWindow::setupMenus() {
   debug_menu_.stop.addCallback("clicked", [this] { deferred_command_ = [this] { debugStop(); }; });
   debug_menu_.restart.setStatusBarMessage("Restart the selected executable under GDB");
   debug_menu_.restart.addCallback("clicked", [this] { deferred_command_ = [this] { debugRestart(); }; });
+  debug_menu_.attach.setStatusBarMessage("Attach GDB to a running Linux process");
+  debug_menu_.attach.addCallback("clicked", [this] { deferred_command_ = [this] { attachToProcess(); }; });
   bind(debug_menu_.breakpoint, finalcut::FKey::F9, "Toggle breakpoint on the current line");
   debug_menu_.breakpoint_properties.setStatusBarMessage("Edit condition, ignored hits, or logpoint message");
   debug_menu_.breakpoint_properties.addCallback("clicked", [this] { deferred_command_ = [this] { editSelectedBreakpoint(); }; });
@@ -3646,10 +3649,19 @@ void IdeWindow::debugRun() {
       "Debug unavailable: tests or analysis are running\n");
     return;
   }
-  if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: no project is open\n"); return; }
   if (!external_tools_.gdb) { publishEvent(EventSource::Debug, EventSeverity::Error,
     "GDB unavailable: install gdb or add it to PATH; debugging cannot start.\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: a CMake operation is in progress\n"); return; }
+  if (gdb_.running() && gdb_.mode() == DebugSessionMode::Attach) {
+    if (!gdb_.active())
+      publishEvent(EventSource::Debug, EventSeverity::Warning,
+        "Debug continue unavailable: attached process has exited or attach failed\n");
+    else if (gdb_.stopped()) gdb_.continueExecution();
+    else publishEvent(EventSource::Debug, EventSeverity::Warning,
+      "Debug continue unavailable: attached process is already running\n");
+    return;
+  }
+  if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: no project is open\n"); return; }
   if (!gdb_.running()) {
     if (!saveAllDocuments()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug cancelled because not all documents were saved\n"); return; }
     if (project_settings_.launch.pre_launch_build) {
@@ -3670,6 +3682,53 @@ void IdeWindow::debugRun() {
     gdb_.run();
   } else if (gdb_.stopped()) gdb_.continueExecution();
   else publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug continue unavailable: debuggee is already running\n");
+}
+
+void IdeWindow::attachToProcess() {
+  if (!external_tools_.gdb) {
+    publishEvent(EventSource::Debug, EventSeverity::Error,
+      "Attach unavailable: install gdb or add it to PATH\n");
+    return;
+  }
+  if (gdb_.running() || build_session_.running() || run_session_.running()
+      || ctest_session_.running() || analysis_session_.running()) {
+    publishEvent(EventSource::Debug, EventSeverity::Warning,
+      "Attach unavailable: another build, run, test, analysis, or debug session is active\n");
+    return;
+  }
+  const auto own_pid = static_cast<int>(::getpid());
+  auto processes = debugProcesses();
+  processes.erase(std::remove_if(processes.begin(), processes.end(), [own_pid](const auto& process) {
+    return process.pid == own_pid;
+  }), processes.end());
+  std::vector<std::string> labels;
+  labels.reserve(processes.size());
+  for (const auto& process : processes) {
+    auto command = process.command;
+    if (command.size() > 88) command = command.substr(0, 85) + "...";
+    labels.push_back(std::to_string(process.pid) + "  " + command);
+  }
+  if (labels.empty()) {
+    publishEvent(EventSource::Debug, EventSeverity::Warning,
+      "Attach unavailable: no readable processes found in /proc\n");
+    return;
+  }
+  const auto selection = choose("Attach to Process", labels);
+  if (selection == 0 || selection > processes.size()) return;
+  const auto& process = processes[selection - 1];
+  const auto working_directory = root_.empty() ? std::filesystem::current_path() : root_;
+  if (!gdb_.attach(process.pid, working_directory)) {
+    publishEvent(EventSource::Debug, EventSeverity::Error,
+      "Failed to start GDB for process " + std::to_string(process.pid) + "\n");
+    return;
+  }
+  run_session_.stop(); console_.setControlEnabled(false); console_.clear();
+  sidebar_tabs_.setCurrentIndex(3, true);
+  lower_tabs_.setCurrentIndex(0, true);
+  publishEvent(EventSource::Debug, EventSeverity::Information,
+    "GDB: attaching to process " + std::to_string(process.pid) + " (" + process.command + ")\n");
+  showNotification("Attaching to process " + std::to_string(process.pid), NotificationKind::Information);
+  updateStatus();
 }
 
 void IdeWindow::startDebug() {
@@ -3699,13 +3758,17 @@ void IdeWindow::startDebug() {
 
 void IdeWindow::debugStop() {
   if (!gdb_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Stop unavailable: debugger is not started\n"); return; }
-  gdb_.stop();
+  const bool attached = gdb_.mode() == DebugSessionMode::Attach;
+  const bool detached = gdb_.stop();
   execution_file_.clear(); execution_line_ = 0; editor_.setExecutionLine(std::nullopt);
   run_session_.stop();
   console_.setControlEnabled(false);
   debug_ui_.invalidateDebug();
   refreshDebugPanel(); updateStatus();
-  publishEvent(EventSource::Debug, EventSeverity::Information, "Debug session stopped\n");
+  publishEvent(EventSource::Debug, detached ? EventSeverity::Information : EventSeverity::Warning,
+    attached ? (detached ? "Debug session detached; target process left running\n"
+                         : "GDB stopped without a confirmed target detach; verify the target process\n")
+             : "Debug session stopped\n");
   showNotification("Debug session stopped", NotificationKind::Warning);
 }
 
@@ -3713,6 +3776,11 @@ void IdeWindow::debugRestart() {
   if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart unavailable: no project is open\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart unavailable: a CMake operation is in progress\n"); return; }
   if (!gdb_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart unavailable: debugger is not started\n"); return; }
+  if (gdb_.mode() == DebugSessionMode::Attach) {
+    publishEvent(EventSource::Debug, EventSeverity::Warning,
+      "Debug Restart unavailable for an attached process; stop and attach again\n");
+    return;
+  }
   if (!external_tools_.gdb) { publishEvent(EventSource::Debug, EventSeverity::Error,
     "GDB unavailable: install gdb or add it to PATH; debugging cannot restart.\n"); return; }
   if (!saveAllDocuments()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart cancelled because not all documents were saved\n"); return; }
@@ -3914,6 +3982,8 @@ void IdeWindow::updateMenuState() {
   enabled(debug_menu_.pause, state.debug_pause);
   enabled(debug_menu_.stop, state.debug_stop);
   enabled(debug_menu_.restart, state.debug_restart);
+  enabled(debug_menu_.attach, !gdb_.running() && !build_session_.running()
+    && !run_session_.running() && !ctest_session_.running() && analysis_idle);
   enabled(debug_menu_.breakpoint, state.breakpoint);
   enabled(debug_menu_.breakpoint_properties, state.debug_panel);
   enabled(debug_menu_.breakpoint_enable, state.debug_panel);
