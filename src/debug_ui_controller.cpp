@@ -4,7 +4,7 @@
 
 namespace tuiide {
 
-auto DebugUiController::capture(const GdbClient& client) -> DebugSnapshot {
+auto DebugUiController::capture(const DebugClient& client) -> DebugSnapshot {
   return {
     .running = client.running(),
     .stopped = client.stopped(),

@@ -30,6 +30,8 @@ struct ProjectSettings {
   std::filesystem::path sysroot;
   std::filesystem::path c_compiler;
   std::filesystem::path cpp_compiler;
+  std::string debugger_backend{"gdb-mi"};
+  std::filesystem::path debugger_adapter;
   std::string c_standard;
   std::string cpp_standard;
   std::string cpp_header_extension{"hpp"};

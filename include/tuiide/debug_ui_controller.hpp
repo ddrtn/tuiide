@@ -1,6 +1,6 @@
 #pragma once
 
-#include "tuiide/gdb_client.hpp"
+#include "tuiide/debug_client.hpp"
 
 #include <filesystem>
 #include <optional>
@@ -9,7 +9,7 @@
 
 namespace tuiide {
 
-/** Снимок данных GdbClient, используемый для подавления лишних перерисовок. */
+/** Снимок данных DebugClient, используемый для подавления лишних перерисовок. */
 struct DebugSnapshot {
   bool running{};
   bool stopped{};
@@ -44,7 +44,7 @@ struct BreakpointPanelRow {
  */
 class DebugUiController {
  public:
-  [[nodiscard]] static auto capture(const GdbClient& client) -> DebugSnapshot;
+  [[nodiscard]] static auto capture(const DebugClient& client) -> DebugSnapshot;
   [[nodiscard]] auto updateDebug(DebugSnapshot snapshot) -> bool;
   [[nodiscard]] auto updateBreakpoints(std::vector<DebugBreakpoint> breakpoints,
     bool debugger_running, const std::filesystem::path& project_root) -> bool;

@@ -20,7 +20,7 @@
 #include "tuiide/debug_ui_controller.hpp"
 #include "tuiide/document_session.hpp"
 #include "tuiide/event_log.hpp"
-#include "tuiide/gdb_client.hpp"
+#include "tuiide/debug_client.hpp"
 #include "tuiide/lsp_client.hpp"
 #include "tuiide/lsp_ui_controller.hpp"
 #include "tuiide/process.hpp"
@@ -187,6 +187,7 @@ class IdeWindow final : public finalcut::FDialog {
   void closeProject();
   void projectSettings();
   void manageToolchainKits();
+  void configureDebugger();
   void requestLanguageInsights();
   auto closeAllDocuments() -> bool;
   auto loadProject(std::filesystem::path root, std::filesystem::path build_directory = {}) -> bool;
@@ -315,7 +316,7 @@ class IdeWindow final : public finalcut::FDialog {
   LspUiController lsp_ui_;
   CompilationDatabase compilation_database_;
   std::unordered_set<std::filesystem::path> compilation_database_warnings_;
-  GdbClient gdb_;
+  DebugClient gdb_;
   DebugUiController debug_ui_;
   std::filesystem::path execution_file_;
   std::size_t execution_line_{};  // one-based; zero means no stopped source line

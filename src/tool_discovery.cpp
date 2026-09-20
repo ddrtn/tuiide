@@ -33,6 +33,8 @@ auto discoverExternalTools() -> ExternalTools {
   tools.cmake = findExecutable("cmake", path);
   tools.clangd = findExecutable("clangd", path);
   tools.gdb = findExecutable("gdb", path);
+  tools.lldb_dap = findExecutable("lldb-dap", path);
+  if (!tools.lldb_dap) tools.lldb_dap = findExecutable("lldb-vscode", path);
   tools.clang_tidy = findExecutable("clang-tidy", path);
   tools.cppcheck = findExecutable("cppcheck", path);
   tools.include_what_you_use = findExecutable("iwyu_tool.py", path);
@@ -57,6 +59,8 @@ auto externalToolMessages(const ExternalTools& tools, bool include_available)
     "clangd unavailable: install clangd or add it to PATH; C/C++ completion and code navigation are disabled.");
   add("GDB", tools.gdb,
     "GDB unavailable: install gdb or add it to PATH; debugging is disabled.");
+  add("lldb-dap", tools.lldb_dap,
+    "lldb-dap unavailable: the optional LLDB debug backend is disabled.");
   add("clang-tidy", tools.clang_tidy,
     "clang-tidy unavailable: install it or add it to PATH; clang-tidy analysis is disabled.");
   add("cppcheck", tools.cppcheck,

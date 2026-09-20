@@ -149,6 +149,9 @@ auto validateProjectSettings(const std::filesystem::path& project_directory,
   if (settings.tab_width == 0 || settings.tab_width > 16) {
     error = "Tab width must be between 1 and 16."; return false;
   }
+  if (settings.debugger_backend != "gdb-mi" && settings.debugger_backend != "lldb-dap") {
+    error = "Debugger backend must be gdb-mi or lldb-dap."; return false;
+  }
   static const std::vector<std::string> themes{"Dark", "Light", "High contrast"};
   for (const auto& [name, base] : settings.custom_themes) {
     if (name.empty() || std::find(themes.begin(), themes.end(), name) != themes.end()
@@ -230,6 +233,8 @@ auto loadProjectSettings(const std::filesystem::path& project_directory,
     settings.sysroot = resolvePath(root, json.value("sysroot", std::string{}));
     settings.c_compiler = resolvePath(root, json.value("cCompiler", std::string{}));
     settings.cpp_compiler = resolvePath(root, json.value("cppCompiler", std::string{}));
+    settings.debugger_backend = json.value("debuggerBackend", std::string("gdb-mi"));
+    settings.debugger_adapter = resolvePath(root, json.value("debuggerAdapter", std::string{}));
     settings.c_standard = json.value("cStandard", std::string{});
     settings.cpp_standard = json.value("cppStandard", std::string{});
     settings.cpp_header_extension = json.value("cppHeaderExtension", std::string("hpp"));
@@ -289,6 +294,8 @@ auto saveProjectSettings(const std::filesystem::path& project_directory,
     {"sysroot", portablePath(root, settings.sysroot)},
     {"cCompiler", portablePath(root, settings.c_compiler)},
     {"cppCompiler", portablePath(root, settings.cpp_compiler)}, {"cStandard", settings.c_standard},
+    {"debuggerBackend", settings.debugger_backend},
+    {"debuggerAdapter", portablePath(root, settings.debugger_adapter)},
     {"cppStandard", settings.cpp_standard}, {"cppHeaderExtension", settings.cpp_header_extension},
     {"buildType", settings.build_type},
     {"buildJobs", settings.build_jobs}, {"tabWidth", settings.tab_width},

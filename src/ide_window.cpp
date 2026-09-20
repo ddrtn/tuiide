@@ -1536,7 +1536,8 @@ void IdeWindow::showDisassembly() {
 }
 
 void IdeWindow::manageSignals() {
-  if (!gdb_.running() || gdb_.mode() == DebugSessionMode::Core
+  if (gdb_.backend() != DebugBackend::GdbMi || !gdb_.running()
+      || gdb_.mode() == DebugSessionMode::Core
       || !gdb_.active() || !gdb_.stopped()) return;
   const auto action = choose("Signals", {"Inspect policies (Output)", "Configure handling", "Send signal and continue"});
   if (!action) return;
@@ -1781,6 +1782,7 @@ auto IdeWindow::loadProject(std::filesystem::path root, std::filesystem::path bu
   editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
   setText("TUI IDE — C/C++ — " + root_.filename().string());
   lsp_ui_.reset();
+  configureDebugger();
   loadDebugState();
   refreshCompilationDatabase(true);
   restartLanguageServer();
@@ -1822,6 +1824,7 @@ void IdeWindow::projectSettings() {
   if (debug_state_dirty_) saveDebugState();
   project_session_.applySettings(std::move(updated));
   cmake_session_.reset(project_session_.buildDirectory());
+  configureDebugger();
   editor_.setIndentation(project_settings_.tab_width, project_settings_.use_spaces);
   editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
   refreshCompilationDatabase(true);
@@ -1872,6 +1875,9 @@ void IdeWindow::manageToolchainKits() {
   updated.sysroot = kit.sysroot;
   updated.c_compiler = kit.c_compiler;
   updated.cpp_compiler = kit.cpp_compiler;
+  updated.debugger_backend = kit.debugger_kind == "LLDB" ? "lldb-dap" : "gdb-mi";
+  updated.debugger_adapter = kit.debugger_kind == "LLDB" && external_tools_.lldb_dap
+    ? *external_tools_.lldb_dap : std::filesystem::path{};
   std::string error;
   if (!saveProjectSettings(root_, updated, error)) {
     finalcut::FMessageBox::error(this, finalcut::FString(error));
@@ -1879,11 +1885,20 @@ void IdeWindow::manageToolchainKits() {
   }
   project_session_.applySettings(std::move(updated));
   cmake_session_.reset(project_session_.buildDirectory());
+  configureDebugger();
   refreshCompilationDatabase(true);
   restartLanguageServer();
   publishEvent(EventSource::Project, EventSeverity::Success,
     "Toolchain kit selected: " + project_settings_.kit + "\n");
   updateStatus();
+}
+
+void IdeWindow::configureDebugger() {
+  const auto backend = parseDebugBackend(project_settings_.debugger_backend);
+  auto adapter = project_settings_.debugger_adapter;
+  if (backend == DebugBackend::LldbDap && adapter.empty() && external_tools_.lldb_dap)
+    adapter = *external_tools_.lldb_dap;
+  gdb_.configure(backend, std::move(adapter));
 }
 
 void IdeWindow::requestLanguageInsights() {
@@ -3659,8 +3674,15 @@ void IdeWindow::debugRun() {
       "Debug unavailable: tests or analysis are running\n");
     return;
   }
-  if (!external_tools_.gdb) { publishEvent(EventSource::Debug, EventSeverity::Error,
-    "GDB unavailable: install gdb or add it to PATH; debugging cannot start.\n"); return; }
+  if (gdb_.backend() == DebugBackend::GdbMi && !external_tools_.gdb) {
+    publishEvent(EventSource::Debug, EventSeverity::Error,
+      "GDB unavailable: install gdb or add it to PATH; debugging cannot start.\n"); return;
+  }
+  if (gdb_.backend() == DebugBackend::LldbDap && project_settings_.debugger_adapter.empty()
+      && !external_tools_.lldb_dap) {
+    publishEvent(EventSource::Debug, EventSeverity::Error,
+      "LLDB/DAP unavailable: install lldb-dap or select its path in Project Settings.\n"); return;
+  }
   if (build_session_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: a CMake operation is in progress\n"); return; }
   if (gdb_.running() && gdb_.mode() == DebugSessionMode::Attach) {
     if (!gdb_.active())
@@ -3693,13 +3715,23 @@ void IdeWindow::debugRun() {
       (void)startPreLaunchBuild(BuildContinuation::Debug);
       return;
     }
-    publishEvent(EventSource::Debug, EventSeverity::Information, "GDB: starting program again\n");
-    gdb_.run();
+    if (gdb_.backend() == DebugBackend::LldbDap) {
+      gdb_.stop();
+      startDebug();
+    } else {
+      publishEvent(EventSource::Debug, EventSeverity::Information, "GDB: starting program again\n");
+      gdb_.run();
+    }
   } else if (gdb_.stopped()) gdb_.continueExecution();
   else publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug continue unavailable: debuggee is already running\n");
 }
 
 void IdeWindow::attachToProcess() {
+  if (gdb_.backend() != DebugBackend::GdbMi) {
+    publishEvent(EventSource::Debug, EventSeverity::Warning,
+      "Attach to Process currently requires the GDB/MI backend\n");
+    return;
+  }
   if (!external_tools_.gdb) {
     publishEvent(EventSource::Debug, EventSeverity::Error,
       "Attach unavailable: install gdb or add it to PATH\n");
@@ -3747,6 +3779,11 @@ void IdeWindow::attachToProcess() {
 }
 
 void IdeWindow::openCoreDump() {
+  if (gdb_.backend() != DebugBackend::GdbMi) {
+    publishEvent(EventSource::Debug, EventSeverity::Warning,
+      "Open core dump currently requires the GDB/MI backend\n");
+    return;
+  }
   if (!external_tools_.gdb) {
     publishEvent(EventSource::Debug, EventSeverity::Error,
       "Core dump unavailable: install gdb or add it to PATH\n");
@@ -3790,15 +3827,14 @@ void IdeWindow::openCoreDump() {
 }
 
 void IdeWindow::startDebug() {
-  if (!external_tools_.gdb) { publishEvent(EventSource::Debug, EventSeverity::Error,
-    "GDB unavailable: install gdb or add it to PATH; debugging cannot start.\n"); return; }
   LaunchCommand launch;
   std::string error;
   if (!launchCommand(launch, error)) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: " + error + "\n"); return; }
   auto environment = project_settings_.environment;
   for (const auto& [name, value] : launch.environment) environment[name] = value;
   if (launch.external_terminal)
-    publishEvent(EventSource::Debug, EventSeverity::Information, "Debug: external terminal is a Run-only setting; using the integrated GDB console\n");
+    publishEvent(EventSource::Debug, EventSeverity::Information,
+      "Debug: external terminal is a Run-only setting; using the integrated debug console\n");
   run_session_.stop(); console_.setControlEnabled(false); console_.clear();
   if (!run_session_.openDebugConsole(console_.columns(), console_.rows())) {
     publishEvent(EventSource::Debug, EventSeverity::Error, "Failed to create debuggee PTY\n"); return;
@@ -3806,10 +3842,12 @@ void IdeWindow::startDebug() {
   if (!gdb_.start(launch.executable, launch.working_directory, environment, launch.arguments,
       launch.stdin_file, run_session_.debugTerminal())) {
     run_session_.stop(); console_.setControlEnabled(false);
-    publishEvent(EventSource::Debug, EventSeverity::Error, "Failed to start GDB\n"); return;
+    publishEvent(EventSource::Debug, EventSeverity::Error,
+      "Failed to start " + gdb_.backendName() + "\n"); return;
   }
   run_session_.activateDebugConsole(); console_.setControlEnabled(true); lower_tabs_.setCurrentIndex(3, true); console_.focusInput();
-  publishEvent(EventSource::Debug, EventSeverity::Information, "GDB: " + launch.executable.string() + "\n");
+  publishEvent(EventSource::Debug, EventSeverity::Information,
+    gdb_.backendName() + ": " + launch.executable.string() + "\n");
   gdb_.run();
   showNotification("Debug session started", NotificationKind::Information);
 }
@@ -4044,9 +4082,11 @@ void IdeWindow::updateMenuState() {
   enabled(debug_menu_.pause, state.debug_pause);
   enabled(debug_menu_.stop, state.debug_stop);
   enabled(debug_menu_.restart, state.debug_restart && !core_dump);
-  enabled(debug_menu_.attach, !gdb_.running() && !build_session_.running()
+  enabled(debug_menu_.attach, gdb_.backend() == DebugBackend::GdbMi
+    && !gdb_.running() && !build_session_.running()
     && !run_session_.running() && !ctest_session_.running() && analysis_idle);
-  enabled(debug_menu_.core_dump, !gdb_.running() && !build_session_.running()
+  enabled(debug_menu_.core_dump, gdb_.backend() == DebugBackend::GdbMi
+    && !gdb_.running() && !build_session_.running()
     && !run_session_.running() && !ctest_session_.running() && analysis_idle);
   enabled(debug_menu_.breakpoint, state.breakpoint);
   enabled(debug_menu_.breakpoint_properties, state.debug_panel);
@@ -4062,7 +4102,8 @@ void IdeWindow::updateMenuState() {
   enabled(debug_menu_.disassembly, state.debug_step);
   enabled(debug_menu_.memory, state.debug_step);
   enabled(debug_menu_.registers, state.registers || (core_dump && gdb_.stopped()));
-  enabled(debug_menu_.signals, state.debug_step && !core_dump);
+  enabled(debug_menu_.signals, state.debug_step && !core_dump
+    && gdb_.backend() == DebugBackend::GdbMi);
   enabled(tools_menu_.completion, state.completion);
   enabled(tools_menu_.signature, state.signature_help);
   enabled(tools_menu_.hover, state.hover);
@@ -4116,7 +4157,8 @@ void IdeWindow::updateStatus() {
        << " | CDB: " << (!compilation_database_.available() ? "missing"
          : (!document_ || !isCppSource(document_->path()) ? "ready"
            : (compilation_database_.contains(document_->path()) ? "entry" : "fallback")))
-       << " | gdb: " << (gdb_.mode() == DebugSessionMode::Core && gdb_.running() && gdb_.stopped()
+       << " | debug(" << gdb_.backendName() << "): "
+       << (gdb_.mode() == DebugSessionMode::Core && gdb_.running() && gdb_.stopped()
          ? "core/read-only" : (gdb_.exited() ? "exited"
            : (gdb_.running() ? (gdb_.stopped() ? "stopped" : "running") : "off")))
        << " | cmake: ";

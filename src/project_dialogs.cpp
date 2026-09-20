@@ -219,6 +219,8 @@ struct ProjectSettingsDialog::Impl {
         toolchain_label("Toolchain file:", owner), toolchain(owner),
         c_compiler_label("C compiler:", owner), c_compiler(owner),
         cpp_compiler_label("C++ compiler:", owner), cpp_compiler(owner),
+        debugger_label("Debugger:", owner), debugger(owner),
+        adapter_label("DAP adapter:", owner), adapter(owner),
         c_standard_label("C standard:", owner), c_standard(owner),
         cpp_standard_label("C++ standard:", owner), cpp_standard(owner),
         build_type_label("Build type:", owner), build_type(owner), jobs_label("Jobs:", owner),
@@ -233,6 +235,9 @@ struct ProjectSettingsDialog::Impl {
     toolchain.setText(finalcut::FString(settings.toolchain.string()));
     c_compiler.setText(finalcut::FString(settings.c_compiler.string()));
     cpp_compiler.setText(finalcut::FString(settings.cpp_compiler.string()));
+    setupCombo(debugger, {"GDB/MI", "LLDB/DAP"},
+      settings.debugger_backend == "lldb-dap" ? "LLDB/DAP" : "GDB/MI");
+    adapter.setText(finalcut::FString(settings.debugger_adapter.string()));
     setupCombo(c_standard, {"Inherit", "90", "99", "11", "17", "23"}, settings.c_standard);
     setupCombo(cpp_standard, {"Inherit", "98", "11", "14", "17", "20", "23", "26"}, settings.cpp_standard);
     setupCombo(build_type, {"Inherit", "Debug", "Release", "RelWithDebInfo", "MinSizeRel"}, settings.build_type);
@@ -261,6 +266,8 @@ struct ProjectSettingsDialog::Impl {
     result.toolchain = pathValue(toolchain);
     result.c_compiler = pathValue(c_compiler);
     result.cpp_compiler = pathValue(cpp_compiler);
+    result.debugger_backend = debugger.getText().toString() == "LLDB/DAP" ? "lldb-dap" : "gdb-mi";
+    result.debugger_adapter = pathValue(adapter);
     result.c_standard = comboValue(c_standard);
     result.cpp_standard = comboValue(cpp_standard);
     result.build_type = comboValue(build_type);
@@ -301,14 +308,16 @@ struct ProjectSettingsDialog::Impl {
       toolchain_label.setGeometry({2, 4}, {18, 1}); toolchain.setGeometry({20, 4}, {35, 1});
       c_compiler_label.setGeometry({2, 5}, {18, 1}); c_compiler.setGeometry({20, 5}, {35, 1});
       cpp_compiler_label.setGeometry({2, 6}, {18, 1}); cpp_compiler.setGeometry({20, 6}, {35, 1});
-      c_standard_label.setGeometry({2, 7}, {11, 1}); c_standard.setGeometry({13, 7}, {8, 1});
-      cpp_standard_label.setGeometry({22, 7}, {13, 1}); cpp_standard.setGeometry({35, 7}, {8, 1});
-      build_type_label.setGeometry({2, 8}, {11, 1}); build_type.setGeometry({13, 8}, {15, 1});
-      environment_label.setGeometry({2, 9}, {18, 1}); environment.setGeometry({20, 9}, {35, 1});
-      clangd_label.setGeometry({2, 10}, {18, 1}); clangd.setGeometry({20, 10}, {35, 1});
-      tab_width_label.setGeometry({2, 11}, {12, 1}); tab_width.setGeometry({14, 11}, {6, 1});
-      use_spaces.setGeometry({22, 11}, {18, 1}); environment_help.setGeometry({2, 12}, {32, 1});
-      save.setGeometry({32, 13}, {10, 1}); cancel.setGeometry({44, 13}, {11, 1});
+      debugger_label.setGeometry({2, 7}, {18, 1}); debugger.setGeometry({20, 7}, {16, 1});
+      adapter_label.setGeometry({2, 8}, {18, 1}); adapter.setGeometry({20, 8}, {35, 1});
+      c_standard_label.setGeometry({2, 9}, {11, 1}); c_standard.setGeometry({13, 9}, {8, 1});
+      cpp_standard_label.setGeometry({22, 9}, {13, 1}); cpp_standard.setGeometry({35, 9}, {8, 1});
+      build_type_label.setGeometry({2, 10}, {11, 1}); build_type.setGeometry({13, 10}, {15, 1});
+      environment_label.setGeometry({2, 11}, {18, 1}); environment.setGeometry({20, 11}, {35, 1});
+      clangd_label.setGeometry({2, 12}, {18, 1}); clangd.setGeometry({20, 12}, {35, 1});
+      tab_width_label.setGeometry({2, 13}, {12, 1}); tab_width.setGeometry({14, 13}, {6, 1});
+      use_spaces.setGeometry({22, 13}, {18, 1}); environment_help.setGeometry({2, 14}, {32, 1});
+      save.setGeometry({32, 15}, {10, 1}); cancel.setGeometry({44, 15}, {11, 1});
       return;
     }
     source_label.setGeometry({2, 1}, {19, 1}); source.setGeometry({22, 1}, {53, 1});
@@ -318,14 +327,16 @@ struct ProjectSettingsDialog::Impl {
     toolchain_label.setGeometry({2, 7}, {19, 1}); toolchain.setGeometry({22, 7}, {53, 1});
     c_compiler_label.setGeometry({2, 9}, {19, 1}); c_compiler.setGeometry({22, 9}, {22, 1});
     cpp_compiler_label.setGeometry({45, 9}, {15, 1}); cpp_compiler.setGeometry({60, 9}, {15, 1});
-    c_standard_label.setGeometry({2, 11}, {12, 1}); c_standard.setGeometry({14, 11}, {12, 1});
-    cpp_standard_label.setGeometry({28, 11}, {14, 1}); cpp_standard.setGeometry({42, 11}, {12, 1});
-    build_type_label.setGeometry({56, 11}, {11, 1}); build_type.setGeometry({67, 11}, {9, 1});
-    environment_label.setGeometry({2, 13}, {19, 1}); environment.setGeometry({22, 13}, {53, 1});
-    clangd_label.setGeometry({2, 15}, {19, 1}); clangd.setGeometry({22, 15}, {53, 1});
-    tab_width_label.setGeometry({2, 17}, {12, 1}); tab_width.setGeometry({14, 17}, {6, 1});
-    use_spaces.setGeometry({23, 17}, {18, 1}); environment_help.setGeometry({43, 17}, {32, 1});
-    save.setGeometry({52, 19}, {10, 1}); cancel.setGeometry({65, 19}, {11, 1});
+    debugger_label.setGeometry({2, 11}, {19, 1}); debugger.setGeometry({22, 11}, {18, 1});
+    adapter_label.setGeometry({42, 11}, {13, 1}); adapter.setGeometry({55, 11}, {20, 1});
+    c_standard_label.setGeometry({2, 13}, {12, 1}); c_standard.setGeometry({14, 13}, {12, 1});
+    cpp_standard_label.setGeometry({28, 13}, {14, 1}); cpp_standard.setGeometry({42, 13}, {12, 1});
+    build_type_label.setGeometry({56, 13}, {11, 1}); build_type.setGeometry({67, 13}, {9, 1});
+    environment_label.setGeometry({2, 15}, {19, 1}); environment.setGeometry({22, 15}, {53, 1});
+    clangd_label.setGeometry({2, 17}, {19, 1}); clangd.setGeometry({22, 17}, {53, 1});
+    tab_width_label.setGeometry({2, 19}, {12, 1}); tab_width.setGeometry({14, 19}, {6, 1});
+    use_spaces.setGeometry({23, 19}, {18, 1}); environment_help.setGeometry({43, 19}, {32, 1});
+    save.setGeometry({52, 21}, {10, 1}); cancel.setGeometry({65, 21}, {11, 1});
   }
 
   auto pathValue(const finalcut::FLineEdit& field) const -> std::filesystem::path {
@@ -352,6 +363,8 @@ struct ProjectSettingsDialog::Impl {
   finalcut::FLabel toolchain_label; finalcut::FLineEdit toolchain;
   finalcut::FLabel c_compiler_label; finalcut::FLineEdit c_compiler;
   finalcut::FLabel cpp_compiler_label; finalcut::FLineEdit cpp_compiler;
+  finalcut::FLabel debugger_label; finalcut::FComboBox debugger;
+  finalcut::FLabel adapter_label; finalcut::FLineEdit adapter;
   finalcut::FLabel c_standard_label; finalcut::FComboBox c_standard;
   finalcut::FLabel cpp_standard_label; finalcut::FComboBox cpp_standard;
   finalcut::FLabel build_type_label; finalcut::FComboBox build_type;
@@ -366,7 +379,7 @@ struct ProjectSettingsDialog::Impl {
 ProjectSettingsDialog::ProjectSettingsDialog(std::filesystem::path root,
     const ProjectSettings& settings, finalcut::FWidget* parent)
     : CenteredDialog("Project Settings", parent) {
-  setDialogSize({78, 24});
+  setDialogSize({78, 26});
   setModal();
   impl_ = std::make_unique<Impl>(this, std::move(root), settings);
   setResponsiveLayout([this] { impl_->layoutControls(); });

@@ -97,6 +97,7 @@ add_library(tuiide_core
   src/clang_format.cpp
   src/compilation_database.cpp
   src/debug_session.cpp
+  src/debug_client.cpp
   src/debug_ui_controller.cpp
   src/document.cpp
   src/document_session.cpp
@@ -127,6 +128,7 @@ add_library(tuiide_core
   src/lsp_ui_controller.cpp
   src/gdb_client.cpp
   src/gdb_mi.cpp
+  src/lldb_dap_client.cpp
   src/launch_configuration.cpp
 )
 target_include_directories(tuiide_core PUBLIC include)
