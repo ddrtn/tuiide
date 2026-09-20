@@ -84,4 +84,34 @@ auto parseSanitizerDiagnostic(std::string_view text,
     match[1].str()};
 }
 
+auto parseValgrindDiagnostic(std::string_view text,
+    const std::filesystem::path& project_root) -> std::optional<BuildDiagnostic> {
+  static const std::regex pattern(
+    R"(^==\d+==\s+(?:at|by)\s+[^:]+:\s+.*\(((?:/|\.\.?/).+):(\d+)\)\s*$)");
+  std::smatch match;
+  const std::string line{text};
+  if (!std::regex_match(line, match, pattern)) return std::nullopt;
+  std::size_t line_number{};
+  if (!parseNumber(match[2].str(), line_number)) return std::nullopt;
+  auto path = std::filesystem::path(match[1].str());
+  if (path.is_relative()) path = project_root / path;
+  return BuildDiagnostic{std::filesystem::absolute(path).lexically_normal(), line_number - 1, 0,
+    DiagnosticSeverity::Error, "Valgrind stack frame"};
+}
+
+auto parsePerfDiagnostic(std::string_view text,
+    const std::filesystem::path& project_root) -> std::optional<BuildDiagnostic> {
+  static const std::regex pattern(
+    R"(^.*\s((?:/|\.\.?/).+\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)):(\d+)(?::\d+)?\s*$)");
+  std::smatch match;
+  const std::string line{text};
+  if (!std::regex_match(line, match, pattern)) return std::nullopt;
+  std::size_t line_number{};
+  if (!parseNumber(match[2].str(), line_number)) return std::nullopt;
+  auto path = std::filesystem::path(match[1].str());
+  if (path.is_relative()) path = project_root / path;
+  return BuildDiagnostic{std::filesystem::absolute(path).lexically_normal(), line_number - 1, 0,
+    DiagnosticSeverity::Note, "perf sample"};
+}
+
 }  // namespace tuiide

@@ -58,7 +58,7 @@ source code and user interface use UTF-8.
 Only Linux on amd64 is supported. On Debian or Ubuntu, install the dependencies:
 
 ```sh
-sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb lldb clang-tidy cppcheck iwyu
+sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb lldb clang-tidy cppcheck iwyu gcovr valgrind linux-perf
 ```
 
 clangd, clang-format, GDB, and lldb-dap are required only for their corresponding
@@ -128,9 +128,13 @@ The sidebar contains **Open files**, **Project**, **Outline**, **Debug**,
 Tests, press `Space` to run the selected test and `Enter` to open its first
 failure location; discovery and grouped runs are under **Run → Tests**. The
 lower area contains **Output**, **Problems**, **Build**, an interactive **Terminal**, and
-**Analysis**. Start analyzers from **Tools → Run static checks**; recognized
-diagnostics are also listed in Problems. Select a detected compiler, generator,
-and debugger combination through **Tools → Toolchain kits**.
+**Analysis**. Start tools from **Tools → Run analysis / profile**; recognized
+diagnostics are also listed in Problems. Coverage uses an isolated
+`.tuiide-coverage` directory under the build tree and produces a gcovr report.
+Valgrind and perf run the active Run/Debug configuration. Press `Enter` in
+Problems to open uncovered lines, Valgrind stack frames, or perf samples.
+Select a detected compiler, generator, and debugger combination through
+**Tools → Toolchain kits**.
 
 ## Repository Layout
 

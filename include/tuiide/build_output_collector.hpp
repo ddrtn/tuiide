@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace tuiide {
@@ -28,7 +29,8 @@ class BuildOutputCollector {
   /** Обрабатывает хвост без завершающего перевода строки при окончании процесса. */
   [[nodiscard]] auto finish(const std::filesystem::path& project_root) -> BuildOutputUpdate;
   void reset();
-  void clearDiagnostics() { diagnostics_.clear(); }
+  void clearDiagnostics();
+  void addDiagnostics(std::vector<BuildDiagnostic> diagnostics);
 
   [[nodiscard]] auto diagnostics() const noexcept -> const std::vector<BuildDiagnostic>& {
     return diagnostics_;
@@ -41,6 +43,7 @@ class BuildOutputCollector {
 
   std::string partial_;
   std::vector<BuildDiagnostic> diagnostics_;
+  std::unordered_set<std::string> diagnostic_keys_;
 };
 
 }  // namespace tuiide

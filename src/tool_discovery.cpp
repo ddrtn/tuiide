@@ -40,6 +40,9 @@ auto discoverExternalTools() -> ExternalTools {
   tools.include_what_you_use = findExecutable("iwyu_tool.py", path);
   if (!tools.include_what_you_use)
     tools.include_what_you_use = findExecutable("iwyu_tool", path);
+  tools.gcovr = findExecutable("gcovr", path);
+  tools.valgrind = findExecutable("valgrind", path);
+  tools.perf = findExecutable("perf", path);
   for (const auto* name : {"wl-copy", "wl-paste", "xclip", "xsel"})
     tools.clipboard.push_back({name, findExecutable(name, path), "native system clipboard"});
   return tools;
@@ -67,6 +70,12 @@ auto externalToolMessages(const ExternalTools& tools, bool include_available)
     "cppcheck unavailable: install it or add it to PATH; cppcheck analysis is disabled.");
   add("include-what-you-use", tools.include_what_you_use,
     "include-what-you-use unavailable: install iwyu_tool.py; IWYU analysis is disabled.");
+  add("gcovr", tools.gcovr,
+    "gcovr unavailable: coverage reports are disabled.");
+  add("Valgrind", tools.valgrind,
+    "Valgrind unavailable: memory profiling is disabled.");
+  add("perf", tools.perf,
+    "perf unavailable: CPU profiling is disabled.");
 
   bool wayland_copy{};
   bool wayland_paste{};

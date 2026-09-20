@@ -53,7 +53,7 @@ CMake, clangd и GDB/MI. Исходный текст и интерфейс ра�
 Поддерживается только Linux на amd64. Для Debian/Ubuntu установите зависимости:
 
 ```sh
-sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb lldb clang-tidy cppcheck iwyu
+sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb lldb clang-tidy cppcheck iwyu gcovr valgrind linux-perf
 ```
 
 `clangd`, `clang-format`, GDB, `lldb-dap` и анализаторы нужны для соответствующих функций.
@@ -125,9 +125,13 @@ ctest --test-dir tuiide-build --output-on-failure
 строку его сбоя. Discovery и групповые запуски находятся в **Run → Tests**.
 Внизу размещены
 **Output**, **Problems**, **Build**, интерактивный **Terminal** и **Analysis**.
-Анализ запускается через **Tools → Run static checks**; распознанные сообщения
-также появляются в Problems. Выбор обнаруженного набора компилятора, генератора
-и отладчика находится в **Tools → Toolchain kits**.
+Анализ запускается через **Tools → Run analysis / profile**; распознанные
+сообщения также появляются в Problems. Coverage создаёт отдельную сборку
+`.tuiide-coverage` внутри build-каталога и формирует отчёт gcovr. Valgrind и
+perf запускают активную Run/Debug configuration. Непокрытые строки, stack
+frames Valgrind и samples perf открываются из Problems клавишей `Enter`.
+Выбор обнаруженного набора компилятора, генератора и отладчика находится в
+**Tools → Toolchain kits**.
 
 ## Структура репозитория
 

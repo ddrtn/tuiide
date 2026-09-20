@@ -24,6 +24,9 @@ struct ExternalTools {
   std::optional<std::filesystem::path> clang_tidy;
   std::optional<std::filesystem::path> cppcheck;
   std::optional<std::filesystem::path> include_what_you_use;
+  std::optional<std::filesystem::path> gcovr;
+  std::optional<std::filesystem::path> valgrind;
+  std::optional<std::filesystem::path> perf;
   std::vector<ExternalToolStatus> clipboard;
 };
 

@@ -30,6 +30,21 @@ auto BuildOutputCollector::finish(const std::filesystem::path& project_root)
 void BuildOutputCollector::reset() {
   partial_.clear();
   diagnostics_.clear();
+  diagnostic_keys_.clear();
+}
+
+void BuildOutputCollector::addDiagnostics(std::vector<BuildDiagnostic> diagnostics) {
+  for (auto& diagnostic : diagnostics) {
+    const auto key = diagnostic.path.string() + ':' + std::to_string(diagnostic.line) + ':'
+      + std::to_string(diagnostic.column) + ':'
+      + std::to_string(static_cast<int>(diagnostic.severity)) + ':' + diagnostic.message;
+    if (diagnostic_keys_.insert(key).second) diagnostics_.push_back(std::move(diagnostic));
+  }
+}
+
+void BuildOutputCollector::clearDiagnostics() {
+  diagnostics_.clear();
+  diagnostic_keys_.clear();
 }
 
 void BuildOutputCollector::consumeLine(std::string_view line,
@@ -37,9 +52,14 @@ void BuildOutputCollector::consumeLine(std::string_view line,
   if (const auto progress = parseBuildProgress(line)) update.progress = progress;
   auto diagnostic = parseCompilerDiagnostic(line, project_root);
   if (!diagnostic) diagnostic = parseSanitizerDiagnostic(line, project_root);
+  if (!diagnostic) diagnostic = parseValgrindDiagnostic(line, project_root);
+  if (!diagnostic) diagnostic = parsePerfDiagnostic(line, project_root);
   if (diagnostic) {
-    diagnostics_.push_back(std::move(*diagnostic));
-    ++update.diagnostics_added;
+    const auto count = diagnostics_.size();
+    std::vector<BuildDiagnostic> parsed;
+    parsed.push_back(std::move(*diagnostic));
+    addDiagnostics(std::move(parsed));
+    if (diagnostics_.size() != count) ++update.diagnostics_added;
   }
 }
 

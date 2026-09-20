@@ -262,6 +262,10 @@ class IdeWindow final : public finalcut::FDialog {
   void stopAnalysis();
   [[nodiscard]] auto startSanitizerBuild() -> bool;
   [[nodiscard]] auto startSanitizerRun() -> bool;
+  [[nodiscard]] auto startCoverageBuild() -> bool;
+  [[nodiscard]] auto startCoverageRun() -> bool;
+  [[nodiscard]] auto startCoverageReport() -> bool;
+  [[nodiscard]] auto startPerfReport() -> bool;
   void run();
   void stopRun();
   void startRun();
@@ -327,6 +331,9 @@ class IdeWindow final : public finalcut::FDialog {
   std::string analysis_text_;
   std::filesystem::path sanitizer_build_dir_;
   std::string sanitizer_target_;
+  LaunchCommand analysis_launch_;
+  std::map<std::string, std::string> analysis_environment_;
+  std::filesystem::path analysis_data_file_;
   RunSession run_session_;
   std::size_t diagnostic_index_{};
   EventLog event_log_;
@@ -492,7 +499,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem separator_analysis{&menu};
     finalcut::FMenuItem toolchain_kits{"Toolchain &kits...", &menu};
     finalcut::FMenuItem language_insights{"Language insights...", &menu};
-    finalcut::FMenuItem run_analysis{"Run static ch&ecks...", &menu};
+    finalcut::FMenuItem run_analysis{"Run analysis / profil&e...", &menu};
     finalcut::FMenuItem stop_analysis{"Stop analysis acti&vity", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem command_palette{finalcut::FKey::Meta_k, "Command &palette...", &menu};

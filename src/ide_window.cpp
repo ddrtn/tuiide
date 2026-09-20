@@ -625,7 +625,8 @@ void IdeWindow::setupMenus() {
   tools_menu_.language_insights.addCallback("clicked", [this] {
     deferred_command_ = [this] { requestLanguageInsights(); };
   });
-  tools_menu_.run_analysis.setStatusBarMessage("Run clang-tidy, cppcheck, sanitizers, or include-what-you-use");
+  tools_menu_.run_analysis.setStatusBarMessage(
+    "Run static checks, sanitizers, coverage, Valgrind, or perf");
   tools_menu_.run_analysis.addCallback("clicked", [this] {
     deferred_command_ = [this] { runAnalysis(); };
   });
@@ -1725,6 +1726,7 @@ void IdeWindow::unloadProject() {
   if (debug_state_dirty_ && !root_.empty()) saveDebugState();
   lsp_.stop(); gdb_.stop(); build_session_.reset(); ctest_session_.clear(); ctest_preset_.clear();
   analysis_session_.prepare(); analysis_text_.clear(); sanitizer_build_dir_.clear(); sanitizer_target_.clear();
+  analysis_launch_ = {}; analysis_environment_.clear(); analysis_data_file_.clear();
   run_session_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
   gdb_.configure(DebugBackend::GdbMi);
@@ -3486,22 +3488,40 @@ void IdeWindow::runAnalysis() {
     "clang-tidy" + std::string(external_tools_.clang_tidy ? "" : "  [unavailable]"),
     "cppcheck" + std::string(external_tools_.cppcheck ? "" : "  [unavailable]"),
     "include-what-you-use" + std::string(external_tools_.include_what_you_use ? "" : "  [unavailable]"),
-    "AddressSanitizer + UndefinedBehaviorSanitizer"};
-  const auto tool_selection = choose("Static analysis tool", tools);
+    "AddressSanitizer + UndefinedBehaviorSanitizer",
+    "Coverage (gcovr)" + std::string(external_tools_.gcovr ? "" : "  [unavailable]"),
+    "Valgrind Memcheck" + std::string(external_tools_.valgrind ? "" : "  [unavailable]"),
+    "CPU profile (perf)" + std::string(external_tools_.perf ? "" : "  [unavailable]")};
+  const auto tool_selection = choose("Analysis and profiling tool", tools);
   if (tool_selection == 0 || tool_selection > tools.size()) return;
   const auto tool = static_cast<AnalysisTool>(tool_selection - 1);
-  const std::vector<std::string> scopes = tool == AnalysisTool::Sanitizers
+  const bool configured_build = tool == AnalysisTool::Sanitizers || tool == AnalysisTool::Coverage;
+  const bool runtime_profile = tool == AnalysisTool::Valgrind || tool == AnalysisTool::Perf;
+  const std::vector<std::string> scopes = configured_build
     ? std::vector<std::string>{"Selected CMake target", "Whole project"}
+    : runtime_profile ? std::vector<std::string>{"Active Run/Debug configuration"}
     : std::vector<std::string>{"Active file", "Selected CMake target", "Whole project"};
   const auto scope_selection = choose("Analysis scope", scopes);
   if (scope_selection == 0 || scope_selection > scopes.size()) return;
-  const auto scope = tool == AnalysisTool::Sanitizers
+  const auto scope = configured_build
     ? (scope_selection == 1 ? AnalysisScope::Target : AnalysisScope::Project)
-    : static_cast<AnalysisScope>(scope_selection - 1);
+    : runtime_profile ? AnalysisScope::Target : static_cast<AnalysisScope>(scope_selection - 1);
 
   std::vector<std::filesystem::path> sources;
   sanitizer_target_.clear();
-  if (scope == AnalysisScope::File) {
+  analysis_launch_ = {};
+  analysis_environment_ = project_settings_.environment;
+  for (const auto& [name, value] : project_settings_.launch.environment)
+    analysis_environment_[name] = value;
+  if (runtime_profile) {
+    std::string launch_error;
+    if (!launchCommand(analysis_launch_, launch_error)) {
+      publishEvent(EventSource::Analysis, EventSeverity::Warning,
+        "Profiler unavailable: " + launch_error + "\n"); return;
+    }
+    for (const auto& [name, value] : analysis_launch_.environment)
+      analysis_environment_[name] = value;
+  } else if (scope == AnalysisScope::File) {
     if (!document_ || document_->path().empty() || !isCppSource(document_->path())) {
       publishEvent(EventSource::Analysis, EventSeverity::Warning,
         "File analysis unavailable: open a saved C or C++ source file\n"); return;
@@ -3522,7 +3542,7 @@ void IdeWindow::runAnalysis() {
       return !isCppSource(path) || (compilation_database_.available()
         && !compilation_database_.contains(path));
     });
-    if (tool != AnalysisTool::Sanitizers && sources.empty()) {
+    if (!configured_build && sources.empty()) {
       publishEvent(EventSource::Analysis, EventSeverity::Warning,
         "Target analysis unavailable: CMake File API returned no C/C++ sources\n"); return;
     }
@@ -3530,7 +3550,7 @@ void IdeWindow::runAnalysis() {
     if (!compilation_database_.available()) refreshCompilationDatabase(true);
     sources.assign(compilation_database_.sources().begin(), compilation_database_.sources().end());
     std::ranges::sort(sources);
-    if (tool != AnalysisTool::Sanitizers && sources.empty()) {
+    if (!configured_build && sources.empty()) {
       publishEvent(EventSource::Analysis, EventSeverity::Warning,
         "Project analysis unavailable: configure the project to create compile_commands.json\n"); return;
     }
@@ -3541,7 +3561,13 @@ void IdeWindow::runAnalysis() {
   if (tool == AnalysisTool::ClangTidy) executable = external_tools_.clang_tidy;
   else if (tool == AnalysisTool::Cppcheck) executable = external_tools_.cppcheck;
   else if (tool == AnalysisTool::IncludeWhatYouUse) executable = external_tools_.include_what_you_use;
+  else if (tool == AnalysisTool::Valgrind) executable = external_tools_.valgrind;
+  else if (tool == AnalysisTool::Perf) executable = external_tools_.perf;
   else executable = external_tools_.cmake;
+  if (tool == AnalysisTool::Coverage && !external_tools_.gcovr) {
+    publishEvent(EventSource::Analysis, EventSeverity::Error,
+      "Coverage is unavailable; install gcovr or add it to PATH\n"); return;
+  }
   if (!executable) {
     publishEvent(EventSource::Analysis, EventSeverity::Error,
       std::string(analysisToolName(tool)) + " is unavailable; install it or add it to PATH\n");
@@ -3552,24 +3578,55 @@ void IdeWindow::runAnalysis() {
   problems_signature_.clear(); diagnostic_index_ = 0;
   AnalysisCommand command;
   auto stage = AnalysisStage::Check;
-  if (tool == AnalysisTool::Sanitizers) {
-    sanitizer_build_dir_ = build_dir_ / ".tuiide-sanitizers";
+  if (tool == AnalysisTool::Sanitizers || tool == AnalysisTool::Coverage) {
+    sanitizer_build_dir_ = build_dir_ /
+      (tool == AnalysisTool::Coverage ? ".tuiide-coverage" : ".tuiide-sanitizers");
+    if (tool == AnalysisTool::Coverage) {
+      std::error_code cleanup_error;
+      std::filesystem::remove_all(sanitizer_build_dir_, cleanup_error);
+      if (cleanup_error) {
+        publishEvent(EventSource::Analysis, EventSeverity::Error,
+          "Cannot reset coverage build directory: " + cleanup_error.message() + "\n");
+        return;
+      }
+    }
     std::string query_error;
     if (!createCMakeFileApiQuery(sanitizer_build_dir_, query_error)) {
       publishEvent(EventSource::Analysis, EventSeverity::Error,
-        "Sanitizer CMake model: " + query_error + "\n"); return;
+        std::string(tool == AnalysisTool::Coverage ? "Coverage" : "Sanitizer")
+          + " CMake model: " + query_error + "\n"); return;
     }
-    command = makeSanitizerConfigureCommand(*executable, root_, sanitizer_build_dir_,
-      project_settings_.generator, project_settings_.toolchain,
-      project_settings_.make_program, project_settings_.sysroot,
-      project_settings_.c_compiler, project_settings_.cpp_compiler);
-    stage = AnalysisStage::SanitizerConfigure;
+    if (tool == AnalysisTool::Coverage) {
+      command = makeCoverageConfigureCommand(*executable, root_, sanitizer_build_dir_,
+        project_settings_.generator, project_settings_.toolchain,
+        project_settings_.make_program, project_settings_.sysroot, project_settings_.c_compiler,
+        project_settings_.cpp_compiler);
+      stage = AnalysisStage::CoverageConfigure;
+    } else {
+      command = makeSanitizerConfigureCommand(*executable, root_, sanitizer_build_dir_,
+        project_settings_.generator, project_settings_.toolchain,
+        project_settings_.make_program, project_settings_.sysroot,
+        project_settings_.c_compiler, project_settings_.cpp_compiler);
+      stage = AnalysisStage::SanitizerConfigure;
+    }
+  } else if (tool == AnalysisTool::Valgrind) {
+    command = makeValgrindCommand(*executable, analysis_launch_.executable,
+      analysis_launch_.arguments, analysis_launch_.working_directory);
+    stage = AnalysisStage::ValgrindRun;
+  } else if (tool == AnalysisTool::Perf) {
+    analysis_data_file_ = build_dir_ / ".tuiide-perf.data";
+    std::error_code remove_error;
+    std::filesystem::remove(analysis_data_file_, remove_error);
+    command = makePerfRecordCommand(*executable, analysis_data_file_,
+      analysis_launch_.executable, analysis_launch_.arguments,
+      analysis_launch_.working_directory);
+    stage = AnalysisStage::PerfRecord;
   } else command = makeAnalysisCommand(tool, scope, *executable, root_, build_dir_, sources);
   analysis_text_ = "$ " + command.display + "\n";
   analysis_output_.setText(finalcut::FString(analysis_text_));
   lower_tabs_.setCurrentIndex(4);
   if (!analysis_session_.start(std::move(command), tool, scope, stage,
-      project_settings_.environment)) {
+      analysis_environment_)) {
     publishEvent(EventSource::Analysis, EventSeverity::Error,
       "Failed to start " + std::string(analysisToolName(tool)) + "\n"); return;
   }
@@ -3587,7 +3644,7 @@ auto IdeWindow::startSanitizerBuild() -> bool {
   analysis_output_.setText(finalcut::FString(analysis_text_));
   return analysis_session_.start(std::move(command), AnalysisTool::Sanitizers,
     sanitizer_target_.empty() ? AnalysisScope::Project : AnalysisScope::Target,
-    AnalysisStage::SanitizerBuild, project_settings_.environment);
+    AnalysisStage::SanitizerBuild, analysis_environment_);
 }
 
 auto IdeWindow::startSanitizerRun() -> bool {
@@ -3611,7 +3668,70 @@ auto IdeWindow::startSanitizerRun() -> bool {
   analysis_output_.setText(finalcut::FString(analysis_text_));
   return analysis_session_.start(std::move(command), AnalysisTool::Sanitizers,
     AnalysisScope::Target, AnalysisStage::SanitizerRun,
-    project_settings_.environment);
+    analysis_environment_);
+}
+
+auto IdeWindow::startCoverageBuild() -> bool {
+  if (!external_tools_.cmake) return false;
+  auto command = makeCoverageBuildCommand(*external_tools_.cmake,
+    sanitizer_build_dir_, project_settings_.build_jobs, sanitizer_target_);
+  analysis_text_ += "$ " + command.display + "\n";
+  analysis_output_.setText(finalcut::FString(analysis_text_));
+  return analysis_session_.start(std::move(command), AnalysisTool::Coverage,
+    sanitizer_target_.empty() ? AnalysisScope::Project : AnalysisScope::Target,
+    AnalysisStage::CoverageBuild, analysis_environment_);
+}
+
+auto IdeWindow::startCoverageRun() -> bool {
+  AnalysisCommand command;
+  if (sanitizer_target_.empty()) {
+    command = makeCoverageTestCommand("ctest", sanitizer_build_dir_);
+  } else {
+    std::string error;
+    const auto targets = loadCMakeExecutableTargets(sanitizer_build_dir_, error);
+    const auto found = std::ranges::find_if(targets, [this](const auto& target) {
+      return target.name == sanitizer_target_;
+    });
+    if (found == targets.end()) {
+      publishEvent(EventSource::Analysis, EventSeverity::Error,
+        "Coverage executable unavailable for target " + sanitizer_target_
+          + (error.empty() ? "" : ": " + error) + "\n");
+      return false;
+    }
+    auto working_directory = project_settings_.launch.working_directory;
+    if (working_directory.empty()) working_directory = found->artifact.parent_path();
+    else if (working_directory.is_relative()) working_directory = root_ / working_directory;
+    command = makeSanitizerRunCommand(found->artifact,
+      project_settings_.launch.arguments, working_directory);
+  }
+  analysis_text_ += "$ " + command.display + "\n";
+  analysis_output_.setText(finalcut::FString(analysis_text_));
+  return analysis_session_.start(std::move(command), AnalysisTool::Coverage,
+    sanitizer_target_.empty() ? AnalysisScope::Project : AnalysisScope::Target,
+    AnalysisStage::CoverageRun, analysis_environment_);
+}
+
+auto IdeWindow::startCoverageReport() -> bool {
+  if (!external_tools_.gcovr) return false;
+  analysis_data_file_ = sanitizer_build_dir_ / "tuiide-coverage.json";
+  std::error_code remove_error;
+  std::filesystem::remove(analysis_data_file_, remove_error);
+  auto command = makeCoverageReportCommand(*external_tools_.gcovr, root_,
+    sanitizer_build_dir_, analysis_data_file_);
+  analysis_text_ += "$ " + command.display + "\n";
+  analysis_output_.setText(finalcut::FString(analysis_text_));
+  return analysis_session_.start(std::move(command), AnalysisTool::Coverage,
+    sanitizer_target_.empty() ? AnalysisScope::Project : AnalysisScope::Target,
+    AnalysisStage::CoverageReport, analysis_environment_);
+}
+
+auto IdeWindow::startPerfReport() -> bool {
+  if (!external_tools_.perf || analysis_data_file_.empty()) return false;
+  auto command = makePerfReportCommand(*external_tools_.perf, analysis_data_file_, root_);
+  analysis_text_ += "$ " + command.display + "\n";
+  analysis_output_.setText(finalcut::FString(analysis_text_));
+  return analysis_session_.start(std::move(command), AnalysisTool::Perf,
+    AnalysisScope::Target, AnalysisStage::PerfReport, analysis_environment_);
 }
 
 void IdeWindow::stopAnalysis() {
@@ -4740,6 +4860,42 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
         && !sanitizer_target_.empty()) {
       if (!startSanitizerRun()) {
         analysis_text_ += "Failed to start sanitizer executable\n";
+        analysis_output_.setText(finalcut::FString(analysis_text_));
+      }
+    } else if (analysis_stage == AnalysisStage::CoverageConfigure && code == 0) {
+      if (!startCoverageBuild()) {
+        analysis_text_ += "Failed to start coverage build\n";
+        analysis_output_.setText(finalcut::FString(analysis_text_));
+        publishEvent(EventSource::Analysis, EventSeverity::Error,
+          "Failed to start coverage build\n");
+      }
+    } else if (analysis_stage == AnalysisStage::CoverageBuild && code == 0) {
+      if (!startCoverageRun()) {
+        analysis_text_ += "Failed to start coverage workload\n";
+        analysis_output_.setText(finalcut::FString(analysis_text_));
+      }
+    } else if (analysis_stage == AnalysisStage::CoverageRun) {
+      if (!startCoverageReport()) {
+        analysis_text_ += "Failed to start gcovr report\n";
+        analysis_output_.setText(finalcut::FString(analysis_text_));
+      }
+    } else if (analysis_stage == AnalysisStage::CoverageReport) {
+      std::string summary;
+      std::string error;
+      auto diagnostics = loadCoverageDiagnostics(analysis_data_file_, root_, summary, error);
+      if (error.empty()) {
+        analysis_session_.addDiagnostics(std::move(diagnostics));
+        analysis_text_ += "\n" + summary + "\n";
+        problems_signature_.clear(); refreshProblemsPanel();
+      } else analysis_text_ += "\nCoverage report error: " + error + "\n";
+      analysis_output_.setText(finalcut::FString(analysis_text_));
+      publishEvent(EventSource::Analysis, error.empty() ? EventSeverity::Success : EventSeverity::Error,
+        error.empty() ? summary + "\n" : "Coverage report error: " + error + "\n");
+      showNotification(error.empty() ? "Coverage report completed" : "Coverage report failed",
+        error.empty() ? NotificationKind::Success : NotificationKind::Error);
+    } else if (analysis_stage == AnalysisStage::PerfRecord && code == 0) {
+      if (!startPerfReport()) {
+        analysis_text_ += "Failed to start perf report\n";
         analysis_output_.setText(finalcut::FString(analysis_text_));
       }
     } else {

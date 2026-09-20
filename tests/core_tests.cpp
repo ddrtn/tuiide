@@ -215,6 +215,15 @@ int main() {
   expect(asan && asan->path == "/project/src/memory.cpp" && asan->line == 20
       && asan->column == 8 && asan->message == "heap-use-after-free",
     "ASan summaries expose source locations to Problems");
+  const auto valgrind = tuiide::parseValgrindDiagnostic(
+    "==123==    at 0x401234: read_value() (/project/src/value.cpp:31)", "/project");
+  expect(valgrind && valgrind->path == "/project/src/value.cpp" && valgrind->line == 30
+      && valgrind->severity == tuiide::DiagnosticSeverity::Error,
+    "Valgrind stack frames expose source locations to Problems");
+  const auto perf = tuiide::parsePerfDiagnostic(
+    "demo 77 cycles: 0x401000 main /project with spaces/src/main.cpp:17", "/project");
+  expect(perf && perf->path == "/project with spaces/src/main.cpp" && perf->line == 16,
+    "perf script source locations expose sampled lines to Problems");
   expect(tuiide::parseBuildProgress("[12/48] Building CXX object") == 25,
     "Ninja fractional build progress is parsed");
   expect(tuiide::parseBuildProgress("[ 73%] Linking CXX executable") == 73,
@@ -242,6 +251,11 @@ int main() {
   const auto finished_build_update = build_output.finish("/project");
   expect(finished_build_update.diagnostics_added == 1 && !build_output.hasPartialLine(),
     "build output collector flushes the final unterminated line");
+  const auto duplicate_build_update = build_output.append(
+    "src/main.cpp:12:7: error: expected ';'\n", "/project");
+  expect(duplicate_build_update.diagnostics_added == 0
+      && build_output.diagnostics().size() == 2,
+    "build output collector deduplicates repeated profiler and compiler locations");
   build_output.clearDiagnostics();
   expect(build_output.diagnostics().empty(), "build diagnostics can be cleared independently");
   (void)build_output.append("partial", "/project");
@@ -2411,6 +2425,55 @@ int main() {
       (sanitizer_directory / "demo").string(), "--sample", "value with spaces"}
       && sanitizer_run.working_directory == command_project,
     "sanitizer executable preserves configured arguments and working directory");
+  const auto coverage_directory = command_build / ".tuiide-coverage";
+  const auto coverage_configure = tuiide::makeCoverageConfigureCommand(
+    "/usr/bin/cmake", command_project, coverage_directory);
+  expect(std::ranges::find(coverage_configure.arguments,
+      "-DCMAKE_CXX_FLAGS=--coverage -O0 -g") != coverage_configure.arguments.end()
+      && std::ranges::find(coverage_configure.arguments,
+        "-DCMAKE_EXE_LINKER_FLAGS=--coverage") != coverage_configure.arguments.end(),
+    "coverage configure uses an isolated instrumented CMake build");
+  const auto coverage_build = tuiide::makeCoverageBuildCommand(
+    "/usr/bin/cmake", coverage_directory, 2, "demo");
+  expect(coverage_build.arguments == std::vector<std::string>{"/usr/bin/cmake", "--build",
+      coverage_directory.string(), "--parallel", "2", "--target", "demo"},
+    "coverage build respects the selected target and project job count");
+  const auto coverage_report = tuiide::makeCoverageReportCommand("/usr/bin/gcovr",
+    command_project, coverage_directory, coverage_directory / "coverage.json");
+  expect(coverage_report.arguments == std::vector<std::string>{"/usr/bin/gcovr", "--root",
+      command_project.string(), "--object-directory", coverage_directory.string(), "--json",
+      (coverage_directory / "coverage.json").string(), "--txt", "-", "--print-summary"},
+    "gcovr command writes machine-readable data and a human-readable summary");
+  std::filesystem::create_directories(command_project / "src");
+  const auto coverage_json = coverage_directory / "fixture.json";
+  std::filesystem::create_directories(coverage_directory);
+  { std::ofstream file(coverage_json); file << R"({"files":[{"file":"src/main.cpp","lines":[
+      {"line_number":4,"count":1},{"line_number":8,"count":0}]}]})"; }
+  std::string coverage_summary;
+  std::string coverage_error;
+  const auto coverage_diagnostics = tuiide::loadCoverageDiagnostics(coverage_json,
+    command_project, coverage_summary, coverage_error);
+  expect(coverage_error.empty() && coverage_diagnostics.size() == 1
+      && coverage_diagnostics[0].path == command_project / "src/main.cpp"
+      && coverage_diagnostics[0].line == 7
+      && coverage_summary.find("50.0%") != std::string::npos,
+    "gcovr JSON exposes uncovered lines and a summary for navigation");
+  const auto valgrind_command = tuiide::makeValgrindCommand("/usr/bin/valgrind",
+    command_build / "demo", {"--input", "value with spaces"}, command_project);
+  expect(valgrind_command.arguments.front() == "/usr/bin/valgrind"
+      && valgrind_command.arguments[5] == "--error-exitcode=99"
+      && valgrind_command.arguments.back() == "value with spaces",
+    "Valgrind command preserves launch arguments without shell interpolation");
+  const auto perf_data = command_build / "profile.data";
+  const auto perf_record = tuiide::makePerfRecordCommand("/usr/bin/perf", perf_data,
+    command_build / "demo", {"--sample"}, command_project);
+  const auto perf_report = tuiide::makePerfReportCommand(
+    "/usr/bin/perf", perf_data, command_project);
+  expect(perf_record.arguments == std::vector<std::string>{"/usr/bin/perf", "record",
+      "--call-graph", "dwarf", "--output", perf_data.string(), "--",
+      (command_build / "demo").string(), "--sample"}
+      && perf_report.arguments.back() == "comm,pid,event,ip,sym,dso,srcline",
+    "perf workflow records call stacks and emits source-line fields");
   std::filesystem::remove_all(preset_source, cleanup_error);
 
   std::vector<tuiide::CTestCase> ctest_cases;

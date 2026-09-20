@@ -24,5 +24,11 @@ auto parseCompilerDiagnostic(std::string_view line, const std::filesystem::path&
 /** Распознаёт итоговую строку ASan/UBSan с исходным файлом и позицией. */
 auto parseSanitizerDiagnostic(std::string_view line,
   const std::filesystem::path& project_root) -> std::optional<BuildDiagnostic>;
+/** Распознаёт навигационный stack frame Valgrind. */
+auto parseValgrindDiagnostic(std::string_view line,
+  const std::filesystem::path& project_root) -> std::optional<BuildDiagnostic>;
+/** Распознаёт source location в текстовом выводе perf script. */
+auto parsePerfDiagnostic(std::string_view line,
+  const std::filesystem::path& project_root) -> std::optional<BuildDiagnostic>;
 
 }  // namespace tuiide

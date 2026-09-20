@@ -12,9 +12,15 @@
 
 namespace tuiide {
 
-enum class AnalysisTool { ClangTidy, Cppcheck, IncludeWhatYouUse, Sanitizers };
+enum class AnalysisTool {
+  ClangTidy, Cppcheck, IncludeWhatYouUse, Sanitizers, Coverage, Valgrind, Perf
+};
 enum class AnalysisScope { File, Target, Project };
-enum class AnalysisStage { Idle, Check, SanitizerConfigure, SanitizerBuild, SanitizerRun };
+enum class AnalysisStage {
+  Idle, Check, SanitizerConfigure, SanitizerBuild, SanitizerRun,
+  CoverageConfigure, CoverageBuild, CoverageRun, CoverageReport,
+  ValgrindRun, PerfRecord, PerfReport
+};
 
 struct AnalysisCommand {
   std::vector<std::string> arguments;
@@ -39,6 +45,7 @@ class AnalysisSession {
   [[nodiscard]] auto poll(const std::filesystem::path& project_root) -> AnalysisPollResult;
   void stop();
   void clearDiagnostics();
+  void addDiagnostics(std::vector<BuildDiagnostic> diagnostics);
 
   [[nodiscard]] auto running() const noexcept -> bool { return process_.running(); }
   [[nodiscard]] auto stage() const noexcept -> AnalysisStage { return stage_; }
@@ -73,6 +80,36 @@ class AnalysisSession {
   std::string_view target) -> AnalysisCommand;
 [[nodiscard]] auto makeSanitizerRunCommand(const std::filesystem::path& executable,
   const std::vector<std::string>& arguments,
+  const std::filesystem::path& working_directory) -> AnalysisCommand;
+[[nodiscard]] auto makeCoverageConfigureCommand(const std::filesystem::path& cmake,
+  const std::filesystem::path& project_root,
+  const std::filesystem::path& coverage_build_directory,
+  std::string_view generator = {}, const std::filesystem::path& toolchain = {},
+  const std::filesystem::path& make_program = {},
+  const std::filesystem::path& sysroot = {},
+  const std::filesystem::path& c_compiler = {},
+  const std::filesystem::path& cpp_compiler = {}) -> AnalysisCommand;
+[[nodiscard]] auto makeCoverageBuildCommand(const std::filesystem::path& cmake,
+  const std::filesystem::path& coverage_build_directory, unsigned jobs,
+  std::string_view target) -> AnalysisCommand;
+[[nodiscard]] auto makeCoverageTestCommand(const std::filesystem::path& ctest,
+  const std::filesystem::path& coverage_build_directory) -> AnalysisCommand;
+[[nodiscard]] auto makeCoverageReportCommand(const std::filesystem::path& gcovr,
+  const std::filesystem::path& project_root,
+  const std::filesystem::path& coverage_build_directory,
+  const std::filesystem::path& json_report) -> AnalysisCommand;
+[[nodiscard]] auto loadCoverageDiagnostics(const std::filesystem::path& json_report,
+  const std::filesystem::path& project_root, std::string& summary,
+  std::string& error) -> std::vector<BuildDiagnostic>;
+[[nodiscard]] auto makeValgrindCommand(const std::filesystem::path& valgrind,
+  const std::filesystem::path& executable, const std::vector<std::string>& arguments,
+  const std::filesystem::path& working_directory) -> AnalysisCommand;
+[[nodiscard]] auto makePerfRecordCommand(const std::filesystem::path& perf,
+  const std::filesystem::path& data_file, const std::filesystem::path& executable,
+  const std::vector<std::string>& arguments,
+  const std::filesystem::path& working_directory) -> AnalysisCommand;
+[[nodiscard]] auto makePerfReportCommand(const std::filesystem::path& perf,
+  const std::filesystem::path& data_file,
   const std::filesystem::path& working_directory) -> AnalysisCommand;
 [[nodiscard]] auto analysisToolName(AnalysisTool tool) noexcept -> std::string_view;
 [[nodiscard]] auto analysisScopeName(AnalysisScope scope) noexcept -> std::string_view;

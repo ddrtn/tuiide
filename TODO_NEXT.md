@@ -55,7 +55,9 @@
 
 ## P2 — развитие и качество
 
-- [ ] Добавить coverage, Valgrind и профилирование с навигацией по результатам.
+- [x] Добавить coverage через отдельную instrumented CMake-сборку и gcovr,
+  Valgrind Memcheck и CPU-профилирование через perf; непокрытые строки, stack
+  frames и samples публикуются в Problems с переходом в исходный файл.
 - [ ] Добавить минимальную Git-панель: status, diff, stage и история файла.
 - [ ] Включить умеренный large-file regression в обычный CTest, сохранив тяжёлый
   стресс-тест опциональным.
