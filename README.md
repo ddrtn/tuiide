@@ -27,9 +27,14 @@ CMake, clangd и GDB/MI. Исходный текст и интерфейс ра�
   и проектные CMake toolchain-файлы, проверяет версии и применяет kit к проекту.
 - Именованные конфигурации Run/Debug с клонированием и быстрым выбором; запуск в
   интегрированном PTY или внешнем терминале, аргументы, среда и `stdin`.
-- Отладка через GDB: breakpoints/logpoints, стек, потоки, локальные переменные,
+- Отладка через GDB/MI или опциональный LLDB/DAP: breakpoints/logpoints, стек,
+  потоки, локальные переменные,
   watches, registers, вычисление выражений, память и дизассемблер; текущая строка
   остановленного приложения выделяется в редакторе.
+- Backend выбирается в **Project → Project Settings → Debugger**. Для LLDB
+  установите `lldb-dap` (в старых поставках — `lldb-vscode`) либо укажите
+  абсолютный путь к adapter. Attach, core dump и управление сигналами пока
+  доступны только для GDB/MI.
 - **Debug → Attach to process...** присоединяет GDB к выбранному Linux-процессу
   из `/proc`. Команда Stop сначала выполняет `-target-detach`, поэтому внешний
   процесс не завершается вместе с отладчиком.
@@ -48,10 +53,10 @@ CMake, clangd и GDB/MI. Исходный текст и интерфейс ра�
 Поддерживается только Linux на amd64. Для Debian/Ubuntu установите зависимости:
 
 ```sh
-sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb clang-tidy cppcheck iwyu
+sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb lldb clang-tidy cppcheck iwyu
 ```
 
-`clangd`, `clang-format`, GDB и анализаторы нужны для соответствующих функций.
+`clangd`, `clang-format`, GDB, `lldb-dap` и анализаторы нужны для соответствующих функций.
 IDE запускается без них, но явно сообщает о недоступной возможности в панели Output. Для буфера
 обмена рабочего стола дополнительно можно установить `wl-clipboard` (Wayland) либо
 `xclip`/`xsel` (X11).

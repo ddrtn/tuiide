@@ -42,14 +42,16 @@
   Ninja/Make, sysroot и CMake toolchain files с проверкой версий.
 - [x] Расширить clangd: inlay hints, document highlights, folding ranges,
   completion resolve, selection ranges, code lens и include hierarchy.
-- [ ] Расширить отладку:
+- [x] Расширить отладку:
   - [x] Attach to Process: выбор Linux-процесса из `/proc`, отдельный режим
     GDB/MI и подтверждаемое отсоединение, оставляющее внешний процесс живым.
   - [x] Открытие core dump с выбором executable и режимом только чтения:
     стек, потоки, locals, watches, registers, evaluate, memory и disassembly.
   - [x] Сигналы inferior: просмотр политик, stop/print/pass и отправка сигнала
     с продолжением (включая подавление текущего сигнала через `signal 0`).
-  - [ ] Опциональный LLDB backend через DAP.
+  - [x] Опциональный LLDB backend через DAP: выбор в Project Settings,
+    launch/continue/steps, breakpoints, стек, locals, watches, registers,
+    evaluate/setExpression, memory и disassembly через общий Debug UI.
 
 ## P2 — развитие и качество
 

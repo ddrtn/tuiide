@@ -202,7 +202,9 @@ auto LldbDapClient::toggleBreakpoint(const std::filesystem::path& file,
 auto LldbDapClient::addBreakpoint(const std::filesystem::path& file,
     std::size_t line) -> bool {
   if (file.empty() || line == 0) return false;
-  DebugBreakpoint breakpoint{.file = normalizePath(file), .line = line};
+  DebugBreakpoint breakpoint;
+  breakpoint.file = normalizePath(file);
+  breakpoint.line = line;
   if (!breakpoints_.emplace(breakpointKey(file, line), std::move(breakpoint)).second) return false;
   if (configured_) configureBreakpoints();
   return true;
@@ -257,7 +259,8 @@ void LldbDapClient::poll() {
     if (marker == std::string::npos || marker > header_end) {
       input_.erase(0, header_end + 4); continue;
     }
-    const auto begin = marker + 15;
+    auto begin = marker + 15;
+    while (begin < header_end && (input_[begin] == ' ' || input_[begin] == '\t')) ++begin;
     std::size_t length{};
     const auto parsed = std::from_chars(input_.data() + begin, input_.data() + header_end, length);
     if (parsed.ec != std::errc{}) { input_.erase(0, header_end + 4); continue; }
@@ -330,7 +333,12 @@ void LldbDapClient::handleResponse(const nlohmann::json& message) {
   if (!success) {
     const auto error = text(message, "message").empty() ? "request failed" : text(message, "message");
     output_.push_back("LLDB DAP " + command + " error: " + error);
-    if (context.starts_with("evaluate:") || context.starts_with("assign:")
+    if (context.starts_with("watch:")) {
+      const auto expression = context.substr(context.find(':') + 1);
+      const auto watch = std::find_if(watches_.begin(), watches_.end(),
+        [&expression](const auto& item) { return item.expression == expression; });
+      if (watch != watches_.end()) { watch->value.clear(); watch->error = error; }
+    } else if (context.starts_with("evaluate:") || context.starts_with("assign:")
         || context.starts_with("memory:") || context.starts_with("disassemble:")) {
       auto kind = DebugResultKind::Evaluation;
       if (context.starts_with("assign:")) kind = DebugResultKind::Assignment;
@@ -338,9 +346,32 @@ void LldbDapClient::handleResponse(const nlohmann::json& message) {
       else if (context.starts_with("disassemble:")) kind = DebugResultKind::Disassembly;
       results_.push_back({kind, context.substr(context.find(':') + 1), {}, error});
     }
+    if (command == "initialize" || command == "launch") {
+      active_ = false; stopped_ = false; exited_ = true;
+    }
     return;
   }
   if (command == "initialize") { initialized_ = true; sendLaunch(); return; }
+  if (command == "launch") { active_ = true; stopped_ = false; exited_ = false; return; }
+  if (command == "setBreakpoints" && context.starts_with("breakpoints:")) {
+    const auto file = normalizePath(context.substr(12));
+    std::vector<DebugBreakpoint*> matching;
+    for (auto& [key, breakpoint] : breakpoints_) {
+      (void)key;
+      if (breakpoint.file == file && breakpoint.enabled) matching.push_back(&breakpoint);
+    }
+    std::sort(matching.begin(), matching.end(), [](const auto* left, const auto* right) {
+      return left->line < right->line;
+    });
+    const auto returned = body.find("breakpoints");
+    for (std::size_t index = 0; index < matching.size(); ++index) {
+      const auto* dap = returned != body.end() && returned->is_array() && index < returned->size()
+        ? &(*returned)[index] : nullptr;
+      matching[index]->verified = dap == nullptr || flag(*dap, "verified", true);
+      matching[index]->error = dap == nullptr ? std::string{} : text(*dap, "message");
+    }
+    return;
+  }
   if (command == "threads") {
     threads_.clear();
     const auto list = body.find("threads");
@@ -399,11 +430,14 @@ void LldbDapClient::handleResponse(const nlohmann::json& message) {
       }
       if (context == "locals") variables_ = std::move(parsed);
       else if (context.starts_with("children:")) {
-        const auto parent = positiveId(context.substr(9));
-        if (parent < variables_.size()) {
-          const auto depth = variables_[parent].depth + 1;
+        std::size_t parent_index{};
+        const auto index_text = std::string_view(context).substr(9);
+        const auto index_result = std::from_chars(index_text.data(),
+          index_text.data() + index_text.size(), parent_index);
+        if (index_result.ec == std::errc{} && parent_index < variables_.size()) {
+          const auto depth = variables_[parent_index].depth + 1;
           for (auto& item : parsed) item.depth = depth;
-          variables_.insert(variables_.begin() + static_cast<std::ptrdiff_t>(parent + 1),
+          variables_.insert(variables_.begin() + static_cast<std::ptrdiff_t>(parent_index + 1),
             std::make_move_iterator(parsed.begin()), std::make_move_iterator(parsed.end()));
         }
       }
@@ -475,6 +509,9 @@ void LldbDapClient::configureBreakpoints() {
   std::map<std::filesystem::path, std::vector<DebugBreakpoint*>> groups;
   for (auto& [key, breakpoint] : breakpoints_) { (void)key; groups[breakpoint.file].push_back(&breakpoint); }
   for (auto& [file, items] : groups) {
+    std::sort(items.begin(), items.end(), [](const auto* left, const auto* right) {
+      return left->line < right->line;
+    });
     auto values = nlohmann::json::array();
     for (auto* item : items) if (item->enabled) {
       nlohmann::json breakpoint{{"line", item->line}};
@@ -485,7 +522,8 @@ void LldbDapClient::configureBreakpoints() {
       item->verified = false; item->error.clear();
     }
     request("setBreakpoints", {{"source", {{"path", file.string()}}},
-      {"breakpoints", std::move(values)}, {"sourceModified", false}});
+      {"breakpoints", std::move(values)}, {"sourceModified", false}},
+      "breakpoints:" + file.string());
   }
 }
 

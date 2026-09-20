@@ -149,6 +149,12 @@ if(BUILD_TESTING)
   tuiide_apply_quality(tuiide_tests)
   add_test(NAME tuiide_core_tests COMMAND tuiide_tests)
 
+  add_executable(tuiide_lldb_dap_tests tests/lldb_dap_tests.cpp)
+  target_link_libraries(tuiide_lldb_dap_tests PRIVATE tuiide_core)
+  tuiide_apply_quality(tuiide_lldb_dap_tests)
+  add_test(NAME tuiide_lldb_dap_tests COMMAND tuiide_lldb_dap_tests)
+  set_tests_properties(tuiide_lldb_dap_tests PROPERTIES TIMEOUT 30 LABELS integration)
+
   add_test(NAME tuiide_install_layout
     COMMAND ${CMAKE_COMMAND}
       -DBUILD_DIR=${CMAKE_BINARY_DIR}

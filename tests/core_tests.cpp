@@ -1774,6 +1774,8 @@ int main() {
   project_settings.sysroot = "/opt/sdk";
   project_settings.c_compiler = "/usr/bin/cc";
   project_settings.cpp_compiler = "/usr/bin/c++";
+  project_settings.debugger_backend = "lldb-dap";
+  project_settings.debugger_adapter = "/opt/llvm/bin/lldb-dap";
   project_settings.c_standard = "17";
   project_settings.cpp_standard = "23";
   project_settings.cpp_header_extension = "h";
@@ -1809,6 +1811,8 @@ int main() {
       && loaded_settings.kit == "GCC native"
       && loaded_settings.make_program == "/usr/bin/ninja"
       && loaded_settings.sysroot == "/opt/sdk"
+      && loaded_settings.debugger_backend == "lldb-dap"
+      && loaded_settings.debugger_adapter == "/opt/llvm/bin/lldb-dap"
       && loaded_settings.build_jobs == 3
       && loaded_settings.tab_width == 4 && !loaded_settings.use_spaces
       && loaded_settings.environment == project_settings.environment

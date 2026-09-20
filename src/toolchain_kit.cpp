@@ -74,11 +74,14 @@ auto discoverToolchainKits(std::string_view path_environment,
   const auto make = executable("make", path_environment);
   const auto gdb = executable("gdb", path_environment);
   const auto lldb = executable("lldb", path_environment);
+  auto lldb_dap = executable("lldb-dap", path_environment);
+  if (lldb_dap.empty()) lldb_dap = executable("lldb-vscode", path_environment);
   const auto generator = !ninja.empty() ? "Ninja" : (!make.empty() ? "Unix Makefiles" : "");
   const auto build_tool = !ninja.empty() ? ninja : make;
-  const auto debugger = !gdb.empty() ? gdb : lldb;
-  const auto debugger_kind = !gdb.empty() ? "GDB" : (!lldb.empty() ? "LLDB" : "");
-  const auto debugger_version = firstVersionLine(probe(debugger, {"--version"}));
+  const auto debugger = !gdb.empty() ? gdb : lldb_dap;
+  const std::string debugger_kind = !gdb.empty() ? "GDB" : (!lldb_dap.empty() ? "LLDB" : "");
+  const auto debugger_version = firstVersionLine(probe(
+    debugger_kind == "LLDB" && !lldb.empty() ? lldb : debugger, {"--version"}));
   const auto generator_version = firstVersionLine(probe(build_tool, {"--version"}));
   std::string inventory;
   const auto inventoryItem = [&](std::string_view name, const std::filesystem::path& path) {
@@ -86,7 +89,7 @@ auto discoverToolchainKits(std::string_view path_environment,
     if (!inventory.empty()) inventory += "; ";
     inventory += std::string(name) + ": " + firstVersionLine(probe(path, {"--version"}));
   };
-  inventoryItem("GDB", gdb); inventoryItem("LLDB", lldb);
+  inventoryItem("GDB", gdb); inventoryItem("LLDB", lldb); inventoryItem("lldb-dap", lldb_dap);
   inventoryItem("Ninja", ninja); inventoryItem("Make", make);
 
   std::vector<ToolchainKit> result;

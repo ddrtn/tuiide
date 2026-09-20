@@ -1727,6 +1727,7 @@ void IdeWindow::unloadProject() {
   analysis_session_.prepare(); analysis_text_.clear(); sanitizer_build_dir_.clear(); sanitizer_target_.clear();
   run_session_.stop(); console_.setControlEnabled(false);
   gdb_.clearSessionState();
+  gdb_.configure(DebugBackend::GdbMi);
   execution_file_.clear(); execution_line_ = 0;
   document_session_.clear();
   editor_.setDocument(nullptr);
@@ -1876,8 +1877,7 @@ void IdeWindow::manageToolchainKits() {
   updated.c_compiler = kit.c_compiler;
   updated.cpp_compiler = kit.cpp_compiler;
   updated.debugger_backend = kit.debugger_kind == "LLDB" ? "lldb-dap" : "gdb-mi";
-  updated.debugger_adapter = kit.debugger_kind == "LLDB" && external_tools_.lldb_dap
-    ? *external_tools_.lldb_dap : std::filesystem::path{};
+  updated.debugger_adapter = kit.debugger_kind == "LLDB" ? kit.debugger : std::filesystem::path{};
   std::string error;
   if (!saveProjectSettings(root_, updated, error)) {
     finalcut::FMessageBox::error(this, finalcut::FString(error));
@@ -3847,7 +3847,8 @@ void IdeWindow::startDebug() {
   }
   run_session_.activateDebugConsole(); console_.setControlEnabled(true); lower_tabs_.setCurrentIndex(3, true); console_.focusInput();
   publishEvent(EventSource::Debug, EventSeverity::Information,
-    gdb_.backendName() + ": " + launch.executable.string() + "\n");
+    std::string(gdb_.backend() == DebugBackend::GdbMi ? "GDB: " : "LLDB/DAP: ")
+      + launch.executable.string() + "\n");
   gdb_.run();
   showNotification("Debug session started", NotificationKind::Information);
 }

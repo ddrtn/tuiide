@@ -31,9 +31,14 @@ source code and user interface use UTF-8.
 - Named Run/Debug configurations support cloning and quick selection; programs
   run in an integrated PTY or external terminal with arguments, environment,
   and standard input.
-- GDB debugging with breakpoints and logpoints, stack frames, threads, locals,
+- GDB/MI or optional LLDB/DAP debugging with breakpoints and logpoints, stack
+  frames, threads, locals,
   watches, registers, expression evaluation, memory, and disassembly; the editor
   highlights the current stopped source line.
+- Select the backend under **Project → Project Settings → Debugger**. For LLDB,
+  install `lldb-dap` (called `lldb-vscode` by older distributions) or enter the
+  adapter's absolute path. Attach, core dumps, and signal handling remain
+  GDB/MI-only.
 - **Debug → Attach to process...** attaches GDB to a Linux process selected from
   `/proc`. Stop issues `-target-detach` first, so the external process remains
   alive when the debugger closes.
@@ -53,10 +58,10 @@ source code and user interface use UTF-8.
 Only Linux on amd64 is supported. On Debian or Ubuntu, install the dependencies:
 
 ```sh
-sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb clang-tidy cppcheck iwyu
+sudo apt install g++ cmake libgpm-dev nlohmann-json3-dev clangd clang-format gdb lldb clang-tidy cppcheck iwyu
 ```
 
-clangd, clang-format, and GDB are required only for their corresponding
+clangd, clang-format, GDB, and lldb-dap are required only for their corresponding
 features. When a tool is unavailable, the IDE remains usable and reports the
 missing feature in Output. Desktop clipboard integration optionally uses
 `wl-clipboard` on Wayland or `xclip`/`xsel` on X11.
