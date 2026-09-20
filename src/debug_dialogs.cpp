@@ -1,5 +1,7 @@
 #include "tuiide/debug_dialogs.hpp"
 
+#include "tuiide/document.hpp"
+
 #include <stdexcept>
 
 namespace tuiide {
@@ -82,6 +84,88 @@ BreakpointSettingsDialog::~BreakpointSettingsDialog() = default;
 auto BreakpointSettingsDialog::apply(DebugBreakpoint& breakpoint,
     std::string& error) const -> bool {
   return impl_->apply(breakpoint, error);
+}
+
+struct CoreDumpDialog::Impl {
+  Impl(CoreDumpDialog* dialog, std::filesystem::path initial)
+      : owner(dialog), initial_directory(std::move(initial)),
+        executable_label("Executable:", owner), executable(owner),
+        executable_browse("&Browse...", owner), core_label("Core dump:", owner),
+        core(owner), core_browse("B&rowse...", owner),
+        help("Core sessions are read-only: inspect stack, variables, memory and registers.", owner),
+        open("&Open", owner), cancel("&Cancel", owner) {
+    executable_label.setGeometry({2, 2}, {14, 1});
+    executable.setGeometry({16, 2}, {39, 1});
+    executable_browse.setGeometry({57, 2}, {10, 1});
+    core_label.setGeometry({2, 4}, {14, 1});
+    core.setGeometry({16, 4}, {39, 1});
+    core_browse.setGeometry({57, 4}, {10, 1});
+    help.setGeometry({2, 7}, {65, 1});
+    open.setGeometry({43, 10}, {10, 1});
+    cancel.setGeometry({55, 10}, {12, 1});
+    executable_browse.addCallback("clicked", [this] { chooseFile(executable); });
+    core_browse.addCallback("clicked", [this] { chooseFile(core); });
+    open.addCallback("clicked", [this] { owner->done(finalcut::FDialog::ResultCode::Accept); });
+    cancel.addCallback("clicked", [this] { owner->done(finalcut::FDialog::ResultCode::Reject); });
+    executable.setFocus();
+  }
+
+  void chooseFile(finalcut::FLineEdit& field) {
+    const auto current = pathValue(field);
+    const auto directory = current.empty() ? initial_directory : current.parent_path();
+    const auto selected = finalcut::FFileDialog::fileOpenChooser(
+      owner, finalcut::FString(directory.string()), "*");
+    if (!selected.isEmpty()) field.setText(selected);
+  }
+
+  auto paths(std::filesystem::path& executable_path,
+      std::filesystem::path& core_path, std::string& error) const -> bool {
+    executable_path = pathValue(executable);
+    core_path = pathValue(core);
+    if (executable_path.empty() || core_path.empty()) {
+      error = "Select both an executable and a core dump.";
+      return false;
+    }
+    std::error_code status_error;
+    if (!std::filesystem::is_regular_file(executable_path, status_error)) {
+      error = "Executable is not a readable regular file: " + executable_path.string();
+      return false;
+    }
+    status_error.clear();
+    if (!std::filesystem::is_regular_file(core_path, status_error)) {
+      error = "Core dump is not a readable regular file: " + core_path.string();
+      return false;
+    }
+    return true;
+  }
+
+  auto pathValue(const finalcut::FLineEdit& field) const -> std::filesystem::path {
+    const std::filesystem::path value(field.getText().trim().toString());
+    if (value.empty()) return {};
+    return normalizePath(value.is_absolute() ? value : initial_directory / value);
+  }
+
+  CoreDumpDialog* owner;
+  std::filesystem::path initial_directory;
+  finalcut::FLabel executable_label; finalcut::FLineEdit executable;
+  finalcut::FButton executable_browse;
+  finalcut::FLabel core_label; finalcut::FLineEdit core; finalcut::FButton core_browse;
+  finalcut::FLabel help; finalcut::FButton open; finalcut::FButton cancel;
+};
+
+CoreDumpDialog::CoreDumpDialog(std::filesystem::path initial_directory,
+    finalcut::FWidget* parent)
+    : CenteredDialog("Open core dump", parent) {
+  setDialogSize({72, 15});
+  setModal();
+  impl_ = std::make_unique<Impl>(this, std::move(initial_directory));
+}
+
+CoreDumpDialog::~CoreDumpDialog() = default;
+
+auto CoreDumpDialog::paths(std::filesystem::path& executable,
+    std::filesystem::path& core_file, std::string& error) const -> bool {
+  return impl_->paths(executable, core_file, error);
 }
 
 }  // namespace tuiide

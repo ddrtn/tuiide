@@ -267,6 +267,7 @@ class IdeWindow final : public finalcut::FDialog {
   void debugRun();
   void startDebug();
   void attachToProcess();
+  void openCoreDump();
   void debugStop();
   void debugRestart();
   auto applyWorkspaceEdit(WorkspaceEdit edit, std::string title = "Workspace edit",
@@ -451,6 +452,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FMenuItem stop{"S&top", &menu};
     finalcut::FMenuItem restart{"&Restart", &menu};
     finalcut::FMenuItem attach{"Attach to process...", &menu};
+    finalcut::FMenuItem core_dump{"Open &core dump...", &menu};
     finalcut::FMenuItem separator1{&menu};
     finalcut::FMenuItem breakpoint{finalcut::FKey::F9, "Toggle &breakpoint", &menu};
     finalcut::FMenuItem breakpoint_properties{"Breakpoint &properties...", &menu};

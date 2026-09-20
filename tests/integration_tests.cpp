@@ -2640,6 +2640,11 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
 
   const bool stop_menu = debugCommand('t');
   const bool debug_stopped_by_user = waitFor(pump, [&] { return logged("Debug session stopped"); }, 8s);
+  const bool core_menu = debugCommand('c');
+  const bool core_dialog = visible("Executable:", 5s)
+    && screen.find("Core dump:") != std::string::npos
+    && screen.find("read-only") != std::string::npos;
+  closeTextDialog();
   screen.clear(); send("\033f"); (void)visible("Exit", 3s); send("x");
   int status{};
   const auto exited = waitFor(pump, [&] { return ::waitpid(child, &status, WNOHANG) == child; }, 10s);
@@ -2657,6 +2662,7 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
   (void)memory_normal_menu;
   (void)memory_error_menu;
   (void)stop_menu;
+  (void)core_menu;
   (void)open_dialog;
   (void)breakpoint_line;
   (void)panel_hidden;
@@ -2678,6 +2684,7 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
     && memory_cancel_prompt && memory_invalid
     && memory_result && memory_error && signals_dialog && signals_inspected
     && signals_picker && signal_policy_dialog && signal_policy_requested && debug_stopped_by_user
+    && core_dialog
     && exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
   if (!success) {
     std::ifstream log_input(log);
@@ -2697,7 +2704,8 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
       << " memory=" << memory_invalid << "/" << memory_result << "/" << memory_error
       << " signals=" << signals_dialog << "/" << signals_inspected << "/" << signals_picker
       << "/" << signal_policy_dialog << "/" << signal_policy_requested
-      << " stop=" << debug_stopped_by_user << " exited=" << exited << " status=" << status
+      << " stop=" << debug_stopped_by_user << " core-dialog=" << core_dialog
+      << " exited=" << exited << " status=" << status
       << "\nSession:\n" << readSession() << "\nLog:\n" << log_text << '\n';
   }
   return success;
@@ -3701,6 +3709,90 @@ int main(int argc, char** argv) {
       "fatal signal delivery reports inferior exit without hanging the debug session");
   }
   gdb.stop();
+
+  // CLI generate-core-file не интерпретирует кавычки вокруг имени с пробелами,
+  // поэтому тестовая фикстура использует безопасное уникальное имя в /tmp.
+  const auto generated_core_file = std::filesystem::temp_directory_path()
+    / ("tuiide-core-" + unique + ".core");
+  const auto core_file = project.path / "smoke app.core";
+  std::string core_generation_output;
+  expect(runProcess({"gdb", "--quiet", "--batch", "-ex", "set confirm off",
+      "-ex", "break main.cpp:10", "-ex", "run",
+      "-ex", "generate-core-file " + generated_core_file.string(), "-ex", "kill",
+      "--args", (build / "smoke_app").string()}, project.path, core_generation_output)
+      && std::filesystem::is_regular_file(generated_core_file),
+    "GDB fixture generates a core dump at a source breakpoint");
+  std::error_code core_move_error;
+  std::filesystem::rename(generated_core_file, core_file, core_move_error);
+  expect(!core_move_error && std::filesystem::is_regular_file(core_file),
+    "core fixture moves to a path with spaces for MI quoting regression");
+  tuiide::GdbClient core_gdb;
+  expect(core_gdb.addWatch("result"), "core session queues a read-only watch");
+  core_gdb.setRegistersEnabled(true);
+  expect(core_gdb.openCore(build / "smoke_app", core_file, project.path)
+      && core_gdb.mode() == tuiide::DebugSessionMode::Core,
+    "GDB starts a dedicated core dump session");
+  std::vector<std::string> core_log;
+  const auto core_ready = waitFor([&] {
+    core_gdb.poll();
+    auto lines = core_gdb.takeOutput();
+    core_log.insert(core_log.end(), std::make_move_iterator(lines.begin()),
+      std::make_move_iterator(lines.end()));
+  }, [&] {
+    return core_gdb.stopped() && !core_gdb.frames().empty()
+      && !core_gdb.variables().empty() && !core_gdb.registers().empty()
+      && !core_gdb.watches().empty() && core_gdb.watches()[0].error.empty();
+  });
+  if (!core_ready) {
+    std::cerr << "Core state: stopped=" << core_gdb.stopped()
+              << " frames=" << core_gdb.frames().size()
+              << " variables=" << core_gdb.variables().size()
+              << " registers=" << core_gdb.registers().size() << '\n';
+    for (const auto& line : core_log) std::cerr << "Core MI: " << line << '\n';
+  }
+  expect(core_ready && core_gdb.active()
+      && std::none_of(core_log.begin(), core_log.end(), [](const auto& line) {
+        return line.find("GDB error:") != std::string::npos;
+      }),
+    "core dump exposes frames, locals, watches, and registers");
+  core_gdb.continueExecution(); core_gdb.next(); core_gdb.step(); core_gdb.finish(); core_gdb.interrupt();
+  expect(core_gdb.stopped() && !core_gdb.assign("result", "0")
+      && !core_gdb.sendSignal("SIGTERM")
+      && !core_gdb.setSignalPolicy("SIGUSR1", true, true, true),
+    "core dump rejects execution, assignment, and signal mutations");
+  std::vector<tuiide::DebugResult> core_results;
+  expect(core_gdb.evaluate("result = 0"),
+    "core dump forwards an assignment-shaped expression to GDB's memory-write guard");
+  expect(waitFor([&] {
+    core_gdb.poll();
+    auto results = core_gdb.takeResults();
+    core_results.insert(core_results.end(), std::make_move_iterator(results.begin()),
+      std::make_move_iterator(results.end()));
+  }, [&] {
+    return std::any_of(core_results.begin(), core_results.end(), [](const auto& result) {
+      return result.expression == "result = 0" && !result.error.empty();
+    });
+  }), "GDB memory-write guard rejects assignment through expression evaluation");
+  expect(core_gdb.evaluate("result"), "core dump accepts read-only expression evaluation");
+  expect(waitFor([&] {
+    core_gdb.poll();
+    auto results = core_gdb.takeResults();
+    core_results.insert(core_results.end(), std::make_move_iterator(results.begin()),
+      std::make_move_iterator(results.end()));
+  }, [&] {
+    return std::any_of(core_results.begin(), core_results.end(), [](const auto& result) {
+      return result.kind == tuiide::DebugResultKind::Evaluation
+        && result.error.empty() && result.value.find("42") != std::string::npos;
+    });
+  }), "core dump evaluates an expression without modifying captured state");
+  expect(core_gdb.stop() && core_gdb.mode() == tuiide::DebugSessionMode::None,
+    "closing a core dump resets the debugger lifecycle");
+  std::error_code core_cleanup_error;
+  std::filesystem::remove(core_file, core_cleanup_error);
+  if (std::getenv("TUIIDE_CORE_DUMP_ONLY") != nullptr) {
+    std::cout << "GDB core dump tests passed\n";
+    return 0;
+  }
 
   int attach_ready[2]{-1, -1};
   expect(::pipe(attach_ready) == 0, "attach regression creates a readiness pipe");

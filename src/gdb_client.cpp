@@ -106,6 +106,16 @@ auto gdbAttachCommand(int pid) -> std::string {
   return pid > 0 ? "-target-attach " + std::to_string(pid) : std::string{};
 }
 
+auto gdbExecutableCommand(const std::filesystem::path& executable) -> std::string {
+  return executable.empty() ? std::string{}
+    : "-file-exec-and-symbols " + quoteMiArgument(executable.string());
+}
+
+auto gdbCoreCommand(const std::filesystem::path& core_file) -> std::string {
+  return core_file.empty() ? std::string{}
+    : "-target-select core " + quoteMiArgument(core_file.string());
+}
+
 auto debugProcesses(const std::filesystem::path& proc_root) -> std::vector<DebugProcess> {
   std::vector<DebugProcess> result;
   std::error_code error;
@@ -146,19 +156,20 @@ auto debugProcesses(const std::filesystem::path& proc_root) -> std::vector<Debug
 
 auto GdbClient::sendSignal(std::string_view signal) -> bool {
   const auto request = gdbSignalCommand(signal);
-  if (!running() || !active() || !stopped_ || request.empty() || pending_signal_) return false;
+  if (!running() || mode_ == DebugSessionMode::Core || !active() || !stopped_
+      || request.empty() || pending_signal_) return false;
   pending_signal_ = command(request);
   stopped_ = false;
   return true;
 }
 auto GdbClient::setSignalPolicy(std::string_view signal, bool stop, bool print, bool pass) -> bool {
   const auto request = gdbSignalPolicyCommand(signal, stop, print, pass);
-  if (!running() || !stopped_ || request.empty()) return false;
+  if (!running() || mode_ == DebugSessionMode::Core || !stopped_ || request.empty()) return false;
   command(request);
   return true;
 }
 auto GdbClient::inspectSignals() -> bool {
-  if (!running() || !stopped_) return false;
+  if (!running() || mode_ == DebugSessionMode::Core || !stopped_) return false;
   command("-interpreter-exec console \"info signals\"");
   return true;
 }
@@ -176,6 +187,7 @@ auto GdbClient::start(const std::filesystem::path& executable,
   if (!process_.start(arguments, true, working_directory, environment)) return false;
   inferior_active_ = false; stopped_ = false; inferior_exited_ = false; run_requested_ = false;
   pending_signal_ = 0; pending_attach_ = 0; pending_detach_ = 0;
+  pending_core_executable_ = 0; pending_core_target_ = 0; core_file_.clear();
   mode_ = DebugSessionMode::Launch;
   selected_frame_ = 0; ++variable_generation_; pending_variables_.clear(); pending_children_.clear();
   pending_expressions_.clear(); results_.clear();
@@ -196,6 +208,7 @@ auto GdbClient::attach(int pid, const std::filesystem::path& working_directory) 
       || !process_.start({"gdb", "--quiet", "--interpreter=mi3"}, true, working_directory)) return false;
   inferior_active_ = false; stopped_ = false; inferior_exited_ = false; run_requested_ = false;
   pending_signal_ = 0; pending_attach_ = 0; pending_detach_ = 0;
+  pending_core_executable_ = 0; pending_core_target_ = 0; core_file_.clear();
   mode_ = DebugSessionMode::Attach;
   selected_frame_ = 0; ++variable_generation_; pending_variables_.clear(); pending_children_.clear();
   pending_expressions_.clear(); results_.clear(); stdin_file_.clear();
@@ -206,6 +219,33 @@ auto GdbClient::attach(int pid, const std::filesystem::path& working_directory) 
   register_names_.clear(); registers_.clear();
   for (const auto& [key, breakpoint] : desired_breakpoints_) { (void)breakpoint; insertBreakpoint(key); }
   pending_attach_ = command(request);
+  return true;
+}
+auto GdbClient::openCore(const std::filesystem::path& executable,
+    const std::filesystem::path& core_file,
+    const std::filesystem::path& working_directory) -> bool {
+  const auto executable_request = gdbExecutableCommand(executable);
+  const auto core_request = gdbCoreCommand(core_file);
+  std::error_code executable_error;
+  std::error_code core_error;
+  if (executable_request.empty() || core_request.empty() || process_.running()
+      || !std::filesystem::is_regular_file(executable, executable_error)
+      || !std::filesystem::is_regular_file(core_file, core_error)
+      || !process_.start({"gdb", "--quiet", "--interpreter=mi3"}, true, working_directory)) return false;
+  inferior_active_ = false; stopped_ = false; inferior_exited_ = false; run_requested_ = false;
+  pending_signal_ = 0; pending_attach_ = 0; pending_detach_ = 0; pending_core_target_ = 0;
+  mode_ = DebugSessionMode::Core;
+  selected_frame_ = 0; ++variable_generation_; pending_variables_.clear(); pending_children_.clear();
+  pending_expressions_.clear(); results_.clear(); stdin_file_.clear();
+  command("-gdb-set pagination off");
+  command("-gdb-set print pretty on");
+  command("-gdb-set write off");
+  command("-gdb-set may-write-memory off");
+  command("-enable-pretty-printing");
+  breakpoint_numbers_.clear(); pending_breakpoints_.clear(); pending_breakpoint_commands_.clear();
+  register_names_.clear(); registers_.clear();
+  core_file_ = core_file;
+  pending_core_executable_ = command(executable_request);
   return true;
 }
 auto GdbClient::stop() -> bool {
@@ -225,7 +265,9 @@ auto GdbClient::stop() -> bool {
   }
   if (process_.running()) command("-gdb-exit");
   process_.stop(); inferior_active_ = false; stopped_ = false; inferior_exited_ = false; run_requested_ = false;
-  pending_signal_ = 0; pending_attach_ = 0; pending_detach_ = 0; mode_ = DebugSessionMode::None;
+  pending_signal_ = 0; pending_attach_ = 0; pending_detach_ = 0;
+  pending_core_executable_ = 0; pending_core_target_ = 0; core_file_.clear();
+  mode_ = DebugSessionMode::None;
   breakpoint_numbers_.clear(); pending_breakpoints_.clear(); pending_breakpoint_commands_.clear(); pending_watches_.clear();
   pending_variables_.clear(); pending_children_.clear(); ++variable_generation_; selected_frame_ = 0;
   pending_expressions_.clear(); results_.clear();
@@ -249,11 +291,11 @@ void GdbClient::run() {
   run_requested_ = true;
   startRequestedRun();
 }
-void GdbClient::interrupt() { command("-exec-interrupt"); }
-void GdbClient::continueExecution() { inferior_active_ = true; stopped_ = false; selected_frame_ = 0; frames_.clear(); variables_.clear(); ++variable_generation_; pending_variables_.clear(); pending_children_.clear(); threads_.clear(); registers_.clear(); pending_watches_.clear(); markWatchesUnavailable("program running"); command("-exec-continue"); }
-void GdbClient::next() { inferior_active_ = true; stopped_ = false; selected_frame_ = 0; frames_.clear(); variables_.clear(); ++variable_generation_; pending_variables_.clear(); pending_children_.clear(); threads_.clear(); registers_.clear(); pending_watches_.clear(); markWatchesUnavailable("program running"); command("-exec-next"); }
-void GdbClient::step() { inferior_active_ = true; stopped_ = false; selected_frame_ = 0; frames_.clear(); variables_.clear(); ++variable_generation_; pending_variables_.clear(); pending_children_.clear(); threads_.clear(); registers_.clear(); pending_watches_.clear(); markWatchesUnavailable("program running"); command("-exec-step"); }
-void GdbClient::finish() { inferior_active_ = true; stopped_ = false; selected_frame_ = 0; frames_.clear(); variables_.clear(); ++variable_generation_; pending_variables_.clear(); pending_children_.clear(); threads_.clear(); registers_.clear(); pending_watches_.clear(); markWatchesUnavailable("program running"); command("-exec-finish"); }
+void GdbClient::interrupt() { if (mode_ != DebugSessionMode::Core) command("-exec-interrupt"); }
+void GdbClient::continueExecution() { if (mode_ == DebugSessionMode::Core) return; inferior_active_ = true; stopped_ = false; selected_frame_ = 0; frames_.clear(); variables_.clear(); ++variable_generation_; pending_variables_.clear(); pending_children_.clear(); threads_.clear(); registers_.clear(); pending_watches_.clear(); markWatchesUnavailable("program running"); command("-exec-continue"); }
+void GdbClient::next() { if (mode_ == DebugSessionMode::Core) return; inferior_active_ = true; stopped_ = false; selected_frame_ = 0; frames_.clear(); variables_.clear(); ++variable_generation_; pending_variables_.clear(); pending_children_.clear(); threads_.clear(); registers_.clear(); pending_watches_.clear(); markWatchesUnavailable("program running"); command("-exec-next"); }
+void GdbClient::step() { if (mode_ == DebugSessionMode::Core) return; inferior_active_ = true; stopped_ = false; selected_frame_ = 0; frames_.clear(); variables_.clear(); ++variable_generation_; pending_variables_.clear(); pending_children_.clear(); threads_.clear(); registers_.clear(); pending_watches_.clear(); markWatchesUnavailable("program running"); command("-exec-step"); }
+void GdbClient::finish() { if (mode_ == DebugSessionMode::Core) return; inferior_active_ = true; stopped_ = false; selected_frame_ = 0; frames_.clear(); variables_.clear(); ++variable_generation_; pending_variables_.clear(); pending_children_.clear(); threads_.clear(); registers_.clear(); pending_watches_.clear(); markWatchesUnavailable("program running"); command("-exec-finish"); }
 void GdbClient::selectThread(const std::string& id) {
   if (!stopped_ || id.empty()) return;
   frames_.clear(); variables_.clear(); selected_frame_ = 0; ++variable_generation_;
@@ -295,7 +337,7 @@ auto GdbClient::evaluate(std::string expression) -> bool {
   return true;
 }
 auto GdbClient::assign(std::string expression, std::string value) -> bool {
-  if (!stopped_ || expression.empty() || value.empty()) return false;
+  if (!stopped_ || mode_ == DebugSessionMode::Core || expression.empty() || value.empty()) return false;
   auto assignment = "(" + expression + ") = (" + value + ")";
   const auto token = command(gdbEvaluateCommand(assignment));
   pending_expressions_[token] =
@@ -348,7 +390,7 @@ auto GdbClient::addBreakpoint(const std::filesystem::path& file, std::size_t lin
   DebugBreakpoint breakpoint;
   breakpoint.file = std::filesystem::absolute(file).lexically_normal(); breakpoint.line = line;
   if (!desired_breakpoints_.emplace(key, std::move(breakpoint)).second) return false;
-  if (process_.running()) insertBreakpoint(key);
+  if (process_.running() && mode_ != DebugSessionMode::Core) insertBreakpoint(key);
   return true;
 }
 auto GdbClient::updateBreakpoint(const DebugBreakpoint& breakpoint) -> bool {
@@ -363,7 +405,7 @@ auto GdbClient::updateBreakpoint(const DebugBreakpoint& breakpoint) -> bool {
   if (const auto number = breakpoint_numbers_.find(key); number != breakpoint_numbers_.end()) {
     command("-break-delete " + number->second); breakpoint_numbers_.erase(number);
   }
-  if (process_.running()) insertBreakpoint(key);
+  if (process_.running() && mode_ != DebugSessionMode::Core) insertBreakpoint(key);
   return true;
 }
 auto GdbClient::removeBreakpoint(const std::filesystem::path& file, std::size_t line) -> bool {
@@ -375,7 +417,8 @@ auto GdbClient::removeBreakpoint(const std::filesystem::path& file, std::size_t 
   return true;
 }
 void GdbClient::clearBreakpoints() {
-  if (process_.running() && !breakpoint_numbers_.empty()) command("-break-delete");
+  if (process_.running() && mode_ != DebugSessionMode::Core
+      && !breakpoint_numbers_.empty()) command("-break-delete");
   desired_breakpoints_.clear(); breakpoint_numbers_.clear(); pending_breakpoints_.clear();
 }
 auto GdbClient::hasBreakpoint(const std::filesystem::path& file, std::size_t line) const -> bool { return desired_breakpoints_.contains(breakpointKey(file, line)); }
@@ -438,6 +481,23 @@ void GdbClient::poll() {
     }
     if (mi.token) {
       const auto token = *mi.token;
+      if (token == pending_core_executable_ && mi.prefix == '^') {
+        pending_core_executable_ = 0;
+        if (mi.klass == "done") {
+          pending_core_target_ = command(gdbCoreCommand(core_file_));
+        } else {
+          inferior_active_ = false; stopped_ = false; inferior_exited_ = true;
+        }
+      }
+      if (token == pending_core_target_ && mi.prefix == '^') {
+        pending_core_target_ = 0;
+        if (mi.klass == "done" || mi.klass == "connected") {
+          inferior_active_ = true; stopped_ = true; inferior_exited_ = false;
+          selected_frame_ = 0; refreshState();
+        } else {
+          inferior_active_ = false; stopped_ = false; inferior_exited_ = true;
+        }
+      }
       if (token == pending_attach_ && mi.prefix == '^') {
         pending_attach_ = 0;
         if (mi.klass == "done") {

@@ -1382,6 +1382,15 @@ int main() {
   expect(tuiide::gdbAttachCommand(42) == "-target-attach 42"
       && tuiide::gdbAttachCommand(0).empty() && tuiide::gdbAttachCommand(-7).empty(),
     "GDB attach command accepts only a positive PID");
+  expect(tuiide::gdbExecutableCommand("/tmp/app with spaces")
+      == "-file-exec-and-symbols \"/tmp/app with spaces\""
+      && tuiide::gdbCoreCommand("/tmp/core\"dump")
+        == "-target-select core \"/tmp/core\\\"dump\""
+      && tuiide::gdbExecutableCommand({}).empty() && tuiide::gdbCoreCommand({}).empty(),
+    "GDB core commands quote paths and reject empty selections");
+  expect(!debugger.openCore("/missing/executable", "/missing/core")
+      && debugger.mode() == tuiide::DebugSessionMode::None,
+    "core sessions reject missing files before starting GDB");
   const auto fake_proc = std::filesystem::temp_directory_path()
     / ("tuiide-proc-" + std::to_string(
       std::chrono::steady_clock::now().time_since_epoch().count()));

@@ -4,6 +4,7 @@
 #include "tuiide/ui_dialogs.hpp"
 
 #include <memory>
+#include <filesystem>
 #include <string>
 
 namespace tuiide {
@@ -17,6 +18,21 @@ class BreakpointSettingsDialog final : public CenteredDialog {
 
   [[nodiscard]] auto apply(DebugBreakpoint& breakpoint,
     std::string& error) const -> bool;
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
+/** Выбирает executable и соответствующий core dump для read-only сессии. */
+class CoreDumpDialog final : public CenteredDialog {
+ public:
+  explicit CoreDumpDialog(std::filesystem::path initial_directory,
+    finalcut::FWidget* parent = nullptr);
+  ~CoreDumpDialog() override;
+
+  [[nodiscard]] auto paths(std::filesystem::path& executable,
+    std::filesystem::path& core_file, std::string& error) const -> bool;
 
  private:
   struct Impl;

@@ -51,8 +51,8 @@ struct DebugRegister {
   std::string value;
 };
 
-/** Режим текущего процесса GDB; attach запрещает повторный запуск inferior. */
-enum class DebugSessionMode { None, Launch, Attach };
+/** Режим текущего процесса GDB; Core разрешает только операции чтения. */
+enum class DebugSessionMode { None, Launch, Attach, Core };
 
 /** Доступный для attach Linux-процесс, прочитанный из procfs. */
 struct DebugProcess {
@@ -92,6 +92,8 @@ struct DebugBreakpoint {
 [[nodiscard]] auto gdbSignalPolicyCommand(std::string_view signal,
   bool stop, bool print, bool pass) -> std::string;
 [[nodiscard]] auto gdbAttachCommand(int pid) -> std::string;
+[[nodiscard]] auto gdbExecutableCommand(const std::filesystem::path& executable) -> std::string;
+[[nodiscard]] auto gdbCoreCommand(const std::filesystem::path& core_file) -> std::string;
 /** Читает процессы из procfs; параметр корня нужен для детерминированных тестов. */
 [[nodiscard]] auto debugProcesses(const std::filesystem::path& proc_root = "/proc")
   -> std::vector<DebugProcess>;
@@ -113,6 +115,10 @@ class GdbClient {
     const std::filesystem::path& inferior_tty = {}) -> bool;
   /** Запускает GDB и асинхронно присоединяет его к уже живому процессу. */
   auto attach(int pid, const std::filesystem::path& working_directory = {}) -> bool;
+  /** Открывает core dump с символами executable в режиме только чтения. */
+  auto openCore(const std::filesystem::path& executable,
+    const std::filesystem::path& core_file,
+    const std::filesystem::path& working_directory = {}) -> bool;
   /** Останавливает GDB; attach-сессию сначала явно отсоединяет от inferior. */
   auto stop() -> bool;
   void clearSessionState();
@@ -214,6 +220,9 @@ class GdbClient {
   int pending_signal_{};
   int pending_attach_{};
   int pending_detach_{};
+  int pending_core_executable_{};
+  int pending_core_target_{};
+  std::filesystem::path core_file_;
   bool detach_confirmed_{};
   DebugSessionMode mode_{DebugSessionMode::None};
 };

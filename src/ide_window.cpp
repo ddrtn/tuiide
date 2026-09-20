@@ -553,6 +553,8 @@ void IdeWindow::setupMenus() {
   debug_menu_.restart.addCallback("clicked", [this] { deferred_command_ = [this] { debugRestart(); }; });
   debug_menu_.attach.setStatusBarMessage("Attach GDB to a running Linux process");
   debug_menu_.attach.addCallback("clicked", [this] { deferred_command_ = [this] { attachToProcess(); }; });
+  debug_menu_.core_dump.setStatusBarMessage("Open an executable and core dump for read-only inspection");
+  debug_menu_.core_dump.addCallback("clicked", [this] { deferred_command_ = [this] { openCoreDump(); }; });
   bind(debug_menu_.breakpoint, finalcut::FKey::F9, "Toggle breakpoint on the current line");
   debug_menu_.breakpoint_properties.setStatusBarMessage("Edit condition, ignored hits, or logpoint message");
   debug_menu_.breakpoint_properties.addCallback("clicked", [this] { deferred_command_ = [this] { editSelectedBreakpoint(); }; });
@@ -1484,7 +1486,9 @@ void IdeWindow::openSelectedOutlineSymbol() {
 }
 
 void IdeWindow::addWatch() {
-  if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Add watch unavailable: no project is open\n"); return; }
+  if (root_.empty() && gdb_.mode() != DebugSessionMode::Core) {
+    publishEvent(EventSource::Debug, EventSeverity::Warning, "Add watch unavailable: no project is open\n"); return;
+  }
   const auto expression = prompt("Add watch", "Expression:");
   if (expression.empty()) return;
   if (!gdb_.addWatch(expression)) publishEvent(EventSource::Debug, EventSeverity::Warning, "Watch already exists or is empty: " + expression + "\n");
@@ -1503,6 +1507,11 @@ void IdeWindow::evaluateExpression() {
 
 void IdeWindow::editVariableValue() {
   if (!gdb_.stopped()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Set variable unavailable: debugger is not stopped\n"); return; }
+  if (gdb_.mode() == DebugSessionMode::Core) {
+    publishEvent(EventSource::Debug, EventSeverity::Warning,
+      "Set variable unavailable: core dumps are read-only\n");
+    return;
+  }
   std::string expression;
   const auto selected = debug_.currentItem();
   const auto* row = selected > 0 ? debug_ui_.debugRow(selected - 1) : nullptr;
@@ -1527,7 +1536,8 @@ void IdeWindow::showDisassembly() {
 }
 
 void IdeWindow::manageSignals() {
-  if (!gdb_.running() || !gdb_.active() || !gdb_.stopped()) return;
+  if (!gdb_.running() || gdb_.mode() == DebugSessionMode::Core
+      || !gdb_.active() || !gdb_.stopped()) return;
   const auto action = choose("Signals", {"Inspect policies (Output)", "Configure handling", "Send signal and continue"});
   if (!action) return;
   if (action == 1) {
@@ -3661,6 +3671,11 @@ void IdeWindow::debugRun() {
       "Debug continue unavailable: attached process is already running\n");
     return;
   }
+  if (gdb_.running() && gdb_.mode() == DebugSessionMode::Core) {
+    publishEvent(EventSource::Debug, EventSeverity::Warning,
+      "Debug continue unavailable: a core dump is open in read-only mode\n");
+    return;
+  }
   if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug unavailable: no project is open\n"); return; }
   if (!gdb_.running()) {
     if (!saveAllDocuments()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug cancelled because not all documents were saved\n"); return; }
@@ -3731,6 +3746,49 @@ void IdeWindow::attachToProcess() {
   updateStatus();
 }
 
+void IdeWindow::openCoreDump() {
+  if (!external_tools_.gdb) {
+    publishEvent(EventSource::Debug, EventSeverity::Error,
+      "Core dump unavailable: install gdb or add it to PATH\n");
+    return;
+  }
+  if (gdb_.running() || build_session_.running() || run_session_.running()
+      || ctest_session_.running() || analysis_session_.running()) {
+    publishEvent(EventSource::Debug, EventSeverity::Warning,
+      "Core dump unavailable: another build, run, test, analysis, or debug session is active\n");
+    return;
+  }
+  std::error_code directory_error;
+  auto initial_directory = !build_dir_.empty() && std::filesystem::is_directory(build_dir_, directory_error)
+    ? build_dir_ : root_;
+  if (initial_directory.empty()) initial_directory = std::filesystem::current_path(directory_error);
+  delTimer(timer_id_);
+  CoreDumpDialog dialog(initial_directory, this);
+  const bool accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
+  timer_id_ = addTimer(100);
+  if (!accepted) return;
+  std::filesystem::path executable;
+  std::filesystem::path core_file;
+  std::string error;
+  if (!dialog.paths(executable, core_file, error)) {
+    finalcut::FMessageBox::error(this, finalcut::FString(error));
+    return;
+  }
+  if (!gdb_.openCore(executable, core_file, executable.parent_path())) {
+    publishEvent(EventSource::Debug, EventSeverity::Error,
+      "Failed to start GDB for core dump " + core_file.string() + "\n");
+    return;
+  }
+  run_session_.stop(); console_.setControlEnabled(false); console_.clear();
+  sidebar_tabs_.setCurrentIndex(3, true);
+  lower_tabs_.setCurrentIndex(0, true);
+  publishEvent(EventSource::Debug, EventSeverity::Information,
+    "GDB: opening core dump " + core_file.string() + " with " + executable.string()
+      + " (read-only)\n");
+  showNotification("Opening core dump in read-only mode", NotificationKind::Information);
+  updateStatus();
+}
+
 void IdeWindow::startDebug() {
   if (!external_tools_.gdb) { publishEvent(EventSource::Debug, EventSeverity::Error,
     "GDB unavailable: install gdb or add it to PATH; debugging cannot start.\n"); return; }
@@ -3759,6 +3817,7 @@ void IdeWindow::startDebug() {
 void IdeWindow::debugStop() {
   if (!gdb_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Stop unavailable: debugger is not started\n"); return; }
   const bool attached = gdb_.mode() == DebugSessionMode::Attach;
+  const bool core_dump = gdb_.mode() == DebugSessionMode::Core;
   const bool detached = gdb_.stop();
   execution_file_.clear(); execution_line_ = 0; editor_.setExecutionLine(std::nullopt);
   run_session_.stop();
@@ -3768,7 +3827,7 @@ void IdeWindow::debugStop() {
   publishEvent(EventSource::Debug, detached ? EventSeverity::Information : EventSeverity::Warning,
     attached ? (detached ? "Debug session detached; target process left running\n"
                          : "GDB stopped without a confirmed target detach; verify the target process\n")
-             : "Debug session stopped\n");
+             : (core_dump ? "Core dump closed\n" : "Debug session stopped\n"));
   showNotification("Debug session stopped", NotificationKind::Warning);
 }
 
@@ -3776,9 +3835,11 @@ void IdeWindow::debugRestart() {
   if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart unavailable: no project is open\n"); return; }
   if (build_session_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart unavailable: a CMake operation is in progress\n"); return; }
   if (!gdb_.running()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Debug Restart unavailable: debugger is not started\n"); return; }
-  if (gdb_.mode() == DebugSessionMode::Attach) {
+  if (gdb_.mode() == DebugSessionMode::Attach || gdb_.mode() == DebugSessionMode::Core) {
     publishEvent(EventSource::Debug, EventSeverity::Warning,
-      "Debug Restart unavailable for an attached process; stop and attach again\n");
+      gdb_.mode() == DebugSessionMode::Core
+        ? "Debug Restart unavailable for a read-only core dump\n"
+        : "Debug Restart unavailable for an attached process; stop and attach again\n");
     return;
   }
   if (!external_tools_.gdb) { publishEvent(EventSource::Debug, EventSeverity::Error,
@@ -3978,27 +4039,30 @@ void IdeWindow::updateMenuState() {
   enabled(run_menu_.rerun_failed_tests, test_idle);
   enabled(run_menu_.test_preset, test_idle);
   enabled(run_menu_.stop_tests, ctest_session_.running());
-  enabled(debug_menu_.start, state.debug_start && analysis_idle);
+  const bool core_dump = gdb_.mode() == DebugSessionMode::Core;
+  enabled(debug_menu_.start, state.debug_start && analysis_idle && !core_dump);
   enabled(debug_menu_.pause, state.debug_pause);
   enabled(debug_menu_.stop, state.debug_stop);
-  enabled(debug_menu_.restart, state.debug_restart);
+  enabled(debug_menu_.restart, state.debug_restart && !core_dump);
   enabled(debug_menu_.attach, !gdb_.running() && !build_session_.running()
+    && !run_session_.running() && !ctest_session_.running() && analysis_idle);
+  enabled(debug_menu_.core_dump, !gdb_.running() && !build_session_.running()
     && !run_session_.running() && !ctest_session_.running() && analysis_idle);
   enabled(debug_menu_.breakpoint, state.breakpoint);
   enabled(debug_menu_.breakpoint_properties, state.debug_panel);
   enabled(debug_menu_.breakpoint_enable, state.debug_panel);
   enabled(debug_menu_.breakpoint_remove, state.debug_panel);
   enabled(debug_menu_.breakpoint_clear, state.debug_panel);
-  enabled(debug_menu_.next, state.debug_step);
-  enabled(debug_menu_.step, state.debug_step);
-  enabled(debug_menu_.finish, state.debug_step);
-  enabled(debug_menu_.watch, state.watch);
+  enabled(debug_menu_.next, state.debug_step && !core_dump);
+  enabled(debug_menu_.step, state.debug_step && !core_dump);
+  enabled(debug_menu_.finish, state.debug_step && !core_dump);
+  enabled(debug_menu_.watch, state.watch || (core_dump && gdb_.stopped()));
   enabled(debug_menu_.evaluate, state.debug_step);
-  enabled(debug_menu_.set_variable, state.debug_step);
+  enabled(debug_menu_.set_variable, state.debug_step && !core_dump);
   enabled(debug_menu_.disassembly, state.debug_step);
   enabled(debug_menu_.memory, state.debug_step);
-  enabled(debug_menu_.registers, state.registers);
-  enabled(debug_menu_.signals, state.debug_step);
+  enabled(debug_menu_.registers, state.registers || (core_dump && gdb_.stopped()));
+  enabled(debug_menu_.signals, state.debug_step && !core_dump);
   enabled(tools_menu_.completion, state.completion);
   enabled(tools_menu_.signature, state.signature_help);
   enabled(tools_menu_.hover, state.hover);
@@ -4052,7 +4116,9 @@ void IdeWindow::updateStatus() {
        << " | CDB: " << (!compilation_database_.available() ? "missing"
          : (!document_ || !isCppSource(document_->path()) ? "ready"
            : (compilation_database_.contains(document_->path()) ? "entry" : "fallback")))
-       << " | gdb: " << (gdb_.exited() ? "exited" : (gdb_.running() ? (gdb_.stopped() ? "stopped" : "running") : "off"))
+       << " | gdb: " << (gdb_.mode() == DebugSessionMode::Core && gdb_.running() && gdb_.stopped()
+         ? "core/read-only" : (gdb_.exited() ? "exited"
+           : (gdb_.running() ? (gdb_.stopped() ? "stopped" : "running") : "off")))
        << " | cmake: ";
   if (!build_session_.running()) text << "idle";
   else {
@@ -4133,6 +4199,13 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
     if (!gdb_.active()) { publishEvent(EventSource::Debug, EventSeverity::Warning, std::string(command) + " unavailable: the program has exited\n"); return false; }
     if (!gdb_.stopped()) { publishEvent(EventSource::Debug, EventSeverity::Warning, std::string(command) + " unavailable: debuggee is running\n"); return false; }
     return true;
+  };
+  const auto requireMutableStoppedDebugger = [this, &requireStoppedDebugger](std::string_view command) {
+    if (!requireStoppedDebugger(command)) return false;
+    if (gdb_.mode() != DebugSessionMode::Core) return true;
+    publishEvent(EventSource::Debug, EventSeverity::Warning,
+      std::string(command) + " unavailable: core dumps are read-only\n");
+    return false;
   };
   switch (key) {
     case finalcut::FKey::Meta_k:
@@ -4218,7 +4291,8 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       else if (requireLspDocument("Completion")) lsp_.requestCompletion(*document_);
       return true;
     case finalcut::FKey::Meta_U:
-      if (root_.empty()) publishEvent(EventSource::Debug, EventSeverity::Warning, "Add watch unavailable: no project is open\n");
+      if (root_.empty() && gdb_.mode() != DebugSessionMode::Core)
+        publishEvent(EventSource::Debug, EventSeverity::Warning, "Add watch unavailable: no project is open\n");
       else deferred_command_ = [this] { addWatch(); };
       return true;
     case finalcut::FKey::Meta_a:
@@ -4262,7 +4336,9 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       else deferred_command_ = [this] { showProblems(); };
       return true;
     case finalcut::FKey::Ctrl_r:
-      if (root_.empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Registers unavailable: no project is open\n"); return true; }
+      if (root_.empty() && gdb_.mode() != DebugSessionMode::Core) {
+        publishEvent(EventSource::Debug, EventSeverity::Warning, "Registers unavailable: no project is open\n"); return true;
+      }
       gdb_.setRegistersEnabled(!gdb_.registersEnabled());
       debug_state_dirty_ = true; saveDebugState();
       publishEvent(EventSource::Debug, EventSeverity::Information, std::string("Register view ") + (gdb_.registersEnabled() ? "enabled\n" : "disabled\n"));
@@ -4342,9 +4418,9 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
       else if (gdb_.stopped()) publishEvent(EventSource::Debug, EventSeverity::Warning, "Pause unavailable: debuggee is already stopped\n");
       else gdb_.interrupt();
       return true;
-    case finalcut::FKey::F8: if (requireStoppedDebugger("Next")) gdb_.next(); return true;
-    case finalcut::FKey::F7: if (requireStoppedDebugger("Step into")) gdb_.step(); return true;
-    case finalcut::FKey::F56: if (requireStoppedDebugger("Step out")) gdb_.finish(); return true;
+    case finalcut::FKey::F8: if (requireMutableStoppedDebugger("Next")) gdb_.next(); return true;
+    case finalcut::FKey::F7: if (requireMutableStoppedDebugger("Step into")) gdb_.step(); return true;
+    case finalcut::FKey::F56: if (requireMutableStoppedDebugger("Step out")) gdb_.finish(); return true;
     default: return false;
   }
 }
@@ -4684,8 +4760,11 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
   gdb_.poll();
   refreshExecutionLocation();
   const bool debug_active = gdb_.active();
-  if (debug_ui_.observeActive(debug_active, gdb_.exited()))
-    showNotification("Debuggee finished", NotificationKind::Success);
+  if (debug_ui_.observeActive(debug_active, gdb_.exited())) {
+    if (gdb_.mode() == DebugSessionMode::Core)
+      showNotification("Core dump could not be loaded", NotificationKind::Error);
+    else showNotification("Debuggee finished", NotificationKind::Success);
+  }
   for (auto& line : gdb_.takeOutput())
     publishEvent(EventSource::Debug, EventSeverity::Information, std::move(line) + "\n");
   for (auto& result : gdb_.takeResults()) {

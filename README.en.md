@@ -37,6 +37,10 @@ source code and user interface use UTF-8.
 - **Debug → Attach to process...** attaches GDB to a Linux process selected from
   `/proc`. Stop issues `-target-detach` first, so the external process remains
   alive when the debugger closes.
+- **Debug → Open core dump...** opens a selected executable and core file in
+  read-only mode. Stack, threads, variables, watches, registers, evaluation,
+  memory, and disassembly remain available; resume, stepping, signals, and
+  assignment are blocked.
 - **Debug → Signal handling** inspects policies in Output, configures stop/print/pass,
   and sends a signal with confirmation before resuming. `0` suppresses the
   pending signal. Policies apply to the current GDB session only;

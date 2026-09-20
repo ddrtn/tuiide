@@ -45,7 +45,8 @@
 - [ ] Расширить отладку:
   - [x] Attach to Process: выбор Linux-процесса из `/proc`, отдельный режим
     GDB/MI и подтверждаемое отсоединение, оставляющее внешний процесс живым.
-  - [ ] Открытие core dump с выбором executable и режимом только чтения.
+  - [x] Открытие core dump с выбором executable и режимом только чтения:
+    стек, потоки, locals, watches, registers, evaluate, memory и disassembly.
   - [x] Сигналы inferior: просмотр политик, stop/print/pass и отправка сигнала
     с продолжением (включая подавление текущего сигнала через `signal 0`).
   - [ ] Опциональный LLDB backend через DAP.
