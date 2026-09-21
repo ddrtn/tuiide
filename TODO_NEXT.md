@@ -61,6 +61,6 @@
 - [x] Добавить минимальную Git-панель: status, diff, stage и история файла.
 - [x] Включить умеренный large-file regression в обычный CTest, сохранив тяжёлый
   стресс-тест опциональным.
-- [ ] Добавить fuzz/property-тесты JSON-RPC, GDB/MI, CMake File API и malformed
+- [x] Добавить fuzz/property-тесты JSON-RPC, GDB/MI, CMake File API и malformed
   UTF-8, а также отдельные цели статического анализа без полной пересборки.
 - [ ] Ввести ресурсы локализации и переключение русского/английского интерфейса.

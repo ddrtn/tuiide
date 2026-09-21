@@ -129,6 +129,7 @@ add_library(tuiide_core
   src/lsp_ui_controller.cpp
   src/gdb_client.cpp
   src/gdb_mi.cpp
+  src/json_rpc_framer.cpp
   src/lldb_dap_client.cpp
   src/launch_configuration.cpp
 )
@@ -143,12 +144,43 @@ target_link_libraries(tuiide PRIVATE tuiide_core finalcut_vendor)
 target_compile_options(tuiide PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 tuiide_apply_quality(tuiide)
 
+# Явные цели анализа читают compile_commands.json и исходники без сборки IDE.
+get_target_property(TUIIDE_ANALYSIS_CORE_SOURCES tuiide_core SOURCES)
+get_target_property(TUIIDE_ANALYSIS_UI_SOURCES tuiide SOURCES)
+set(TUIIDE_ANALYSIS_SOURCES ${TUIIDE_ANALYSIS_CORE_SOURCES} ${TUIIDE_ANALYSIS_UI_SOURCES})
+list(TRANSFORM TUIIDE_ANALYSIS_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+find_program(TUIIDE_ANALYSIS_CLANG_TIDY NAMES clang-tidy)
+if(TUIIDE_ANALYSIS_CLANG_TIDY)
+  add_custom_target(analyze-clang-tidy
+    COMMAND "${TUIIDE_ANALYSIS_CLANG_TIDY}" --quiet -p "${CMAKE_BINARY_DIR}"
+      ${TUIIDE_ANALYSIS_SOURCES}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    USES_TERMINAL VERBATIM)
+endif()
+find_program(TUIIDE_ANALYSIS_CPPCHECK NAMES cppcheck)
+if(TUIIDE_ANALYSIS_CPPCHECK)
+  add_custom_target(analyze-cppcheck
+    COMMAND "${TUIIDE_ANALYSIS_CPPCHECK}" -j1 --std=c++20 --language=c++
+      --enable=warning,performance,portability --inline-suppr
+      --suppress=missingIncludeSystem --error-exitcode=1
+      -I "${CMAKE_CURRENT_SOURCE_DIR}/include" ${TUIIDE_ANALYSIS_SOURCES}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    USES_TERMINAL VERBATIM)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
   add_executable(tuiide_tests tests/core_tests.cpp)
   target_link_libraries(tuiide_tests PRIVATE tuiide_core)
   tuiide_apply_quality(tuiide_tests)
   add_test(NAME tuiide_core_tests COMMAND tuiide_tests)
+
+  add_executable(tuiide_property_tests tests/property_tests.cpp)
+  target_link_libraries(tuiide_property_tests PRIVATE tuiide_core)
+  target_compile_options(tuiide_property_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+  tuiide_apply_quality(tuiide_property_tests)
+  add_test(NAME tuiide_property_tests COMMAND tuiide_property_tests)
+  set_tests_properties(tuiide_property_tests PROPERTIES TIMEOUT 30 LABELS regression)
 
   add_executable(tuiide_lldb_dap_tests tests/lldb_dap_tests.cpp)
   target_link_libraries(tuiide_lldb_dap_tests PRIVATE tuiide_core)

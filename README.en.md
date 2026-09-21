@@ -85,6 +85,18 @@ available through `TUIIDE_ENABLE_CLANG_TIDY`, `TUIIDE_ENABLE_CPPCHECK`, and
 the default CTest suite; `TUIIDE_ENABLE_LONG_TESTS=ON` also registers the
 80,000-line stress test.
 
+Deterministic property tests cover JSON-RPC frames, GDB/MI, CMake File API,
+and malformed UTF-8. Run them alone with
+`ctest --test-dir tuiide-build -R tuiide_property_tests --output-on-failure`.
+When installed, the `analyze-clang-tidy` and `analyze-cppcheck` targets run
+without rebuilding the IDE, for example:
+
+```sh
+cmake --build tuiide-build --target analyze-cppcheck --parallel 1
+```
+
+`analyze-cppcheck` exits nonzero on findings, including warnings in existing code.
+
 ## Running
 
 Open an existing CMake project, or create/import one from the **File** menu:

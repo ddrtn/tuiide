@@ -81,6 +81,19 @@ ctest --test-dir tuiide-build --output-on-failure
 обычный CTest; `TUIIDE_ENABLE_LONG_TESTS=ON` дополнительно включает тяжёлый
 стресс-тест (80 000 строк).
 
+Детерминированные property-тесты проверяют фреймы JSON-RPC, GDB/MI, CMake File API
+и некорректный UTF-8; для их отдельного запуска используйте
+`ctest --test-dir tuiide-build -R tuiide_property_tests --output-on-failure`.
+Если установлены анализаторы, цели `analyze-clang-tidy` и `analyze-cppcheck`
+запускаются без пересборки IDE, например:
+
+```sh
+cmake --build tuiide-build --target analyze-cppcheck --parallel 1
+```
+
+`analyze-cppcheck` возвращает ошибку при обнаружении предупреждений; они могут
+относиться и к ранее существовавшему коду.
+
 ## Запуск
 
 Откройте существующий CMake-проект или создайте/импортируйте его из меню **File**:

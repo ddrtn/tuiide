@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tuiide/document.hpp"
+#include "tuiide/json_rpc_framer.hpp"
 #include "tuiide/process.hpp"
 
 #include <filesystem>
@@ -285,7 +286,7 @@ class LspClient {
 
   AsyncProcess process_;
   std::filesystem::path root_;
-  std::string receive_buffer_;
+  JsonRpcFramer receive_framer_;
   int next_id_{1};
   int initialize_id_{};
   int completion_id_{};

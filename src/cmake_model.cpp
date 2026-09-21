@@ -62,7 +62,7 @@ auto loadCMakeExecutableTargets(const std::filesystem::path& build_directory, st
           const auto source = paths->find("source");
           if (source != paths->end() && source->is_string()) source_root = source->get<std::string>();
         }
-        if (source_root.is_relative()) source_root = top_source_root / source_root;
+        if (source_root.empty() || source_root.is_relative()) source_root = top_source_root / source_root;
         if (const auto entries = target.find("sources"); entries != target.end() && entries->is_array()) {
           for (const auto& entry : *entries) {
             if (!entry.is_object()) continue;

@@ -3,7 +3,6 @@
 #include "tuiide/json_utils.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <cctype>
 #include <iterator>
 #include <sstream>
@@ -30,23 +29,6 @@ auto lspLabel(const json& value) -> std::string {
   std::string result;
   for (const auto& part : value) result += part.is_string() ? part.get<std::string>()
     : jsonValueOr(part, "value", std::string{});
-  return result;
-}
-
-auto contentLength(std::string_view header) -> std::optional<std::size_t> {
-  const auto begin = header.find("Content-Length:");
-  if (begin == std::string_view::npos) return std::nullopt;
-  auto value = header.substr(begin + 15);
-  const auto first = value.find_first_not_of(" \t");
-  if (first == std::string_view::npos) return std::nullopt;
-  value.remove_prefix(first);
-  const auto end = value.find_first_of("\r\n \t");
-  value = value.substr(0, end);
-  std::size_t result{};
-  const auto parsed = std::from_chars(value.data(), value.data() + value.size(),
-    result);
-  if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
-    return std::nullopt;
   return result;
 }
 
@@ -288,7 +270,7 @@ void LspClient::stop() {
   }
   process_.stop();
   initialized_ = false; initialize_id_ = 0; exit_reported_ = false;
-  receive_buffer_.clear(); completions_.clear(); resolved_completion_.reset(); completion_resolve_id_ = 0;
+  receive_framer_.clear(); completions_.clear(); resolved_completion_.reset(); completion_resolve_id_ = 0;
   signatures_.clear(); hover_.clear(); definitions_.clear(); references_.clear();
   rename_edit_.reset(); workspace_apply_requests_.clear(); document_symbols_.reset(); code_actions_.clear(); switched_source_header_.reset();
   workspace_symbols_.clear(); call_hierarchy_ = {}; type_hierarchy_ = {};
@@ -537,26 +519,18 @@ void LspClient::requestIncludeHierarchy(const Document& document) {
 
 void LspClient::poll() {
   flushChanges();
-  for (auto& chunk : process_.drain()) receive_buffer_ += chunk;
-  for (;;) {
-    const auto header_end = receive_buffer_.find("\r\n\r\n");
-    if (header_end == std::string::npos) break;
-    const auto length = contentLength(
-      std::string_view(receive_buffer_).substr(0, header_end));
-    if (!length) {
-      receive_buffer_.erase(0, header_end + 4);
+  for (auto& chunk : process_.drain()) {
+    auto frames = receive_framer_.feed(chunk);
+    for (std::size_t index{}; index < frames.invalid_headers; ++index)
       feedback_.push_back({LspOperation::Server, true,
         "clangd sent an invalid Content-Length header"});
-      continue;
-    }
-    if (receive_buffer_.size() < header_end + 4 + *length) break;
-    const auto payload = receive_buffer_.substr(header_end + 4, *length);
-    receive_buffer_.erase(0, header_end + 4 + *length);
-    try {
-      handle(json::parse(payload));
-    } catch (const std::exception& exception) {
-      feedback_.push_back({LspOperation::Server, true,
-        "clangd sent an invalid response: " + std::string(exception.what())});
+    for (const auto& payload : frames.payloads) {
+      try {
+        handle(json::parse(payload));
+      } catch (const std::exception& exception) {
+        feedback_.push_back({LspOperation::Server, true,
+          "clangd sent an invalid response: " + std::string(exception.what())});
+      }
     }
   }
   if (process_started_ && !process_.running() && process_.exitCode().has_value() && !exit_reported_) {
