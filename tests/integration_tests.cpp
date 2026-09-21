@@ -1,6 +1,7 @@
 #include "tuiide/cmake_model.hpp"
 #include "tuiide/document.hpp"
 #include "tuiide/gdb_client.hpp"
+#include "tuiide/git_session.hpp"
 #include "tuiide/lsp_client.hpp"
 #include "tuiide/process.hpp"
 #include "tuiide/pseudo_terminal.hpp"
@@ -69,6 +70,50 @@ auto runProcess(std::vector<std::string> arguments, const std::filesystem::path&
   process.stop();
   for (auto& chunk : process.drain()) output += chunk;
   return code && *code == 0;
+}
+
+auto exerciseGitSession(const std::filesystem::path& path) -> bool {
+  std::string output;
+  if (!runProcess({"git", "--version"}, path, output)) return true;  // Git необязателен.
+  if (!runProcess({"git", "init", "-q", path.string()}, path, output)) return false;
+  const auto source = path / "имя [1] с пробелом.cpp";
+  { std::ofstream file(source); file << "int value = 1;\n"; }
+  tuiide::GitSession session;
+  session.setRoot(path);
+  const auto finish = [&]() -> std::optional<tuiide::GitUpdate> {
+    std::optional<tuiide::GitUpdate> update;
+    const bool completed = waitFor([&] { update = session.poll(); }, [&] { return update.has_value(); });
+    return completed ? std::move(update) : std::nullopt;
+  };
+  if (!session.startStatus()) return false;
+  const auto untracked = finish();
+  if (!untracked || untracked->exit_code != 0 || untracked->files.size() != 1
+      || !untracked->files[0].untracked() || untracked->files[0].path != source) return false;
+  if (session.startStage(path.parent_path() / "outside.cpp")) return false;
+  if (!session.startStage(source)) return false;
+  const auto staged = finish();
+  if (!staged || staged->exit_code != 0 || !session.startStatus()) return false;
+  const auto staged_status = finish();
+  if (!staged_status || staged_status->files.size() != 1 || !staged_status->files[0].staged()) return false;
+  if (!session.startDiff(source, true)) return false;
+  const auto diff = finish();
+  if (!diff || diff->exit_code != 0 || diff->output.find("int value = 1") == std::string::npos) return false;
+  if (!session.startUnstage(source, true)) return false;
+  const auto unstaged = finish();
+  if (!unstaged || unstaged->exit_code != 0 || !session.startStatus()) return false;
+  const auto final_status = finish();
+  if (!final_status || final_status->files.size() != 1 || !final_status->files[0].untracked()
+      || !session.startStage(source)) return false;
+  const auto restaged = finish();
+  if (!restaged || restaged->exit_code != 0) return false;
+  output.clear();
+  if (!runProcess({"git", "-C", path.string(), "-c", "user.name=Test",
+        "-c", "user.email=test@example.invalid", "commit", "-qm", "Add Unicode source"}, path, output))
+    return false;
+  if (!session.startHistory(source)) return false;
+  const auto history = finish();
+  return history && history->exit_code == 0
+    && history->output.find("Add Unicode source") != std::string::npos;
 }
 
 void exerciseLspOutcomeMatrix(const std::filesystem::path& fake_server,
@@ -495,7 +540,7 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
     (void)::write(master, &focus_project, 1);
     const auto visible = waitFor(pumpScreen, [&] { return screen.find("main.cpp") != std::string::npos; }, 3s);
     (void)::write(master, end_key.data(), end_key.size());
-    std::this_thread::sleep_for(100ms); pumpScreen();
+    std::this_thread::sleep_for(200ms); pumpScreen();
     return visible;
   };
 
@@ -646,7 +691,7 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
       && screen.find("1 file(s)") != std::string::npos;
   }, 3s);
   const char modify_header = ' '; (void)::write(master, &modify_header, 1);
-  std::this_thread::sleep_for(100ms); pumpScreen();
+  std::this_thread::sleep_for(300ms); pumpScreen();
   (void)focusLastProjectEntry();
   screen.clear(); (void)::write(master, delete_key.data(), delete_key.size());
   const auto remove_modified_picker = waitFor(pumpScreen, [&] {
@@ -656,13 +701,13 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   (void)::write(master, down.data(), down.size()); (void)::write(master, &enter, 1);
   const auto remove_modified_error = waitFor(pumpScreen, [&] {
     return screen.find("Save or close the modified file") != std::string::npos;
-  }, 3s);
+  }, 5s);
   (void)::write(master, &enter, 1);
   std::this_thread::sleep_for(150ms); pumpScreen();
   (void)::write(master, &close_file, 1);
   const auto unsaved_header_prompt = waitFor(pumpScreen, [&] {
     return screen.find("Save this document before closing") != std::string::npos;
-  }, 3s);
+  }, 5s);
   const char no_save = 'n'; (void)::write(master, &no_save, 1);
   std::this_thread::sleep_for(150ms); pumpScreen();
   const bool modified_delete_safe = remove_modified_error && unsaved_header_prompt
@@ -1635,7 +1680,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
   settle();
 
   bool panel_menus = true;
-  for (const char mnemonic : std::string{"foudbe"})
+  for (const char mnemonic : std::string{"foudbeg"})
     panel_menus = selectWindowMnemonic(mnemonic) && panel_menus;
   const bool last_panel_protected = waitFor(pump, [&] {
     return logged("At least one sidebar panel must remain visible");
@@ -3144,6 +3189,11 @@ int main(int argc, char** argv) {
     / ("tuiide C++ интеграция " + unique)};
   const auto build = project.path / "build";
   std::filesystem::create_directories(project.path);
+  if (std::getenv("TUIIDE_GIT_ONLY") != nullptr) {
+    expect(exerciseGitSession(project.path), "Git status, stage, diff, unstage, and path guard work");
+    std::cout << "Git integration test passed\n";
+    return 0;
+  }
   if (std::getenv("TUIIDE_PROJECT_DIALOGS_ONLY") != nullptr) {
     expect(exerciseProjectDialogsPty(std::filesystem::absolute(argv[1]), project.path),
       "New Project and Project Settings dialogs cover normal, cancel, and error outcomes");

@@ -124,10 +124,13 @@ select commands inside an open menu. Configure global shortcuts through
   `Alt+Shift+PageUp/PageDown`: lower-panel tabs.
 
 The sidebar contains **Open files**, **Project**, **Outline**, **Debug**,
-**Breakpoints**, and **Tests**. Toggle individual pages from **Window**. In
+**Breakpoints**, **Tests**, and **Git**. Toggle individual pages from **Window**. In
 Tests, press `Space` to run the selected test and `Enter` to open its first
-failure location; discovery and grouped runs are under **Run → Tests**. The
-lower area contains **Output**, **Problems**, **Build**, an interactive **Terminal**, and
+failure location; discovery and grouped runs are under **Run → Tests**.
+The Git page lists changed files: `Enter` opens one, `Space` toggles stage/unstage,
+`Ctrl+D` shows its diff, `Ctrl+Y` its history, and `Ctrl+R` refreshes status.
+It refreshes automatically while selected and requires `git` and a repository
+in the project directory. The lower area contains **Output**, **Problems**, **Build**, an interactive **Terminal**, and
 **Analysis**. Start tools from **Tools → Run analysis / profile**; recognized
 diagnostics are also listed in Problems. Coverage uses an isolated
 `.tuiide-coverage` directory under the build tree and produces a gcovr report.

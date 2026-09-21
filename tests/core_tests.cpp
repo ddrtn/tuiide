@@ -3,6 +3,7 @@
 #include "tuiide/document_labels.hpp"
 #include "tuiide/document_session.hpp"
 #include "tuiide/event_log.hpp"
+#include "tuiide/git_session.hpp"
 #include "tuiide/build_command.hpp"
 #include "tuiide/build_diagnostic.hpp"
 #include "tuiide/build_output_collector.hpp"
@@ -71,6 +72,18 @@ void expect(bool condition, const char* message) {
 }
 
 int main() {
+  const auto git_root = std::filesystem::path("/tmp/git project");
+  constexpr char git_porcelain[] = " M src/main.cpp\0?? src/имя с пробелом.cpp\0R  new.cpp\0old.cpp\0";
+  const auto git_status = tuiide::parseGitStatus(
+    std::string_view(git_porcelain, sizeof(git_porcelain) - 1), git_root);
+  expect(git_status.size() == 3 && git_status[0].path == git_root / "src/main.cpp"
+      && !git_status[0].staged() && git_status[1].untracked()
+      && git_status[1].path == git_root / "src/имя с пробелом.cpp"
+      && git_status[2].staged() && git_status[2].path == git_root / "new.cpp",
+    "Git porcelain parser handles modified, untracked UTF-8, and renamed files");
+  constexpr char invalid_git_path[] = "?? ../escape\0";
+  expect(tuiide::parseGitStatus(std::string_view(invalid_git_path, sizeof(invalid_git_path) - 1), git_root).empty(),
+    "Git porcelain parser rejects paths outside the project");
   const auto cli = tuiide::parseCommandLine({"--diagnostic", "--log-file", "/tmp/tuiide.log",
     "--project=/tmp/project with spaces"});
   expect(cli.error.empty() && cli.options.diagnostic

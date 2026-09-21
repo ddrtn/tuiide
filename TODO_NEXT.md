@@ -58,7 +58,7 @@
 - [x] Добавить coverage через отдельную instrumented CMake-сборку и gcovr,
   Valgrind Memcheck и CPU-профилирование через perf; непокрытые строки, stack
   frames и samples публикуются в Problems с переходом в исходный файл.
-- [ ] Добавить минимальную Git-панель: status, diff, stage и история файла.
+- [x] Добавить минимальную Git-панель: status, diff, stage и история файла.
 - [ ] Включить умеренный large-file regression в обычный CTest, сохранив тяжёлый
   стресс-тест опциональным.
 - [ ] Добавить fuzz/property-тесты JSON-RPC, GDB/MI, CMake File API и malformed

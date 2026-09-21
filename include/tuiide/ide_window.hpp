@@ -20,6 +20,7 @@
 #include "tuiide/debug_ui_controller.hpp"
 #include "tuiide/document_session.hpp"
 #include "tuiide/event_log.hpp"
+#include "tuiide/git_session.hpp"
 #include "tuiide/debug_client.hpp"
 #include "tuiide/lsp_client.hpp"
 #include "tuiide/lsp_ui_controller.hpp"
@@ -156,6 +157,11 @@ class IdeWindow final : public finalcut::FDialog {
   void refreshTabs();
   void refreshDebugPanel();
   void refreshBreakpointsPanel();
+  void refreshGitPanel();
+  void openSelectedGitFile();
+  void diffSelectedGitFile();
+  void stageSelectedGitFile();
+  void historySelectedGitFile();
   void refreshExecutionLocation();
   void openSelectedBreakpoint();
   void editSelectedBreakpoint();
@@ -326,6 +332,9 @@ class IdeWindow final : public finalcut::FDialog {
   std::size_t execution_line_{};  // one-based; zero means no stopped source line
   BuildSession build_session_;
   CTestSession ctest_session_;
+  GitSession git_session_;
+  std::vector<GitFileStatus> git_files_state_;
+  std::string git_panel_message_;
   std::string ctest_preset_;
   AnalysisSession analysis_session_;
   std::string analysis_text_;
@@ -523,6 +532,7 @@ class IdeWindow final : public finalcut::FDialog {
     finalcut::FCheckMenuItem debug{"Show &Debug", &menu};
     finalcut::FCheckMenuItem breakpoints{"Show &Breakpoints", &menu};
     finalcut::FCheckMenuItem tests{"Show T&ests", &menu};
+    finalcut::FCheckMenuItem git{"Show &Git", &menu};
     finalcut::FMenuItem separator2{&menu};
     finalcut::FMenuItem clear_lower{"&Clear active lower panel", &menu};
     finalcut::FMenuItem copy_lower{"Cop&y active lower panel", &menu};
@@ -608,6 +618,7 @@ class IdeWindow final : public finalcut::FDialog {
   CommandListBox debug_{&sidebar_tabs_};
   CommandListBox breakpoints_{&sidebar_tabs_};
   CommandListBox tests_{&sidebar_tabs_};
+  CommandListBox git_files_{&sidebar_tabs_};
   CodeEditor editor_{this};
   SidebarTabs lower_tabs_{this};
   finalcut::FTextView output_{&lower_tabs_};

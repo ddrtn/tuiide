@@ -120,10 +120,13 @@ ctest --test-dir tuiide-build --output-on-failure
   вкладки нижней панели.
 
 Слева находятся страницы **Open files**, **Project**, **Outline**, **Debug**,
-**Breakpoints** и **Tests**. Их видимость управляется меню **Window**. В Tests
+**Breakpoints**, **Tests** и **Git**. Их видимость управляется меню **Window**. В Tests
 нажмите `Space`, чтобы запустить выбранный тест, и `Enter`, чтобы открыть первую
 строку его сбоя. Discovery и групповые запуски находятся в **Run → Tests**.
-Внизу размещены
+В Git показаны изменённые файлы: `Enter` открывает файл, `Space` переключает
+stage/unstage, `Ctrl+D` показывает diff, `Ctrl+Y` — историю файла, `Ctrl+R`
+обновляет status. Активная панель обновляется автоматически; для её работы нужен
+установленный `git` и репозиторий в каталоге проекта. Внизу размещены
 **Output**, **Problems**, **Build**, интерактивный **Terminal** и **Analysis**.
 Анализ запускается через **Tools → Run analysis / profile**; распознанные
 сообщения также появляются в Problems. Coverage создаёт отдельную сборку

@@ -222,6 +222,7 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   sidebar_tabs_.addTab("Debug", debug_);
   sidebar_tabs_.addTab("Breakpoints", breakpoints_);
   sidebar_tabs_.addTab("Tests", tests_);
+  sidebar_tabs_.addTab("Git", git_files_);
   lower_tabs_.addTab("Output", output_);
   lower_tabs_.addTab("Problems", problems_);
   lower_tabs_.addTab("Build", build_output_);
@@ -310,6 +311,21 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   tests_.setCommandHandler([this](finalcut::FKey key) {
     if (key == finalcut::FKey::Return) { openSelectedTestFailure(); return true; }
     if (key == finalcut::FKey::Space) { deferred_command_ = [this] { runSelectedTest(); }; return true; }
+    return handleCommand(key);
+  });
+  git_files_.setCommandHandler([this](finalcut::FKey key) {
+    if (key == finalcut::FKey::Return) { openSelectedGitFile(); return true; }
+    if (key == finalcut::FKey::Space) { stageSelectedGitFile(); return true; }
+    if (key == finalcut::FKey::Ctrl_d) {
+      deferred_command_ = [this] { diffSelectedGitFile(); }; return true;
+    }
+    if (key == finalcut::FKey::Ctrl_y) {
+      deferred_command_ = [this] { historySelectedGitFile(); }; return true;
+    }
+    if (key == finalcut::FKey::Ctrl_r) {
+      if (!git_session_.running()) (void)git_session_.startStatus();
+      return true;
+    }
     return handleCommand(key);
   });
   tabs_.setContextHandler([this](finalcut::FPoint position) { showOpenFilesContextMenu(position); });
@@ -659,6 +675,7 @@ void IdeWindow::setupMenus() {
   window_menu_.debug.setChecked();
   window_menu_.breakpoints.setChecked();
   window_menu_.tests.setChecked();
+  window_menu_.git.setChecked();
   const auto togglePanel = [this](finalcut::FCheckMenuItem& item, std::size_t index) {
     auto* menu_item = &item;
     item.addCallback("clicked", [this, menu_item, index] {
@@ -677,6 +694,7 @@ void IdeWindow::setupMenus() {
   togglePanel(window_menu_.debug, 3);
   togglePanel(window_menu_.breakpoints, 4);
   togglePanel(window_menu_.tests, 5);
+  togglePanel(window_menu_.git, 6);
   window_menu_.clear_lower.setStatusBarMessage("Clear Output, Problems, Build, Terminal, or Analysis content");
   window_menu_.clear_lower.addCallback("clicked", [this] { deferred_command_ = [this] { clearLowerPanel(); }; });
   window_menu_.copy_lower.setStatusBarMessage("Copy all text from the active lower panel");
@@ -911,6 +929,62 @@ void IdeWindow::showTextDialog(std::string title, std::string text) {
   TextDialog dialog(std::move(title), std::move(text), this);
   (void)dialog.exec();
   timer_id_ = addTimer(100);
+}
+
+void IdeWindow::refreshGitPanel() {
+  const auto selected = git_files_.currentItem();
+  git_files_.clear();
+  if (root_.empty()) git_files_.insert("No project");
+  else if (git_files_state_.empty())
+    git_files_.insert(finalcut::FString(git_panel_message_.empty() ? "Working tree clean" : git_panel_message_));
+  else for (const auto& file : git_files_state_) {
+    const auto relative = file.path.lexically_relative(root_);
+    git_files_.insert(finalcut::FString(file.code + " " + relative.string()));
+  }
+  if (selected > 0 && selected <= git_files_state_.size()) git_files_.setCurrentItem(selected);
+  if (sidebar_tabs_.currentIndex() == 6) sidebar_tabs_.redrawCurrentPage();
+}
+
+void IdeWindow::openSelectedGitFile() {
+  const auto selected = git_files_.currentItem();
+  if (selected > 0 && selected <= git_files_state_.size())
+    openFile(git_files_state_[selected - 1].path);
+}
+
+void IdeWindow::diffSelectedGitFile() {
+  const auto selected = git_files_.currentItem();
+  if (selected == 0 || selected > git_files_state_.size()) return;
+  const auto& file = git_files_state_[selected - 1];
+  if (file.untracked()) {
+    showNotification("Stage untracked file to view its diff", NotificationKind::Information);
+    return;
+  }
+  if (!git_session_.startDiff(file.path, file.staged()))
+    showNotification("Git is busy", NotificationKind::Warning);
+}
+
+void IdeWindow::stageSelectedGitFile() {
+  const auto selected = git_files_.currentItem();
+  if (selected == 0 || selected > git_files_state_.size()) return;
+  const auto& file = git_files_state_[selected - 1];
+  for (const auto& open : documents_) {
+    if (open->path() == file.path && open->modified()) {
+      showNotification("Save the modified file before staging", NotificationKind::Warning);
+      return;
+    }
+  }
+  const bool started = file.staged() ? git_session_.startUnstage(file.path, file.code[0] == 'A')
+                                     : git_session_.startStage(file.path);
+  if (!started) showNotification("Git is busy", NotificationKind::Warning);
+}
+
+void IdeWindow::historySelectedGitFile() {
+  const auto selected = git_files_.currentItem();
+  const auto path = selected > 0 && selected <= git_files_state_.size()
+    ? git_files_state_[selected - 1].path : document_ ? document_->path() : std::filesystem::path{};
+  if (path.empty()) return;
+  if (!git_session_.startHistory(path))
+    showNotification("Git is busy", NotificationKind::Warning);
 }
 
 void IdeWindow::showContextMenu(finalcut::FMenu& menu, finalcut::FPoint position) {
@@ -1725,6 +1799,7 @@ void IdeWindow::unloadProject() {
   clearRecovery(recovery_file_);
   if (debug_state_dirty_ && !root_.empty()) saveDebugState();
   lsp_.stop(); gdb_.stop(); build_session_.reset(); ctest_session_.clear(); ctest_preset_.clear();
+  git_session_.setRoot({}); git_files_state_.clear(); git_panel_message_.clear(); refreshGitPanel();
   analysis_session_.prepare(); analysis_text_.clear(); sanitizer_build_dir_.clear(); sanitizer_target_.clear();
   analysis_launch_ = {}; analysis_environment_.clear(); analysis_data_file_.clear();
   run_session_.stop(); console_.setControlEnabled(false);
@@ -1777,6 +1852,8 @@ auto IdeWindow::loadProject(std::filesystem::path root, std::filesystem::path bu
   }
   unloadProject();
   project_session_ = std::move(next_project);
+  git_session_.setRoot(root_); git_panel_message_ = "Loading Git status...";
+  refreshGitPanel(); (void)git_session_.startStatus();
   cmake_session_.reset(project_session_.buildDirectory());
   if (open_result.used_default_settings)
     publishEvent(EventSource::Project, EventSeverity::Warning, "Project settings: " + open_result.warning + "; defaults are used\n");
@@ -4250,6 +4327,7 @@ void IdeWindow::updateMenuState() {
   enabled(window_menu_.debug, true);
   enabled(window_menu_.breakpoints, true);
   enabled(window_menu_.tests, true);
+  enabled(window_menu_.git, true);
   enabled(window_menu_.clear_lower, true);
   enabled(window_menu_.copy_lower, true);
   enabled(window_menu_.filter_problems, true);
@@ -4605,6 +4683,30 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
     return;
   }
   ++maintenance_ticks_;
+  if (auto git_update = git_session_.poll()) {
+    if (git_update->exit_code != 0) {
+      if (git_update->operation == GitOperation::Status) {
+        git_files_state_.clear(); git_panel_message_ = "Git unavailable or not a repository";
+        refreshGitPanel();
+      } else {
+        publishEvent(EventSource::Project, EventSeverity::Error,
+          "Git command failed: " + git_update->output + "\n");
+        showNotification("Git command failed", NotificationKind::Error);
+      }
+    } else if (git_update->operation == GitOperation::Status) {
+      git_files_state_ = std::move(git_update->files); git_panel_message_.clear(); refreshGitPanel();
+    } else if (git_update->operation == GitOperation::Stage
+        || git_update->operation == GitOperation::Unstage) {
+      (void)git_session_.startStatus();
+    } else if (git_update->operation == GitOperation::Diff
+        || git_update->operation == GitOperation::History) {
+      const auto title = git_update->operation == GitOperation::Diff ? "Git diff" : "Git history";
+      showTextDialog(title, git_update->output.empty() ? "No changes or history" : std::move(git_update->output));
+    }
+  }
+  if (maintenance_ticks_ % 50 == 0 && sidebar_tabs_.currentIndex() == 6
+      && !root_.empty() && !git_session_.running())
+    (void)git_session_.startStatus();
   if (maintenance_ticks_ % 20 == 0) checkExternalChanges();
   if (maintenance_ticks_ % 50 == 0) autosaveRecovery();
   lsp_.poll();

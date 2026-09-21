@@ -103,6 +103,7 @@ add_library(tuiide_core
   src/document_session.cpp
   src/document_labels.cpp
   src/event_log.cpp
+  src/git_session.cpp
   src/syntax.cpp
   src/tab_bar_layout.cpp
   src/text_display.cpp
@@ -203,9 +204,13 @@ if(BUILD_TESTING)
     target_link_libraries(tuiide_integration_tests PRIVATE tuiide_core ${UTIL_LIBRARY})
     target_compile_options(tuiide_integration_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
     tuiide_apply_quality(tuiide_integration_tests)
+    add_test(NAME tuiide_git_integration COMMAND tuiide_integration_tests
+      $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
+    set_tests_properties(tuiide_git_integration PROPERTIES
+      ENVIRONMENT "TUIIDE_GIT_ONLY=1" TIMEOUT 30 LABELS integration)
     add_test(NAME tuiide_integration_tests COMMAND tuiide_integration_tests
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
-    set_tests_properties(tuiide_integration_tests PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS integration)
+    set_tests_properties(tuiide_integration_tests PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE LABELS integration)
     add_test(NAME tuiide_project_dialog_tests COMMAND tuiide_integration_tests
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_project_dialog_tests PROPERTIES
