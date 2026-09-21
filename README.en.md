@@ -81,7 +81,9 @@ ctest --test-dir tuiide-build --output-on-failure
 Generated artifacts stay in `tuiide-build/`. Add
 `-DTUIIDE_ENABLE_SANITIZERS=ON` for a sanitizer build. Additional checks are
 available through `TUIIDE_ENABLE_CLANG_TIDY`, `TUIIDE_ENABLE_CPPCHECK`, and
-`TUIIDE_ENABLE_LONG_TESTS`.
+`TUIIDE_ENABLE_LONG_TESTS`. A moderate UTF-8 large-file regression runs in
+the default CTest suite; `TUIIDE_ENABLE_LONG_TESTS=ON` also registers the
+80,000-line stress test.
 
 ## Running
 

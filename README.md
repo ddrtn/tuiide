@@ -77,7 +77,9 @@ ctest --test-dir tuiide-build --output-on-failure
 Для диагностической сборки можно добавить
 `-DTUIIDE_ENABLE_SANITIZERS=ON`. Дополнительные проверки доступны через
 `TUIIDE_ENABLE_CLANG_TIDY`, `TUIIDE_ENABLE_CPPCHECK` и
-`TUIIDE_ENABLE_LONG_TESTS`.
+`TUIIDE_ENABLE_LONG_TESTS`. Умеренная проверка больших UTF-8-файлов входит в
+обычный CTest; `TUIIDE_ENABLE_LONG_TESTS=ON` дополнительно включает тяжёлый
+стресс-тест (80 000 строк).
 
 ## Запуск
 

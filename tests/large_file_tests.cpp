@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -29,8 +30,13 @@ struct TemporaryDirectory {
 
 }  // namespace
 
-int main() {
-  constexpr std::size_t line_count = 80000;
+int main(int argc, char** argv) {
+  const bool moderate = argc == 2 && std::string_view(argv[1]) == "--moderate";
+  expect(argc == 1 || moderate, "large-file test accepts only --moderate");
+  // Быстрый профиль проверяет те же операции; полный объём остаётся opt-in.
+  const std::size_t line_count = moderate ? 12000 : 80000;
+  const std::size_t syntax_line_count = moderate ? 9000 : 60000;
+  const std::size_t changed_line = syntax_line_count * 3 / 4;
   TemporaryDirectory temporary{std::filesystem::temp_directory_path()
     / ("tuiide-large-file-" + std::to_string(
       std::chrono::steady_clock::now().time_since_epoch().count()))};
@@ -42,6 +48,8 @@ int main() {
       output << "int value_" << line << " = " << line << "; // строка\n";
     }
   }
+  expect(std::filesystem::file_size(source) > 256 * 1024,
+    "large-file fixture exceeds a quarter mebibyte");
 
   tuiide::Document document;
   std::string error;
@@ -67,17 +75,17 @@ int main() {
     "large-file search locates a unique match near the end of the document");
 
   std::vector<std::string> syntax_lines;
-  syntax_lines.reserve(60000);
-  for (std::size_t line{}; line < 60000; ++line)
+  syntax_lines.reserve(syntax_line_count);
+  for (std::size_t line{}; line < syntax_line_count; ++line)
     syntax_lines.push_back("constexpr int item_" + std::to_string(line) + " = "
       + std::to_string(line) + ";");
   tuiide::CppSyntaxCache cache;
   expect(cache.update(syntax_lines) == syntax_lines.size(),
     "large syntax cache performs a complete initial scan");
-  syntax_lines[45000] = "constexpr auto changed = \"UTF-8: данные\";";
-  cache.invalidateFrom(45000);
+  syntax_lines[changed_line] = "constexpr auto changed = \"UTF-8: данные\";";
+  cache.invalidateFrom(changed_line);
   expect(cache.update(syntax_lines) == 1,
     "large syntax cache stabilizes after one changed line");
 
-  std::cout << "Large-file test passed\n";
+  std::cout << (moderate ? "Large-file regression passed\n" : "Large-file stress test passed\n");
 }
