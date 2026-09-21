@@ -9,6 +9,7 @@
 #include "tuiide/text_display.hpp"
 #include "tuiide/toolchain_kit.hpp"
 #include "tuiide/ui_dialogs.hpp"
+#include "tuiide/ui_localization.hpp"
 #include "tuiide/workspace_file_transaction.hpp"
 
 #include <algorithm>
@@ -232,7 +233,8 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   output_.setText("Output");
   build_output_.setText("Build output");
   analysis_output_.setText("Analysis output");
-  problems_.insert("No problems");
+  problems_.insert(localizedUiText(user_settings_.language, "No problems"));
+  applyUiLanguage();
   problems_.setCommandHandler([this](finalcut::FKey key) {
     if (key == finalcut::FKey::Return) { openSelectedProblem(); return true; }
     return handleCommand(key);
@@ -414,6 +416,7 @@ void IdeWindow::setupMenus() {
   debug_menu_.separator1.setSeparator(); debug_menu_.separator2.setSeparator();
   tools_menu_.separator.setSeparator(); tools_menu_.separator2.setSeparator(); tools_menu_.separator3.setSeparator();
   tools_menu_.separator4.setSeparator(); tools_menu_.separator_analysis.setSeparator();
+  tools_menu_.separator_language.setSeparator();
   window_menu_.separator.setSeparator();
   help_menu_.separator.setSeparator();
 
@@ -663,6 +666,12 @@ void IdeWindow::setupMenus() {
   tools_menu_.theme.addCallback("clicked", [this] { deferred_command_ = [this] { selectTheme(); }; });
   tools_menu_.colors.setStatusBarMessage("Override a syntax or diagnostic color role");
   tools_menu_.colors.addCallback("clicked", [this] { deferred_command_ = [this] { configureEditorColor(); }; });
+  tools_menu_.language_english.addCallback("clicked", [this] {
+    deferred_command_ = [this] { setUiLanguage("en"); };
+  });
+  tools_menu_.language_russian.addCallback("clicked", [this] {
+    deferred_command_ = [this] { setUiLanguage("ru"); };
+  });
   tools_menu_.project_settings.setStatusBarMessage("Configure CMake, compilers, environment, and clangd");
   tools_menu_.project_settings.addCallback("clicked", [this] {
     deferred_command_ = [this] { projectSettings(); };
@@ -712,6 +721,57 @@ void IdeWindow::setupMenus() {
   help_menu_.keyboard.addCallback("clicked", [this] { deferred_command_ = [this] { showKeyboardHelp(); }; });
   help_menu_.about.setStatusBarMessage("About TUI IDE");
   help_menu_.about.addCallback("clicked", [this] { deferred_command_ = [this] { showAbout(); }; });
+}
+
+void IdeWindow::applyUiLanguage() {
+  const auto translate = [this](finalcut::FMenuItem* item) {
+    if (item == nullptr || item->isSeparator()) return;
+    const auto [entry, inserted] = english_menu_labels_.try_emplace(item, item->getText().toString());
+    (void)inserted;
+    item->setText(finalcut::FString(localizedUiText(user_settings_.language, entry->second)));
+  };
+  for (auto* item : menu_bar_.getItemList()) translate(item);
+  const std::array<finalcut::FMenu*, 11> menus{
+    &file_menu_.menu, &edit_menu_.menu, &search_menu_.menu, &run_menu_.menu,
+    &project_menu_.menu, &debug_menu_.menu, &tools_menu_.menu, &window_menu_.menu,
+    &help_menu_.menu, &run_menu_.tests, &tools_menu_.language,
+  };
+  for (auto* menu : menus)
+    for (auto* item : menu->getItemList()) translate(item);
+
+  constexpr std::array<std::string_view, 7> sidebar_titles{
+    "Open files", "Project", "Outline", "Debug", "Breakpoints", "Tests", "Git"};
+  constexpr std::array<std::string_view, 5> lower_titles{
+    "Output", "Problems", "Build", "Terminal", "Analysis"};
+  for (std::size_t index{}; index < sidebar_titles.size(); ++index)
+    sidebar_tabs_.setTabTitle(index, localizedUiText(user_settings_.language, sidebar_titles[index]));
+  for (std::size_t index{}; index < lower_titles.size(); ++index)
+    lower_tabs_.setTabTitle(index, localizedUiText(user_settings_.language, lower_titles[index]));
+  output_.setText(localizedUiText(user_settings_.language, "Output"));
+  build_output_.setText(localizedUiText(user_settings_.language, "Build output"));
+  analysis_output_.setText(localizedUiText(user_settings_.language, "Analysis output"));
+  tools_menu_.language_english.unsetChecked();
+  tools_menu_.language_russian.unsetChecked();
+  if (user_settings_.language == "ru") tools_menu_.language_russian.setChecked();
+  else tools_menu_.language_english.setChecked();
+  menu_bar_.redraw();
+}
+
+void IdeWindow::setUiLanguage(std::string language) {
+  if (language == user_settings_.language) { applyUiLanguage(); return; }
+  auto updated = user_settings_;
+  updated.language = std::move(language);
+  std::string error;
+  if (!saveUserSettings(user_settings_file_, updated, error)) {
+    finalcut::FMessageBox::error(this, finalcut::FString(error));
+    applyUiLanguage();
+    return;
+  }
+  user_settings_ = std::move(updated);
+  applyUiLanguage();
+  problems_signature_.clear();
+  refreshProblemsPanel();
+  updateStatus();
 }
 
 void IdeWindow::applyShortcutAccelerators(bool enabled) {
@@ -1814,7 +1874,7 @@ void IdeWindow::unloadProject() {
   project_filter_.clear();
   search_query_.clear(); search_replacement_.clear(); search_options_ = {}; search_project_ = false;
   problems_filter_.clear(); problems_signature_.clear(); problems_text_.clear(); problem_rows_.clear();
-  problems_.clear(); problems_.insert("No problems");
+  problems_.clear(); problems_.insert(localizedUiText(user_settings_.language, "No problems"));
   outline_.clear(); outline_.insert("Open a C/C++ file for outline"); outline_positions_.clear();
   refreshTestsPanel();
   event_log_.clear(); output_.clear(); build_output_.clear(); console_.clear(); analysis_output_.clear();
@@ -2941,7 +3001,8 @@ void IdeWindow::refreshProblemsPanel() {
     problems_.insert(finalcut::FString(label)); problems_text_ += label + '\n';
     problem_rows_.push_back({diagnostic.path, diagnostic.position, true, diagnostic.message});
   }
-  if (problem_rows_.empty()) problems_.insert(problems_filter_.empty() ? "No problems" : "No matching problems");
+  if (problem_rows_.empty()) problems_.insert(localizedUiText(user_settings_.language,
+    problems_filter_.empty() ? "No problems" : "No matching problems"));
   lower_tabs_.redrawCurrentPage();
 }
 
@@ -4342,17 +4403,19 @@ void IdeWindow::updateMenuState() {
 void IdeWindow::updateStatus() {
   updateMenuState();
   std::ostringstream text;
-  if (root_.empty()) text << "No project";
+  if (root_.empty()) text << localizedUiText(user_settings_.language, "No project");
   else if (document_) {
     const auto cursor = document_->cursor();
     const auto column = displayColumn(document_->line(cursor.line), cursor.column, project_settings_.tab_width);
     text << (document_->modified() ? "● " : "  ") << document_->path().filename().string()
-      << "  Ln " << cursor.line + 1 << ", Col " << column + 1
+      << "  " << localizedUiText(user_settings_.language, "Ln") << ' ' << cursor.line + 1
+      << ", " << localizedUiText(user_settings_.language, "Col") << ' ' << column + 1
       << "  UTF-8" << (document_->hasUtf8Bom() ? " BOM" : "")
       << ' ' << (document_->lineEnding() == LineEnding::CrLf ? "CRLF" : "LF")
       << (document_->hasFinalNewline() ? "" : " no-final-EOL");
-  } else text << "No file";
-  text << "  | " << documents_.size() << " file(s) | clangd: " << (lsp_.running() ? "on" : "off")
+  } else text << localizedUiText(user_settings_.language, "No file");
+  text << "  | " << documents_.size() << ' ' << localizedUiText(user_settings_.language, "file(s)")
+       << " | clangd: " << (lsp_.running() ? "on" : "off")
        << " | CDB: " << (!compilation_database_.available() ? "missing"
          : (!document_ || !isCppSource(document_->path()) ? "ready"
            : (compilation_database_.contains(document_->path()) ? "entry" : "fallback")))

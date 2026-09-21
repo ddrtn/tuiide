@@ -82,6 +82,10 @@ auto validateUserSettings(const UserSettings& settings, std::string& error) -> b
     error = "Unsupported user settings version: " + std::to_string(settings.version);
     return false;
   }
+  if (settings.language != "en" && settings.language != "ru") {
+    error = "Unsupported interface language: " + settings.language;
+    return false;
+  }
   for (const auto& [command, shortcut] : settings.shortcuts) {
     if (const auto reason = reservedShortcutReason(shortcut); !reason.empty()) {
       error = command + ": " + reason;
@@ -127,6 +131,7 @@ auto loadUserSettings(const std::filesystem::path& path, UserSettings& settings,
   try {
     const auto json = nlohmann::json::parse(input);
     settings.version = json.value("version", 0);
+    settings.language = json.value("language", std::string("en"));
     settings.shortcuts = json.value("shortcuts", std::map<std::string, std::string>{});
     settings.theme = json.value("theme", std::string("Dark"));
     settings.custom_themes = json.value("customThemes", std::map<std::string, std::string>{});
@@ -170,7 +175,8 @@ auto saveUserSettings(const std::filesystem::path& path, const UserSettings& set
   auto recent_files = nlohmann::json::array();
   for (const auto& file : normalizeRecentFiles(settings.recent_files))
     recent_files.push_back(file.string());
-  const nlohmann::json json{{"version", settings.version}, {"shortcuts", settings.shortcuts},
+  const nlohmann::json json{{"version", settings.version}, {"language", settings.language},
+    {"shortcuts", settings.shortcuts},
     {"theme", settings.theme}, {"customThemes", settings.custom_themes},
     {"colors", settings.colors}, {"recentFiles", std::move(recent_files)}};
   const auto temporary = path.string() + ".tmp";

@@ -17,6 +17,7 @@ class SidebarTabs final : public finalcut::FWidget {
   explicit SidebarTabs(finalcut::FWidget* parent = nullptr);
 
   void addTab(std::string title, finalcut::FWidget& page);
+  void setTabTitle(std::size_t index, std::string title);
   void setCurrentIndex(std::size_t index, bool focus_page = false);
   auto setTabVisible(std::size_t index, bool visible, bool focus_page = false) -> bool;
   [[nodiscard]] auto isTabVisible(std::size_t index) const -> bool;

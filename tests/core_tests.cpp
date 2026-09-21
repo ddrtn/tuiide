@@ -39,6 +39,7 @@
 #include "tuiide/project_tree.hpp"
 #include "tuiide/recovery.hpp"
 #include "tuiide/run_session.hpp"
+#include "tuiide/ui_localization.hpp"
 #include "tuiide/syntax.hpp"
 #include "tuiide/tab_bar_layout.hpp"
 #include "tuiide/text_display.hpp"
@@ -1926,6 +1927,7 @@ int main() {
     "recent file history obeys its configured size limit, including zero");
   tuiide::UserSettings user_settings;
   user_settings.shortcuts = {{"file.open", "Ctrl+B"}};
+  user_settings.language = "ru";
   user_settings.theme = "Team dark";
   user_settings.custom_themes = {{"Team dark", "Dark"}};
   user_settings.colors = {{"keyword", "Yellow"}, {"diagnosticError", "LightRed"},
@@ -1936,12 +1938,22 @@ int main() {
   tuiide::UserSettings loaded_user_settings;
   expect(tuiide::loadUserSettings(user_settings_path, loaded_user_settings, session_error)
       && loaded_user_settings.shortcuts == user_settings.shortcuts
+      && loaded_user_settings.language == "ru"
       && loaded_user_settings.theme == user_settings.theme
       && loaded_user_settings.custom_themes == user_settings.custom_themes
       && loaded_user_settings.colors == user_settings.colors
       && loaded_user_settings.recent_files == normalized_recent
       && tuiide::effectiveEditorTheme(loaded_user_settings) == "Dark",
     "user shortcuts, theme, colors, and filtered recent files round-trip independently of a project");
+  expect(tuiide::localizedUiText("ru", "Open files") == "Открытые файлы"
+      && tuiide::localizedUiText("en", "Open files") == "Open files"
+      && tuiide::localizedUiText("ru", "not translated") == "not translated",
+    "UI resources select Russian or English and retain safe English fallback");
+  auto invalid_language_settings = user_settings;
+  invalid_language_settings.language = "de";
+  expect(!tuiide::saveUserSettings(user_settings_path, invalid_language_settings, session_error)
+      && session_error.find("language") != std::string::npos,
+    "unsupported UI languages are rejected before changing saved settings");
   const auto malformed_recent_path = settings_project / "config/tuiide/malformed-recent.json";
   {
     std::ofstream output(malformed_recent_path);

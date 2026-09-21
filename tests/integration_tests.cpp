@@ -1395,6 +1395,11 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
   }
   const auto config = workspace / "window-help-config";
   const auto settings_file = config / "tuiide/settings.json";
+  if (std::getenv("TUIIDE_LOCALE_ONLY") != nullptr) {
+    std::filesystem::create_directories(settings_file.parent_path());
+    std::ofstream settings(settings_file);
+    settings << "{\"version\":1,\"language\":\"ru\"}\n";
+  }
   if (std::getenv("TUIIDE_RECENT_FILES_ONLY") != nullptr) {
     std::filesystem::create_directories(settings_file.parent_path());
     std::ofstream settings(settings_file);
@@ -1468,7 +1473,40 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     return menu;
   };
 
-  const bool started = visible("Open files");
+  const bool started = visible(std::getenv("TUIIDE_LOCALE_ONLY") != nullptr
+    ? "Открытые файлы" : "Open files");
+  if (std::getenv("TUIIDE_LOCALE_ONLY") != nullptr) {
+    screen.clear(); send("\033f");
+    const bool translated_menu = visible("Закрыть остальные", 5s);
+    screen.clear(); send("\033");
+    (void)visible("Открытые фай", 3s);
+    settle();
+    screen.clear(); send("\033t");
+    const bool language_menu = visible("Язык интерфейса", 5s);
+    screen.clear(); send("\r");
+    const bool options = visible("English", 3s);
+    screen.clear(); send("\r");
+    const bool switched = visible("Open files", 5s);
+    std::ifstream saved_settings(settings_file);
+    const std::string saved_text((std::istreambuf_iterator<char>(saved_settings)),
+      std::istreambuf_iterator<char>());
+    const bool persisted = saved_text.find("\"language\": \"en\"") != std::string::npos;
+    screen.clear(); send("\021");
+    int locale_status{};
+    const auto exited = waitFor(pump, [&] {
+      return ::waitpid(child, &locale_status, WNOHANG) == child;
+    }, 8s);
+    if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &locale_status, 0); }
+    ::close(master);
+    const bool success = started && translated_menu && language_menu && options
+      && switched && persisted && exited && WIFEXITED(locale_status)
+      && WEXITSTATUS(locale_status) == 0;
+    if (!success) std::cerr << "Locale PTY: started=" << started
+      << " menu=" << translated_menu << " language_menu=" << language_menu
+      << " options=" << options << " switched=" << switched << " persisted=" << persisted
+      << " exited=" << exited << " status=" << locale_status << '\n';
+    return success;
+  }
   if (std::getenv("TUIIDE_LAUNCH_CONFIGS_ONLY") != nullptr) {
     screen.clear(); send("\033l");
     const bool manager = visible("Run/Debug configurations", 5s)

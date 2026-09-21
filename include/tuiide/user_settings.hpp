@@ -13,6 +13,7 @@ namespace tuiide {
  */
 struct UserSettings {
   int version{1};
+  std::string language{"en"};
   std::map<std::string, std::string> shortcuts;
   std::string theme{"Dark"};
   std::map<std::string, std::string> custom_themes;

@@ -2,6 +2,7 @@
 #include "tuiide/tab_bar_layout.hpp"
 
 #include <algorithm>
+#include <utility>
 
 namespace tuiide {
 
@@ -14,6 +15,12 @@ SidebarTabs::SidebarTabs(finalcut::FWidget* parent) : FWidget(parent) {
 void SidebarTabs::addTab(std::string title, finalcut::FWidget& page) {
   tabs_.push_back({std::move(title), &page});
   page.setVisible(tabs_.size() == 1);
+}
+
+void SidebarTabs::setTabTitle(std::size_t index, std::string title) {
+  if (index >= tabs_.size()) return;
+  tabs_[index].title = std::move(title);
+  if (isShown()) redrawCurrentPage();
 }
 
 void SidebarTabs::setCurrentIndex(std::size_t index, bool focus_page) {

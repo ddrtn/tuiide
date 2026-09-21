@@ -118,6 +118,10 @@ Project settings are stored in `.tuiide-project.json`; session and recovery
 data are kept in the build directory. User shortcuts, theme, and colors are
 stored under `$XDG_CONFIG_HOME/tuiide/` (normally `~/.config/tuiide/`).
 
+Switch menu and panel labels via **Tools → Interface language**. The choice is
+stored in `settings.json` as `language: "en"` or `"ru"`. Other dialogs are not
+fully translated yet and may still show English text.
+
 ## Using the Interface
 
 Open the main menu with `F10` or `Alt+F/E/S/R/P/D/T/W/H`. Underlined letters

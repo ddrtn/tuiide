@@ -292,6 +292,8 @@ class IdeWindow final : public finalcut::FDialog {
   void refreshCompilationDatabase(bool report);
   void restartLanguageServer();
   void updateMenuState();
+  void applyUiLanguage();
+  void setUiLanguage(std::string language);
   void updateStatus();
   auto handleCommand(finalcut::FKey key) -> bool;
   auto prompt(std::string title, std::string label) -> std::string;
@@ -309,6 +311,7 @@ class IdeWindow final : public finalcut::FDialog {
   std::filesystem::path project_history_file_;
   std::filesystem::path user_settings_file_;
   UserSettings user_settings_;
+  std::map<finalcut::FMenuItem*, std::string> english_menu_labels_;
   ProjectSettings& project_settings_;
   std::vector<std::filesystem::path> recent_projects_;
   std::vector<std::filesystem::path> file_paths_;
@@ -491,6 +494,10 @@ class IdeWindow final : public finalcut::FDialog {
   struct ToolsMenu {
     explicit ToolsMenu(finalcut::FMenuBar& bar) : menu{"&Tools", &bar} {}
     finalcut::FMenu menu;
+    finalcut::FMenu language{"Interface language", &menu};
+    finalcut::FCheckMenuItem language_english{"&English", &language};
+    finalcut::FCheckMenuItem language_russian{"&Русский", &language};
+    finalcut::FMenuItem separator_language{&menu};
     finalcut::FMenuItem completion{finalcut::FKey::Ctrl_space, "Co&mpletion", &menu};
     finalcut::FMenuItem signature{"Signature &help...", &menu};
     finalcut::FMenuItem hover{finalcut::FKey::F1, "Symbol &information", &menu};

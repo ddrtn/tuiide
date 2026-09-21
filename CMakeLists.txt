@@ -112,6 +112,7 @@ add_library(tuiide_core
   src/tool_discovery.cpp
   src/toolchain_kit.cpp
   src/user_settings.cpp
+  src/ui_localization.cpp
   src/process.cpp
   src/pseudo_terminal.cpp
   src/project_creation.cpp
@@ -262,6 +263,11 @@ if(BUILD_TESTING)
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_menu_mnemonic_tests PROPERTIES
       ENVIRONMENT "TUIIDE_WINDOW_HELP_ONLY=1;TUIIDE_MENU_MNEMONICS_ONLY=1"
+      TIMEOUT 60 RUN_SERIAL TRUE LABELS integration)
+    add_test(NAME tuiide_locale_tests COMMAND tuiide_integration_tests
+      $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
+    set_tests_properties(tuiide_locale_tests PROPERTIES
+      ENVIRONMENT "TUIIDE_WINDOW_HELP_ONLY=1;TUIIDE_LOCALE_ONLY=1"
       TIMEOUT 60 RUN_SERIAL TRUE LABELS integration)
     add_test(NAME tuiide_recent_files_tests COMMAND tuiide_integration_tests
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
