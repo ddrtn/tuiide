@@ -1487,6 +1487,11 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     screen.clear(); send("\033");
     std::this_thread::sleep_for(600ms); pump();
     screen.clear(); send("\027"); settle();
+    screen.clear(); send("\033l");
+    const bool launch_dialog = visible("Конфигурации запуска и отладки", 5s)
+      && visible("текущая цель CMake", 5s);
+    screen.clear(); send("\033");
+    std::this_thread::sleep_for(600ms); pump();
     screen.clear(); send("\033f");
     const bool translated_menu = visible("Закрыть остальные", 5s);
     screen.clear(); send("\033");
@@ -1509,13 +1514,14 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     }, 8s);
     if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &locale_status, 0); }
     ::close(master);
-    const bool success = started && palette && new_file && search_dialog
+    const bool success = started && palette && new_file && search_dialog && launch_dialog
       && translated_menu && language_menu && options
       && switched && persisted && exited && WIFEXITED(locale_status)
       && WEXITSTATUS(locale_status) == 0;
     if (!success) std::cerr << "Locale PTY: started=" << started
       << " palette=" << palette_title << '/' << palette_command
       << " new_file=" << new_file << " search=" << search_dialog
+      << " launch=" << launch_dialog
       << " menu=" << translated_menu << " language_menu=" << language_menu
       << " options=" << options << " switched=" << switched << " persisted=" << persisted
       << " exited=" << exited << " status=" << locale_status << '\n';

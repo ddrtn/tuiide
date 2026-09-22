@@ -3,6 +3,7 @@
 #include "tuiide/document.hpp"
 #include "tuiide/project_dialogs.hpp"
 #include "tuiide/project_settings.hpp"
+#include "tuiide/ui_localization.hpp"
 
 #include <algorithm>
 #include <sstream>
@@ -12,22 +13,36 @@ namespace tuiide {
 
 struct LaunchSettingsDialog::Impl {
   Impl(LaunchSettingsDialog* dialog, std::filesystem::path project_root,
-      const LaunchConfiguration& configuration, const std::vector<CMakeTarget>& targets)
-      : owner(dialog), root(std::move(project_root)), target_label("CMake target:", owner),
-        target(owner), executable_label("Executable override:", owner), executable(owner),
-        executable_browse("&Browse...", owner), working_label("Working directory:", owner),
-        working(owner), working_browse("B&rowse...", owner), arguments_label("Arguments:", owner),
-        arguments(owner), environment_label("Environment:", owner), environment(owner),
-        stdin_label("Stdin file:", owner), stdin(owner), stdin_browse("Bro&wse...", owner),
-        pre_build("Build before launch", owner),
-        external_terminal("External terminal (Run only)", owner),
-        terminal_label("Terminal executable:", owner), terminal(owner), terminal_help(owner),
-        save("&Save", owner), cancel("&Cancel", owner) {
+      const LaunchConfiguration& configuration, const std::vector<CMakeTarget>& targets,
+      std::string language_value)
+      : owner(dialog), root(std::move(project_root)), language(std::move(language_value)),
+        target_label(finalcut::FString(localizedUiText(language, "CMake target:")), owner),
+        target(owner),
+        executable_label(finalcut::FString(localizedUiText(language, "Executable override:")), owner),
+        executable(owner),
+        executable_browse(finalcut::FString(localizedUiText(language, "&Browse...")), owner),
+        working_label(finalcut::FString(localizedUiText(language, "Working directory:")), owner),
+        working(owner),
+        working_browse(finalcut::FString(localizedUiText(language, "B&rowse...")), owner),
+        arguments_label(finalcut::FString(localizedUiText(language, "Arguments:")), owner),
+        arguments(owner),
+        environment_label(finalcut::FString(localizedUiText(language, "Environment:")), owner),
+        environment(owner),
+        stdin_label(finalcut::FString(localizedUiText(language, "Stdin file:")), owner),
+        stdin(owner),
+        stdin_browse(finalcut::FString(localizedUiText(language, "Bro&wse...")), owner),
+        pre_build(finalcut::FString(localizedUiText(language, "Build before launch")), owner),
+        external_terminal(finalcut::FString(localizedUiText(language,
+          "External terminal (Run only)")), owner),
+        terminal_label(finalcut::FString(localizedUiText(language, "Terminal executable:")), owner),
+        terminal(owner), terminal_help(owner),
+        save(finalcut::FString(localizedUiText(language, "&Save")), owner),
+        cancel(finalcut::FString(localizedUiText(language, "&Cancel")), owner) {
     target_label.setGeometry({2, 1}, {18, 1}); target.setGeometry({20, 1}, {35, 1});
-    target.insert("Use currently selected target");
+    target.insert(finalcut::FString(localizedUiText(language, "Use currently selected target")));
     for (const auto& item : targets) target.insert(finalcut::FString(item.name));
     target.setText(finalcut::FString(configuration.target.empty()
-      ? "Use currently selected target" : configuration.target));
+      ? localizedUiText(language, "Use currently selected target") : configuration.target));
     target.unsetEditable();
     executable_label.setGeometry({2, 2}, {18, 1}); executable.setGeometry({20, 2}, {24, 1});
     executable.setText(finalcut::FString(configuration.executable.string()));
@@ -48,7 +63,8 @@ struct LaunchSettingsDialog::Impl {
     if (configuration.external_terminal) external_terminal.setChecked();
     terminal_label.setGeometry({2, 10}, {18, 1}); terminal.setGeometry({20, 10}, {35, 1});
     terminal.setText(finalcut::FString(configuration.terminal));
-    terminal_help.setText("Example: x-terminal-emulator");
+    terminal_help.setText(finalcut::FString(localizedUiText(language,
+      "Example: x-terminal-emulator")));
     terminal_help.setGeometry({20, 11}, {35, 1});
     save.setGeometry({32, 13}, {10, 1}); cancel.setGeometry({44, 13}, {11, 1});
     executable_browse.addCallback("clicked", [this] {
@@ -58,7 +74,7 @@ struct LaunchSettingsDialog::Impl {
     });
     working_browse.addCallback("clicked", [this] {
       const auto current = pathValue(working);
-      ProjectDirectoryDialog dialog("Select launch working directory",
+      ProjectDirectoryDialog dialog(localizedUiText(language, "Select launch working directory"),
         current.empty() ? root : current, owner);
       if (dialog.exec() == finalcut::FDialog::ResultCode::Accept)
         working.setText(finalcut::FString(dialog.selectedPath().string()));
@@ -78,7 +94,7 @@ struct LaunchSettingsDialog::Impl {
     result.working_directory = pathValue(working);
     result.stdin_file = pathValue(stdin);
     const auto selected_target = target.getText().toString();
-    result.target = selected_target == "Use currently selected target"
+    result.target = selected_target == localizedUiText(language, "Use currently selected target")
       ? std::string{} : selected_target;
     result.pre_launch_build = pre_build.isChecked();
     result.external_terminal = external_terminal.isChecked();
@@ -88,7 +104,7 @@ struct LaunchSettingsDialog::Impl {
     if (!parseEnvironmentSettings(environment.getText().trim().toString(), result.environment, error))
       return false;
     if (result.external_terminal && result.terminal.empty()) {
-      error = "External terminal command is required.";
+      error = localizedUiText(language, "External terminal command is required.");
       return false;
     }
     return true;
@@ -101,6 +117,7 @@ struct LaunchSettingsDialog::Impl {
 
   LaunchSettingsDialog* owner;
   std::filesystem::path root;
+  std::string language;
   finalcut::FLabel target_label; finalcut::FComboBox target;
   finalcut::FLabel executable_label; finalcut::FLineEdit executable;
   finalcut::FButton executable_browse;
@@ -116,11 +133,12 @@ struct LaunchSettingsDialog::Impl {
 
 LaunchSettingsDialog::LaunchSettingsDialog(std::filesystem::path root,
     const LaunchConfiguration& configuration, const std::vector<CMakeTarget>& targets,
-    finalcut::FWidget* parent)
-    : CenteredDialog("Launch configuration", parent) {
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Launch configuration")), parent) {
   setDialogSize({78, 24});
   setModal();
-  impl_ = std::make_unique<Impl>(this, std::move(root), configuration, targets);
+  impl_ = std::make_unique<Impl>(this, std::move(root), configuration, targets,
+    std::move(language));
 }
 
 LaunchSettingsDialog::~LaunchSettingsDialog() = default;
@@ -132,12 +150,18 @@ auto LaunchSettingsDialog::configuration(LaunchConfiguration& result,
 
 LaunchConfigurationManagerDialog::LaunchConfigurationManagerDialog(
     std::filesystem::path root, std::vector<NamedLaunchConfiguration> configurations,
-    std::string selected, const std::vector<CMakeTarget>& targets, finalcut::FWidget* parent)
-    : CenteredDialog("Run/Debug configurations", parent), root_(std::move(root)),
+    std::string selected, const std::vector<CMakeTarget>& targets, finalcut::FWidget* parent,
+    std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Run/Debug configurations")), parent),
+      root_(std::move(root)), language_(std::move(language)),
       configurations_(std::move(configurations)), selected_(std::move(selected)), targets_(targets),
-      list_(this), add_("&Add...", this), clone_("&Clone...", this),
-      edit_("&Edit...", this), remove_("&Delete", this), select_("&Select", this),
-      cancel_("C&ancel", this) {
+      list_(this),
+      add_(finalcut::FString(localizedUiText(language_, "&Add...")), this),
+      clone_(finalcut::FString(localizedUiText(language_, "&Clone...")), this),
+      edit_(finalcut::FString(localizedUiText(language_, "&Edit...")), this),
+      remove_(finalcut::FString(localizedUiText(language_, "&Delete")), this),
+      select_(finalcut::FString(localizedUiText(language_, "&Select")), this),
+      cancel_(finalcut::FString(localizedUiText(language_, "C&ancel")), this) {
   setDialogSize({82, 25});
   setModal();
   list_.setGeometry({2, 2}, {77, 15});
@@ -165,20 +189,22 @@ auto LaunchConfigurationManagerDialog::currentIndex() const -> std::optional<std
 
 auto LaunchConfigurationManagerDialog::requestUniqueName(std::string title)
     -> std::optional<std::string> {
-  PromptDialog dialog(std::move(title), "Configuration name:", this);
+  PromptDialog dialog(std::move(title), "Configuration name:", this, language_);
   if (dialog.exec() != ResultCode::Accept) return std::nullopt;
   auto name = dialog.value();
   const auto begin = name.find_first_not_of(" \t");
   const auto end = name.find_last_not_of(" \t");
   name = begin == std::string::npos ? std::string{} : name.substr(begin, end - begin + 1);
   if (name.empty()) {
-    finalcut::FMessageBox::error(this, "Configuration name is required.");
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(language_,
+      "Configuration name is required.")));
     return std::nullopt;
   }
   if (std::any_of(configurations_.begin(), configurations_.end(), [&name](const auto& item) {
       return item.name == name;
     })) {
-    finalcut::FMessageBox::error(this, "A configuration with this name already exists.");
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(language_,
+      "A configuration with this name already exists.")));
     return std::nullopt;
   }
   return name;
@@ -191,7 +217,8 @@ void LaunchConfigurationManagerDialog::refresh(const std::string& preferred) {
     const auto& item = configurations_[index];
     auto detail = !item.configuration.executable.empty()
       ? item.configuration.executable.string()
-      : !item.configuration.target.empty() ? item.configuration.target : "current CMake target";
+      : !item.configuration.target.empty() ? item.configuration.target
+        : localizedUiText(language_, "current CMake target");
     list_.insert(finalcut::FString{(item.name == selected_ ? "* " : "  ")
       + item.name + " — " + detail});
     if (item.name == (preferred.empty() ? selected_ : preferred)) selected_row = index + 1;
@@ -209,7 +236,7 @@ void LaunchConfigurationManagerDialog::addConfiguration() {
   const auto name = requestUniqueName("Add Run/Debug configuration");
   if (!name) return;
   LaunchConfiguration configuration;
-  LaunchSettingsDialog dialog(root_, configuration, targets_, this);
+  LaunchSettingsDialog dialog(root_, configuration, targets_, this, language_);
   if (dialog.exec() != ResultCode::Accept) return;
   std::string error;
   if (!dialog.configuration(configuration, error)) {
@@ -231,7 +258,7 @@ void LaunchConfigurationManagerDialog::cloneConfiguration() {
 void LaunchConfigurationManagerDialog::editConfiguration() {
   const auto index = currentIndex();
   if (!index) return;
-  LaunchSettingsDialog dialog(root_, configurations_[*index].configuration, targets_, this);
+  LaunchSettingsDialog dialog(root_, configurations_[*index].configuration, targets_, this, language_);
   if (dialog.exec() != ResultCode::Accept) return;
   LaunchConfiguration configuration;
   std::string error;
@@ -246,12 +273,14 @@ void LaunchConfigurationManagerDialog::deleteConfiguration() {
   const auto index = currentIndex();
   if (!index) return;
   if (configurations_.size() == 1) {
-    finalcut::FMessageBox::info(this, "Run/Debug configurations",
-      "At least one configuration must remain.");
+    finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(language_, "Run/Debug configurations")),
+      finalcut::FString(localizedUiText(language_, "At least one configuration must remain.")));
     return;
   }
-  const auto answer = finalcut::FMessageBox::info(this, "Delete configuration",
-    finalcut::FString{"Delete " + configurations_[*index].name + "?"},
+  const auto answer = finalcut::FMessageBox::info(this,
+    finalcut::FString(localizedUiText(language_, "Delete configuration")),
+    finalcut::FString{localizedUiText(language_, "Delete ") + configurations_[*index].name + "?"},
     finalcut::FMessageBox::ButtonType::Yes, finalcut::FMessageBox::ButtonType::No,
     finalcut::FMessageBox::ButtonType::Reject);
   if (answer != finalcut::FMessageBox::ButtonType::Yes) return;

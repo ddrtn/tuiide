@@ -18,7 +18,7 @@ class LaunchSettingsDialog final : public CenteredDialog {
  public:
   LaunchSettingsDialog(std::filesystem::path root,
     const LaunchConfiguration& configuration, const std::vector<CMakeTarget>& targets,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   ~LaunchSettingsDialog() override;
 
   [[nodiscard]] auto configuration(LaunchConfiguration& result,
@@ -34,7 +34,8 @@ class LaunchConfigurationManagerDialog final : public CenteredDialog {
  public:
   LaunchConfigurationManagerDialog(std::filesystem::path root,
     std::vector<NamedLaunchConfiguration> configurations, std::string selected,
-    const std::vector<CMakeTarget>& targets, finalcut::FWidget* parent = nullptr);
+    const std::vector<CMakeTarget>& targets, finalcut::FWidget* parent = nullptr,
+    std::string language = "en");
 
   [[nodiscard]] auto configurations() const -> const std::vector<NamedLaunchConfiguration>& {
     return configurations_;
@@ -52,6 +53,7 @@ class LaunchConfigurationManagerDialog final : public CenteredDialog {
   [[nodiscard]] auto requestUniqueName(std::string title) -> std::optional<std::string>;
 
   std::filesystem::path root_;
+  std::string language_;
   std::vector<NamedLaunchConfiguration> configurations_;
   std::string selected_;
   std::vector<CMakeTarget> targets_;

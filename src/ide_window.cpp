@@ -2087,7 +2087,7 @@ void IdeWindow::launchSettings() {
   synchronizeActiveLaunchConfiguration(current);
   delTimer(timer_id_);
   LaunchConfigurationManagerDialog dialog(root_, current.launch_configurations,
-    current.active_launch_configuration, cmake_session_.targets(), this);
+    current.active_launch_configuration, cmake_session_.targets(), this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted) return;

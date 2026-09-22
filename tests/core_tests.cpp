@@ -1956,6 +1956,10 @@ int main() {
       && tuiide::localizedUiText("ru", "Open core dump") == "Открыть дамп памяти"
       && tuiide::localizedUiText("ru", "Select both an executable and a core dump.")
         == "Выберите исполняемый файл и дамп памяти."
+      && tuiide::localizedUiText("ru", "Use currently selected target")
+        == "Использовать текущую цель"
+      && tuiide::localizedUiText("en", "Use currently selected target")
+        == "Use currently selected target"
       && tuiide::localizedUiText("ru", "&Cancel") == "О&тмена"
       && tuiide::localizedUiText("en", "&Cancel") == "&Cancel"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",
