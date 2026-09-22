@@ -1503,6 +1503,12 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     screen.clear(); send("\033");
     std::this_thread::sleep_for(600ms); pump();
     screen.clear(); send("\033f");
+    const bool project_menu = visible("Закрыть остальные", 5s);
+    screen.clear(); send("\033[B"); settle(); send("\r");
+    const bool project_directory = visible("Открыть проект CMake", 5s);
+    screen.clear(); send("\033");
+    std::this_thread::sleep_for(600ms); pump();
+    screen.clear(); send("\033f");
     const bool translated_menu = visible("Закрыть остальные", 5s);
     screen.clear(); send("\033");
     (void)visible("Открытые фай", 3s);
@@ -1525,7 +1531,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &locale_status, 0); }
     ::close(master);
     const bool success = started && palette && new_file && search_dialog && launch_dialog
-      && configure_presets && build_presets
+      && configure_presets && build_presets && project_menu && project_directory
       && translated_menu && language_menu && options
       && switched && persisted && exited && WIFEXITED(locale_status)
       && WEXITSTATUS(locale_status) == 0;
@@ -1534,6 +1540,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       << " new_file=" << new_file << " search=" << search_dialog
       << " launch=" << launch_dialog
       << " presets=" << configure_presets << '/' << build_presets
+      << " project_directory=" << project_menu << '/' << project_directory
       << " menu=" << translated_menu << " language_menu=" << language_menu
       << " options=" << options << " switched=" << switched << " persisted=" << persisted
       << " exited=" << exited << " status=" << locale_status << '\n';

@@ -1964,6 +1964,8 @@ int main() {
         == "Пресеты настройки CMake"
       && tuiide::localizedUiText("ru", "No build preset") == "Без пресета сборки"
       && tuiide::localizedUiText("en", "No build preset") == "No build preset"
+      && tuiide::localizedUiText("ru", "Open CMake project") == "Открыть проект CMake"
+      && tuiide::localizedUiText("ru", "Directory name:") == "Имя каталога:"
       && tuiide::localizedUiText("ru", "&Cancel") == "О&тмена"
       && tuiide::localizedUiText("en", "&Cancel") == "&Cancel"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",

@@ -1,6 +1,7 @@
 #include "tuiide/project_dialogs.hpp"
 
 #include "tuiide/document.hpp"
+#include "tuiide/ui_localization.hpp"
 
 #include <algorithm>
 #include <utility>
@@ -10,12 +11,17 @@ namespace tuiide {
 
 ProjectPathDialog::ProjectPathDialog(std::string title, std::filesystem::path root,
     std::filesystem::path start, std::string suggested_name,
-    finalcut::FWidget* parent)
-    : CenteredDialog(finalcut::FString(std::move(title)), parent),
-      root_(normalizePath(root)), current_(normalizePath(start)), path_label_(this),
-      entries_(this), name_label_("File name:", this), name_(this), up_("&Up", this),
-      new_directory_("New &directory", this), create_("&Create", this),
-      cancel_("&Cancel", this) {
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, title)), parent),
+      root_(normalizePath(root)), current_(normalizePath(start)),
+      language_(std::move(language)), path_label_(this),
+      entries_(this),
+      name_label_(finalcut::FString(localizedUiText(language_, "File name:")), this),
+      name_(this),
+      up_(finalcut::FString(localizedUiText(language_, "&Up")), this),
+      new_directory_(finalcut::FString(localizedUiText(language_, "New &directory")), this),
+      create_(finalcut::FString(localizedUiText(language_, "&Create")), this),
+      cancel_(finalcut::FString(localizedUiText(language_, "&Cancel")), this) {
   std::error_code relative_error;
   const auto relative = std::filesystem::relative(current_, root_, relative_error);
   if (relative_error || (!relative.empty() && *relative.begin() == "..")) current_ = root_;
@@ -76,7 +82,7 @@ void ProjectPathDialog::populate() {
   }
   std::error_code relative_error;
   const auto relative = std::filesystem::relative(current_, root_, relative_error);
-  path_label_.setText(finalcut::FString("Project / "
+  path_label_.setText(finalcut::FString(localizedUiText(language_, "Project / ")
     + (relative_error || relative == "." ? std::string{} : relative.generic_string())));
   path_label_.redraw();
   entries_.redraw();
@@ -102,17 +108,19 @@ void ProjectPathDialog::goUp() {
 }
 
 void ProjectPathDialog::createDirectory() {
-  PromptDialog prompt("New directory", "Directory name:", this);
+  PromptDialog prompt("New directory", "Directory name:", this, language_);
   if (prompt.exec() != ResultCode::Accept) return;
   const auto value = std::filesystem::path(prompt.value());
   if (value.empty() || value.has_parent_path() || value == "." || value == "..") {
-    finalcut::FMessageBox::error(this, "Enter one valid directory name.");
+    finalcut::FMessageBox::error(this,
+      finalcut::FString(localizedUiText(language_, "Enter one valid directory name.")));
     return;
   }
   std::error_code create_error;
   if (!std::filesystem::create_directory(current_ / value, create_error)) {
     finalcut::FMessageBox::error(this, finalcut::FString(create_error
-      ? "Cannot create directory: " + create_error.message() : "Directory already exists."));
+      ? localizedUiText(language_, "Cannot create directory: ") + create_error.message()
+      : localizedUiText(language_, "Directory already exists.")));
     return;
   }
   current_ /= value;
@@ -122,12 +130,14 @@ void ProjectPathDialog::createDirectory() {
 void ProjectPathDialog::acceptPath() {
   const auto value = std::filesystem::path(name_.getText().trim().toString());
   if (value.empty() || value.has_parent_path() || value == "." || value == "..") {
-    finalcut::FMessageBox::error(this, "Enter one valid file name.");
+    finalcut::FMessageBox::error(this,
+      finalcut::FString(localizedUiText(language_, "Enter one valid file name.")));
     return;
   }
   const auto candidate = current_ / value;
   if (std::filesystem::exists(candidate)) {
-    finalcut::FMessageBox::error(this, "The selected file already exists.");
+    finalcut::FMessageBox::error(this,
+      finalcut::FString(localizedUiText(language_, "The selected file already exists.")));
     return;
   }
   selected_path_ = candidate;
@@ -135,10 +145,14 @@ void ProjectPathDialog::acceptPath() {
 }
 
 ProjectDirectoryDialog::ProjectDirectoryDialog(std::string title,
-    std::filesystem::path start, finalcut::FWidget* parent)
-    : CenteredDialog(finalcut::FString(std::move(title)), parent),
-      current_(normalizePath(start)), path_(this), entries_(this), up_("&Up", this),
-      make_("New &directory", this), select_("&Select", this), cancel_("&Cancel", this) {
+    std::filesystem::path start, finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, title)), parent),
+      current_(normalizePath(start)), language_(std::move(language)),
+      path_(this), entries_(this),
+      up_(finalcut::FString(localizedUiText(language_, "&Up")), this),
+      make_(finalcut::FString(localizedUiText(language_, "New &directory")), this),
+      select_(finalcut::FString(localizedUiText(language_, "&Select")), this),
+      cancel_(finalcut::FString(localizedUiText(language_, "&Cancel")), this) {
   setDialogSize({70, 18});
   setModal();
   path_.setGeometry({2, 1}, {53, 1}); entries_.setGeometry({2, 2}, {53, 9});
@@ -192,17 +206,19 @@ void ProjectDirectoryDialog::enterDirectory() {
 }
 
 void ProjectDirectoryDialog::createDirectory() {
-  PromptDialog prompt("New directory", "Directory name:", this);
+  PromptDialog prompt("New directory", "Directory name:", this, language_);
   if (prompt.exec() != ResultCode::Accept) return;
   const std::filesystem::path name(prompt.value());
   if (name.empty() || name.has_parent_path() || name == "." || name == "..") {
-    finalcut::FMessageBox::error(this, "Enter one valid directory name.");
+    finalcut::FMessageBox::error(this,
+      finalcut::FString(localizedUiText(language_, "Enter one valid directory name.")));
     return;
   }
   std::error_code error;
   if (!std::filesystem::create_directory(current_ / name, error)) {
     finalcut::FMessageBox::error(this,
-      finalcut::FString(error ? error.message() : "Directory already exists."));
+      finalcut::FString(error ? error.message()
+        : localizedUiText(language_, "Directory already exists.")));
     return;
   }
   current_ /= name;

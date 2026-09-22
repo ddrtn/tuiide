@@ -2147,7 +2147,7 @@ void IdeWindow::selectLaunchProfile() {
 void IdeWindow::openProject() {
   const auto start = root_.empty() ? std::filesystem::current_path() : root_.parent_path();
   delTimer(timer_id_);
-  ProjectDirectoryDialog dialog("Open CMake project", start, this);
+  ProjectDirectoryDialog dialog("Open CMake project", start, this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   const auto selected = dialog.selectedPath();
   timer_id_ = addTimer(100);
@@ -2195,7 +2195,8 @@ void IdeWindow::importProject(const std::filesystem::path& directory) {
   options.project_directory = normalizePath(directory);
 
   delTimer(timer_id_);
-  ProjectDirectoryDialog build_dialog("Select import build directory", directory.parent_path(), this);
+  ProjectDirectoryDialog build_dialog("Select import build directory", directory.parent_path(), this,
+    user_settings_.language);
   const auto build_accepted = build_dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   options.build_directory = normalizePath(build_dialog.selectedPath());
   timer_id_ = addTimer(100);
@@ -2342,11 +2343,13 @@ void IdeWindow::newProject() {
   auto options = settings_dialog.options(); timer_id_ = addTimer(100);
   if (!accepted) return;
   const auto start = root_.empty() ? std::filesystem::current_path() : root_.parent_path();
-  delTimer(timer_id_); ProjectDirectoryDialog project_dialog("Select empty project directory", start, this);
+  delTimer(timer_id_); ProjectDirectoryDialog project_dialog("Select empty project directory", start,
+    this, user_settings_.language);
   const auto project_accepted = project_dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   options.project_directory = project_dialog.selectedPath(); timer_id_ = addTimer(100);
   if (!project_accepted) return;
-  delTimer(timer_id_); ProjectDirectoryDialog build_dialog("Select build directory", options.project_directory.parent_path(), this);
+  delTimer(timer_id_); ProjectDirectoryDialog build_dialog("Select build directory",
+    options.project_directory.parent_path(), this, user_settings_.language);
   const auto build_accepted = build_dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   options.build_directory = build_dialog.selectedPath(); timer_id_ = addTimer(100);
   if (!build_accepted) return;
@@ -2451,7 +2454,8 @@ void IdeWindow::createProjectFile() {
 auto IdeWindow::chooseProjectSavePath(std::string title, const std::filesystem::path& start,
                                       std::string suggested_name) -> std::optional<std::filesystem::path> {
   delTimer(timer_id_);
-  ProjectPathDialog dialog(std::move(title), root_, start, std::move(suggested_name), this);
+  ProjectPathDialog dialog(std::move(title), root_, start, std::move(suggested_name), this,
+    user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   const auto selected = dialog.selectedPath();
   timer_id_ = addTimer(100);

@@ -15,7 +15,7 @@ class ProjectPathDialog final : public CenteredDialog {
  public:
   ProjectPathDialog(std::string title, std::filesystem::path root,
     std::filesystem::path start, std::string suggested_name,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   [[nodiscard]] auto selectedPath() const -> std::filesystem::path;
 
  private:
@@ -29,6 +29,7 @@ class ProjectPathDialog final : public CenteredDialog {
   std::filesystem::path current_;
   std::filesystem::path selected_path_;
   std::vector<std::filesystem::path> entry_paths_;
+  std::string language_;
   finalcut::FLabel path_label_;
   finalcut::FListBox entries_;
   finalcut::FLabel name_label_;
@@ -43,7 +44,7 @@ class ProjectPathDialog final : public CenteredDialog {
 class ProjectDirectoryDialog final : public CenteredDialog {
  public:
   ProjectDirectoryDialog(std::string title, std::filesystem::path start,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   [[nodiscard]] auto selectedPath() const -> std::filesystem::path;
 
  private:
@@ -53,6 +54,7 @@ class ProjectDirectoryDialog final : public CenteredDialog {
 
   std::filesystem::path current_;
   std::vector<std::filesystem::path> directories_;
+  std::string language_;
   finalcut::FLabel path_;
   finalcut::FListBox entries_;
   finalcut::FButton up_;

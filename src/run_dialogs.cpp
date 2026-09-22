@@ -75,7 +75,7 @@ struct LaunchSettingsDialog::Impl {
     working_browse.addCallback("clicked", [this] {
       const auto current = pathValue(working);
       ProjectDirectoryDialog dialog(localizedUiText(language, "Select launch working directory"),
-        current.empty() ? root : current, owner);
+        current.empty() ? root : current, owner, language);
       if (dialog.exec() == finalcut::FDialog::ResultCode::Accept)
         working.setText(finalcut::FString(dialog.selectedPath().string()));
     });
