@@ -1950,6 +1950,8 @@ int main() {
       && tuiide::localizedUiText("ru", "Dark") == "Тёмная"
       && tuiide::localizedUiText("ru", "keyword") == "ключевое слово"
       && tuiide::localizedUiText("ru", "Command palette") == "Палитра команд"
+      && tuiide::localizedUiText("ru", "Find and replace") == "Поиск и замена"
+      && tuiide::localizedUiText("ru", "&Previous") == "Н&азад"
       && tuiide::localizedUiText("ru", "&Cancel") == "О&тмена"
       && tuiide::localizedUiText("en", "&Cancel") == "&Cancel"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",

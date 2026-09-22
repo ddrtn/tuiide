@@ -24,7 +24,7 @@ struct SearchRequest {
 class SearchDialog final : public CenteredDialog {
  public:
   SearchDialog(const SearchRequest& initial, bool has_project,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   ~SearchDialog() override;
   [[nodiscard]] auto request() const -> SearchRequest;
 

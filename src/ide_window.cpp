@@ -2703,7 +2703,7 @@ auto IdeWindow::saveAs() -> bool {
 void IdeWindow::find() {
   SearchRequest initial{SearchAction::None, search_query_, search_replacement_, search_options_, search_project_};
   delTimer(timer_id_);
-  SearchDialog dialog(initial, !root_.empty(), this);
+  SearchDialog dialog(initial, !root_.empty(), this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted) return;

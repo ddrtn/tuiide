@@ -1,15 +1,24 @@
 #include "tuiide/search_dialogs.hpp"
+#include "tuiide/ui_localization.hpp"
 
 namespace tuiide {
 
 struct SearchDialog::Impl {
-  Impl(SearchDialog* dialog, const SearchRequest& initial, bool has_project)
-      : owner(dialog), find_label("Find:", owner), find(owner),
-        replace_label("Replace:", owner), replace(owner),
-        case_sensitive("Case sensitive", owner), whole_word("Whole word", owner),
-        regular_expression("Regular expression", owner), entire_project("Entire project", owner),
-        next("&Next", owner), previous("&Previous", owner), replace_one("&Replace", owner),
-        replace_all("Replace &all", owner), find_all("&Find all", owner), cancel("&Cancel", owner) {
+  Impl(SearchDialog* dialog, const SearchRequest& initial, bool has_project,
+      const std::string& language)
+      : owner(dialog),
+        find_label(finalcut::FString(localizedUiText(language, "Find:")), owner), find(owner),
+        replace_label(finalcut::FString(localizedUiText(language, "Replace:")), owner), replace(owner),
+        case_sensitive(finalcut::FString(localizedUiText(language, "Case sensitive")), owner),
+        whole_word(finalcut::FString(localizedUiText(language, "Whole word")), owner),
+        regular_expression(finalcut::FString(localizedUiText(language, "Regular expression")), owner),
+        entire_project(finalcut::FString(localizedUiText(language, "Entire project")), owner),
+        next(finalcut::FString(localizedUiText(language, "&Next")), owner),
+        previous(finalcut::FString(localizedUiText(language, "&Previous")), owner),
+        replace_one(finalcut::FString(localizedUiText(language, "&Replace")), owner),
+        replace_all(finalcut::FString(localizedUiText(language, "Replace &all")), owner),
+        find_all(finalcut::FString(localizedUiText(language, "&Find all")), owner),
+        cancel(finalcut::FString(localizedUiText(language, "&Cancel")), owner) {
     constexpr std::size_t width = 58;
     find_label.setGeometry({3, 2}, {11, 1}); find.setGeometry({14, 2}, {width - 17, 1});
     replace_label.setGeometry({3, 4}, {11, 1}); replace.setGeometry({14, 4}, {width - 17, 1});
@@ -64,11 +73,11 @@ struct SearchDialog::Impl {
 };
 
 SearchDialog::SearchDialog(const SearchRequest& initial, bool has_project,
-    finalcut::FWidget* parent)
-    : CenteredDialog("Find and replace", parent) {
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Find and replace")), parent) {
   setDialogSize({58, 16});
   setModal();
-  impl_ = std::make_unique<Impl>(this, initial, has_project);
+  impl_ = std::make_unique<Impl>(this, initial, has_project, language);
 }
 
 SearchDialog::~SearchDialog() = default;
