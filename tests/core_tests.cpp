@@ -1960,6 +1960,10 @@ int main() {
         == "Использовать текущую цель"
       && tuiide::localizedUiText("en", "Use currently selected target")
         == "Use currently selected target"
+      && tuiide::localizedUiText("ru", "CMake configure presets")
+        == "Пресеты настройки CMake"
+      && tuiide::localizedUiText("ru", "No build preset") == "Без пресета сборки"
+      && tuiide::localizedUiText("en", "No build preset") == "No build preset"
       && tuiide::localizedUiText("ru", "&Cancel") == "О&тмена"
       && tuiide::localizedUiText("en", "&Cancel") == "&Cancel"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",

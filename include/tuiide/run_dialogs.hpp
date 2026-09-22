@@ -70,7 +70,7 @@ class LaunchConfigurationManagerDialog final : public CenteredDialog {
 class CMakePresetEditDialog final : public CenteredDialog {
  public:
   explicit CMakePresetEditDialog(CMakePresetEdit preset,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   ~CMakePresetEditDialog() override;
   [[nodiscard]] auto preset() const -> CMakePresetEdit;
 
@@ -83,7 +83,8 @@ class CMakePresetEditDialog final : public CenteredDialog {
 class CMakePresetManagerDialog final : public CenteredDialog {
  public:
   CMakePresetManagerDialog(std::filesystem::path root, CMakePresetKind kind,
-    std::string selected, finalcut::FWidget* parent = nullptr);
+    std::string selected, finalcut::FWidget* parent = nullptr,
+    std::string language = "en");
   [[nodiscard]] auto selectedPreset() const -> std::string;
   [[nodiscard]] auto changed() const noexcept -> bool { return changed_; }
 
@@ -98,6 +99,7 @@ class CMakePresetManagerDialog final : public CenteredDialog {
 
   std::filesystem::path root_;
   CMakePresetKind kind_;
+  std::string language_;
   std::string initial_selection_;
   std::string selected_;
   std::vector<CMakePresetEdit> presets_;

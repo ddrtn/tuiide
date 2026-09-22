@@ -3362,7 +3362,7 @@ auto IdeWindow::refreshCMakePresets(bool report_error) -> bool {
 void IdeWindow::selectCMakePreset() {
   delTimer(timer_id_);
   CMakePresetManagerDialog dialog(root_, CMakePresetKind::Configure,
-    cmake_session_.configurePreset(), this);
+    cmake_session_.configurePreset(), this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   activateWindow();
@@ -3391,7 +3391,7 @@ void IdeWindow::selectCMakePreset() {
 void IdeWindow::selectCMakeBuildPreset() {
   delTimer(timer_id_);
   CMakePresetManagerDialog dialog(root_, CMakePresetKind::Build,
-    cmake_session_.buildPreset(), this);
+    cmake_session_.buildPreset(), this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   activateWindow();

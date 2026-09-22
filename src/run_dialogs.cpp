@@ -322,17 +322,27 @@ auto splitPresetValues(std::string value) -> std::vector<std::string> {
 }
 
 struct CMakePresetEditDialog::Impl {
-  Impl(CMakePresetEditDialog* dialog, CMakePresetEdit value)
-      : owner(dialog), value_(std::move(value)), name_label("Name:", owner), name(owner),
-        display_label("Display name:", owner), display(owner),
-        inherits_label("Inherits (; separated):", owner), inherits(owner),
-        generator_label("Generator:", owner), generator(owner),
-        binary_label("Binary directory:", owner), binary(owner),
-        configure_label("Configure preset:", owner), configure(owner),
-        configuration_label("Configuration:", owner), configuration(owner),
-        targets_label("Targets (; separated):", owner), targets(owner),
-        clean_first("Clean first", owner), verbose("Verbose build", owner),
-        save("&Save", owner), cancel("&Cancel", owner) {
+  Impl(CMakePresetEditDialog* dialog, CMakePresetEdit value, const std::string& language)
+      : owner(dialog), value_(std::move(value)),
+        name_label(finalcut::FString(localizedUiText(language, "Name:")), owner), name(owner),
+        display_label(finalcut::FString(localizedUiText(language, "Display name:")), owner),
+        display(owner),
+        inherits_label(finalcut::FString(localizedUiText(language, "Inherits (; separated):")), owner),
+        inherits(owner),
+        generator_label(finalcut::FString(localizedUiText(language, "Generator:")), owner),
+        generator(owner),
+        binary_label(finalcut::FString(localizedUiText(language, "Binary directory:")), owner),
+        binary(owner),
+        configure_label(finalcut::FString(localizedUiText(language, "Configure preset:")), owner),
+        configure(owner),
+        configuration_label(finalcut::FString(localizedUiText(language, "Configuration:")), owner),
+        configuration(owner),
+        targets_label(finalcut::FString(localizedUiText(language, "Targets (; separated):")), owner),
+        targets(owner),
+        clean_first(finalcut::FString(localizedUiText(language, "Clean first")), owner),
+        verbose(finalcut::FString(localizedUiText(language, "Verbose build")), owner),
+        save(finalcut::FString(localizedUiText(language, "&Save")), owner),
+        cancel(finalcut::FString(localizedUiText(language, "&Cancel")), owner) {
     name_label.setGeometry({2, 1}, {20, 1}); name.setGeometry({23, 1}, {48, 1});
     display_label.setGeometry({2, 3}, {20, 1}); display.setGeometry({23, 3}, {48, 1});
     inherits_label.setGeometry({2, 5}, {20, 1}); inherits.setGeometry({23, 5}, {48, 1});
@@ -394,12 +404,12 @@ struct CMakePresetEditDialog::Impl {
 };
 
 CMakePresetEditDialog::CMakePresetEditDialog(CMakePresetEdit preset,
-    finalcut::FWidget* parent)
-    : CenteredDialog(preset.kind == CMakePresetKind::Configure
-        ? "Configure preset" : "Build preset", parent) {
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language,
+        preset.kind == CMakePresetKind::Configure ? "Configure preset" : "Build preset")), parent) {
   setDialogSize({78, 22});
   setModal();
-  impl_ = std::make_unique<Impl>(this, std::move(preset));
+  impl_ = std::make_unique<Impl>(this, std::move(preset), language);
 }
 
 CMakePresetEditDialog::~CMakePresetEditDialog() = default;
@@ -407,13 +417,21 @@ CMakePresetEditDialog::~CMakePresetEditDialog() = default;
 auto CMakePresetEditDialog::preset() const -> CMakePresetEdit { return impl_->value(); }
 
 CMakePresetManagerDialog::CMakePresetManagerDialog(std::filesystem::path root,
-    CMakePresetKind kind, std::string selected, finalcut::FWidget* parent)
-    : CenteredDialog(kind == CMakePresetKind::Configure
-        ? "CMake configure presets" : "CMake build presets", parent),
-      root_(std::move(root)), kind_(kind), initial_selection_(std::move(selected)),
-      list_(this), add_("&Add", this), clone_("C&lone", this), edit_("&Edit", this),
-      remove_("&Delete", this), reload_("&Reload", this), select_("&Select", this),
-      cancel_("&Cancel", this) {
+    CMakePresetKind kind, std::string selected, finalcut::FWidget* parent,
+    std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language,
+        kind == CMakePresetKind::Configure ? "CMake configure presets" : "CMake build presets")),
+        parent),
+      root_(std::move(root)), kind_(kind), language_(std::move(language)),
+      initial_selection_(std::move(selected)),
+      list_(this),
+      add_(finalcut::FString(localizedUiText(language_, "&Add")), this),
+      clone_(finalcut::FString(localizedUiText(language_, "C&lone")), this),
+      edit_(finalcut::FString(localizedUiText(language_, "&Edit")), this),
+      remove_(finalcut::FString(localizedUiText(language_, "&Delete")), this),
+      reload_(finalcut::FString(localizedUiText(language_, "&Reload")), this),
+      select_(finalcut::FString(localizedUiText(language_, "&Select")), this),
+      cancel_(finalcut::FString(localizedUiText(language_, "&Cancel")), this) {
   setDialogSize({92, 24});
   setModal();
   list_.setGeometry({2, 1}, {87, 16});
@@ -450,17 +468,19 @@ void CMakePresetManagerDialog::reload(const std::string& preferred) {
   }
   presets_ = std::move(loaded);
   list_.clear();
-  list_.insert(kind_ == CMakePresetKind::Configure ? "No configure preset" : "No build preset");
+  list_.insert(finalcut::FString(localizedUiText(language_,
+    kind_ == CMakePresetKind::Configure ? "No configure preset" : "No build preset")));
   std::size_t selected_row = 1;
   for (std::size_t index = 0; index < presets_.size(); ++index) {
     const auto& preset = presets_[index];
     std::error_code relative_error;
     const auto relative_source = std::filesystem::relative(preset.source_file, root_, relative_error);
-    auto origin = preset.user_editable ? std::string("CMakeUserPresets.json — editable")
+    auto origin = preset.user_editable
+      ? "CMakeUserPresets.json — " + localizedUiText(language_, "editable")
       : (relative_error ? preset.source_file.string() : relative_source.generic_string());
     auto label = preset.name;
     if (!preset.display_name.empty()) label += " — " + preset.display_name;
-    label += "  [" + origin + (preset.hidden ? ", hidden" : "") + "]";
+    label += "  [" + origin + (preset.hidden ? localizedUiText(language_, ", hidden") : "") + "]";
     list_.insert(finalcut::FString(label));
     if (preset.name == (preferred.empty() ? initial_selection_ : preferred)) selected_row = index + 2;
   }
@@ -480,7 +500,7 @@ void CMakePresetManagerDialog::addPreset() {
     value.generator = "Ninja";
     value.binary_directory = "${sourceDir}/build/${presetName}";
   }
-  CMakePresetEditDialog dialog(std::move(value), this);
+  CMakePresetEditDialog dialog(std::move(value), this, language_);
   if (dialog.exec() != ResultCode::Accept) return;
   const auto preset = dialog.preset();
   std::string error;
@@ -493,8 +513,13 @@ void CMakePresetManagerDialog::addPreset() {
 
 void CMakePresetManagerDialog::clonePreset() {
   auto* current = currentPreset();
-  if (!current) { finalcut::FMessageBox::info(this, "CMake presets", "Select a preset to clone."); return; }
-  PromptDialog prompt("Clone CMake preset", "New name:", this);
+  if (!current) {
+    finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(language_, "CMake presets")),
+      finalcut::FString(localizedUiText(language_, "Select a preset to clone.")));
+    return;
+  }
+  PromptDialog prompt("Clone CMake preset", "New name:", this, language_);
   if (prompt.exec() != ResultCode::Accept || prompt.value().empty()) return;
   std::string error;
   if (!cloneCMakePresetToUser(root_, kind_, current->name, prompt.value(), error)) {
@@ -506,14 +531,21 @@ void CMakePresetManagerDialog::clonePreset() {
 
 void CMakePresetManagerDialog::editPreset() {
   auto* current = currentPreset();
-  if (!current) { finalcut::FMessageBox::info(this, "CMake presets", "Select a preset to edit."); return; }
+  if (!current) {
+    finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(language_, "CMake presets")),
+      finalcut::FString(localizedUiText(language_, "Select a preset to edit.")));
+    return;
+  }
   if (!current->user_editable) {
-    finalcut::FMessageBox::info(this, "Read-only preset",
-      "Project and included presets are read-only. Clone this preset to edit it.");
+    finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(language_, "Read-only preset")),
+      finalcut::FString(localizedUiText(language_,
+        "Project and included presets are read-only. Clone this preset to edit it.")));
     return;
   }
   const auto original = current->name;
-  CMakePresetEditDialog dialog(*current, this);
+  CMakePresetEditDialog dialog(*current, this, language_);
   if (dialog.exec() != ResultCode::Accept) return;
   const auto preset = dialog.preset();
   std::string error;
@@ -526,15 +558,23 @@ void CMakePresetManagerDialog::editPreset() {
 
 void CMakePresetManagerDialog::deletePreset() {
   auto* current = currentPreset();
-  if (!current) { finalcut::FMessageBox::info(this, "CMake presets", "Select a preset to delete."); return; }
+  if (!current) {
+    finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(language_, "CMake presets")),
+      finalcut::FString(localizedUiText(language_, "Select a preset to delete.")));
+    return;
+  }
   if (!current->user_editable) {
-    finalcut::FMessageBox::info(this, "Read-only preset",
-      "Only presets from CMakeUserPresets.json can be deleted.");
+    finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(language_, "Read-only preset")),
+      finalcut::FString(localizedUiText(language_,
+        "Only presets from CMakeUserPresets.json can be deleted.")));
     return;
   }
   const auto name = current->name;
-  const auto answer = finalcut::FMessageBox::info(this, "Delete CMake preset",
-    finalcut::FString("Delete user preset '" + name + "'?"),
+  const auto answer = finalcut::FMessageBox::info(this,
+    finalcut::FString(localizedUiText(language_, "Delete CMake preset")),
+    finalcut::FString(localizedUiText(language_, "Delete user preset '") + name + "'?"),
     finalcut::FMessageBox::ButtonType::Yes, finalcut::FMessageBox::ButtonType::No,
     finalcut::FMessageBox::ButtonType::Reject);
   if (answer != finalcut::FMessageBox::ButtonType::Yes) return;
@@ -549,7 +589,10 @@ void CMakePresetManagerDialog::deletePreset() {
 void CMakePresetManagerDialog::selectPreset() {
   auto* current = currentPreset();
   if (current && current->hidden) {
-    finalcut::FMessageBox::info(this, "Hidden preset", "Hidden presets cannot be selected directly.");
+    finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(language_, "Hidden preset")),
+      finalcut::FString(localizedUiText(language_,
+        "Hidden presets cannot be selected directly.")));
     return;
   }
   selected_ = current ? current->name : std::string{};

@@ -1492,6 +1492,16 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       && visible("текущая цель CMake", 5s);
     screen.clear(); send("\033");
     std::this_thread::sleep_for(600ms); pump();
+    screen.clear(); send("\020");
+    const bool configure_presets = visible("Пресеты настройки CMake", 5s)
+      && visible("Без пресета настройки", 5s);
+    screen.clear(); send("\033");
+    std::this_thread::sleep_for(600ms); pump();
+    screen.clear(); send("\033b");
+    const bool build_presets = visible("Пресеты сборки CMake", 5s)
+      && visible("Без пресета сборки", 5s);
+    screen.clear(); send("\033");
+    std::this_thread::sleep_for(600ms); pump();
     screen.clear(); send("\033f");
     const bool translated_menu = visible("Закрыть остальные", 5s);
     screen.clear(); send("\033");
@@ -1515,6 +1525,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &locale_status, 0); }
     ::close(master);
     const bool success = started && palette && new_file && search_dialog && launch_dialog
+      && configure_presets && build_presets
       && translated_menu && language_menu && options
       && switched && persisted && exited && WIFEXITED(locale_status)
       && WEXITSTATUS(locale_status) == 0;
@@ -1522,6 +1533,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       << " palette=" << palette_title << '/' << palette_command
       << " new_file=" << new_file << " search=" << search_dialog
       << " launch=" << launch_dialog
+      << " presets=" << configure_presets << '/' << build_presets
       << " menu=" << translated_menu << " language_menu=" << language_menu
       << " options=" << options << " switched=" << switched << " persisted=" << persisted
       << " exited=" << exited << " status=" << locale_status << '\n';
