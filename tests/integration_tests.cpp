@@ -1449,15 +1449,11 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
   };
   const auto openTopMenu = [&](int index, std::string_view marker) {
-    screen.clear(); send("\033[21~");
-    (void)visible("File", 3s);
-    send("\r");
-    (void)visible("Open Project", 3s);
-    for (int menu = 0; menu < index; ++menu) {
-      send("\033[C");
-      std::this_thread::sleep_for(40ms);
-      pump();
-    }
+    constexpr std::string_view menu_keys[]{
+      "\033f", "\033e", "\033s", "\033r", "\033p",
+      "\033d", "\033t", "\033w", "\033h"};
+    if (index < 0 || index >= static_cast<int>(std::size(menu_keys))) return false;
+    screen.clear(); send(menu_keys[index]);
     return visible(marker, 3s);
   };
   const auto selectWindowFromEnd = [&](int up_count) {
@@ -1481,13 +1477,15 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     const bool palette_title = visible("Палитра команд", 5s);
     const bool palette_command = visible("Файл: Создать", 5s);
     const bool palette = palette_title && palette_command;
-    screen.clear(); send("\033"); settle();
+    screen.clear(); send("\033");
+    std::this_thread::sleep_for(600ms); pump();
     screen.clear(); send("\016");
     const bool new_file = visible("1 файлов", 5s);
     screen.clear(); send("\006");
     const bool search_dialog = visible("Поиск и замена", 5s)
       && visible("Учитывать регистр", 5s);
-    screen.clear(); send("\033"); settle();
+    screen.clear(); send("\033");
+    std::this_thread::sleep_for(600ms); pump();
     screen.clear(); send("\027"); settle();
     screen.clear(); send("\033f");
     const bool translated_menu = visible("Закрыть остальные", 5s);
