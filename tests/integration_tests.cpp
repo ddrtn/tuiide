@@ -1799,8 +1799,11 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
   std::filesystem::create_directories(settings_file.parent_path());
   {
     std::ofstream file(settings_file);
-    file << "{\"version\":1,\"theme\":\"Dark\",\"shortcuts\":{\"file.open\":\"Ctrl+U\","
-      "\"debug.watch\":\"Ctrl+L\"}}\n";
+    if (std::getenv("TUIIDE_TOOLS_LOCALE_ONLY") != nullptr)
+      file << "{\"version\":1,\"language\":\"ru\"}\n";
+    else
+      file << "{\"version\":1,\"theme\":\"Dark\",\"shortcuts\":{\"file.open\":\"Ctrl+U\","
+        "\"debug.watch\":\"Ctrl+L\"}}\n";
   }
   const auto readFile = [](const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
@@ -1860,7 +1863,47 @@ auto exerciseToolsDialogsPty(const std::filesystem::path& tuiide,
     return tools;
   };
 
-  const bool started = visible("Open files");
+  const bool started = visible(std::getenv("TUIIDE_TOOLS_LOCALE_ONLY") != nullptr
+    ? "Открытые файлы" : "Open files");
+  if (std::getenv("TUIIDE_TOOLS_LOCALE_ONLY") != nullptr) {
+    const auto openFromEnd = [&](int up_count) {
+      screen.clear(); send("\033t");
+      const bool menu = visible("Язык интерфейса", 3s);
+      send("\033[F");
+      for (int index = 0; index < up_count; ++index) send("\033[A");
+      send("\r");
+      return menu;
+    };
+    const bool theme_menu = openFromEnd(3);
+    const bool theme = visible("Тема редактора", 5s) && visible("Контрастная", 5s);
+    send("\033[H"); settle(); screen.clear(); send("\033[B");
+    const bool theme_selection = visible("Светлая", 5s);
+    send("\r");
+    const bool theme_identifier = waitFor(pump, [&] {
+      return readFile(settings_file).find("\"theme\": \"Light\"") != std::string::npos;
+    }, 5s);
+    const bool colors_menu = openFromEnd(2);
+    const bool colors = visible("Цвета редактора", 5s) && visible("основной текст", 5s);
+    screen.clear(); send("\033"); settle();
+    const bool shortcuts_menu = openFromEnd(5);
+    const bool shortcuts = visible("Настройка сочетаний", 5s)
+      && visible("Файл: Создать", 5s);
+    screen.clear(); send("\033"); settle();
+    screen.clear(); send("\021");
+    int status{};
+    const auto exited = waitFor(pump, [&] { return ::waitpid(child, &status, WNOHANG) == child; }, 8s);
+    if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &status, 0); }
+    ::close(master);
+    const bool success = started && theme_menu && theme && theme_selection && theme_identifier
+      && colors_menu && colors
+      && shortcuts_menu && shortcuts && exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (!success) std::cerr << "Tools locale PTY: started=" << started
+      << " theme=" << theme_menu << '/' << theme << '/' << theme_selection
+      << '/' << theme_identifier << " colors=" << colors_menu << '/' << colors
+      << " shortcuts=" << shortcuts_menu << '/' << shortcuts
+      << " exited=" << exited << " status=" << status << '\n';
+    return success;
+  }
   screen.clear(); send("\033[6;3~");
   const bool sidebar_shortcut = waitFor(pump, [&] { return logged("Sidebar tab: Project"); }, 5s);
   screen.clear(); send("\033[6;4~");

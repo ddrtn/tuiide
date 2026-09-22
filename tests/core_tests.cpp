@@ -1947,6 +1947,8 @@ int main() {
     "user shortcuts, theme, colors, and filtered recent files round-trip independently of a project");
   expect(tuiide::localizedUiText("ru", "Open files") == "Открытые файлы"
       && tuiide::localizedUiText("en", "Open files") == "Open files"
+      && tuiide::localizedUiText("ru", "Dark") == "Тёмная"
+      && tuiide::localizedUiText("ru", "keyword") == "ключевое слово"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",
     "UI resources select Russian or English and retain safe English fallback");
   auto invalid_language_settings = user_settings;

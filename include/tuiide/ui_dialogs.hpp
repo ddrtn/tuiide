@@ -133,7 +133,8 @@ class ShortcutCaptureEdit final : public finalcut::FLineEdit {
 class ShortcutEditorDialog final : public CenteredDialog {
  public:
   ShortcutEditorDialog(std::vector<ShortcutEditorCommand> commands,
-    std::map<std::string, std::string> overrides, finalcut::FWidget* parent = nullptr);
+    std::map<std::string, std::string> overrides, finalcut::FWidget* parent = nullptr,
+    std::string language = "en");
   [[nodiscard]] auto overrides() const -> const std::map<std::string, std::string>&;
 
  private:
@@ -151,6 +152,7 @@ class ShortcutEditorDialog final : public CenteredDialog {
   std::vector<ShortcutEditorCommand> commands_;
   std::vector<std::size_t> visible_;
   std::map<std::string, std::string> overrides_;
+  std::string language_;
   std::size_t selected_{};
   bool updating_{};
   bool capturing_{};
@@ -174,7 +176,7 @@ class ThemeEditorDialog final : public CenteredDialog {
  public:
   ThemeEditorDialog(std::string selected, std::map<std::string, std::string> custom_themes,
     std::function<void(const std::string&)> preview_handler,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   [[nodiscard]] auto selectedTheme() const -> std::string;
   [[nodiscard]] auto customThemes() const -> const std::map<std::string, std::string>&;
 
@@ -191,6 +193,7 @@ class ThemeEditorDialog final : public CenteredDialog {
   std::map<std::string, std::string> custom_themes_;
   std::vector<std::string> names_;
   std::function<void(const std::string&)> preview_handler_;
+  std::string language_;
   EnterListBox list_;
   finalcut::FLabel kind_;
   finalcut::FTextView preview_;
@@ -205,7 +208,7 @@ class ColorEditorDialog final : public CenteredDialog {
  public:
   ColorEditorDialog(std::string theme, std::map<std::string, std::string> overrides,
     std::function<void(const std::map<std::string, std::string>&)> preview_handler,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   [[nodiscard]] auto overrides() const -> const std::map<std::string, std::string>&;
 
  private:
@@ -223,6 +226,7 @@ class ColorEditorDialog final : public CenteredDialog {
   std::vector<std::string> roles_;
   std::vector<std::string> colors_;
   std::function<void(const std::map<std::string, std::string>&)> preview_handler_;
+  std::string language_;
   bool updating_{};
   int terminal_colors_{16};
   finalcut::FLabel terminal_info_;

@@ -886,7 +886,8 @@ void IdeWindow::configureShortcut() {
   }
   delTimer(timer_id_);
   applyShortcutAccelerators(false);
-  ShortcutEditorDialog dialog(std::move(commands), user_settings_.shortcuts, this);
+  ShortcutEditorDialog dialog(std::move(commands), user_settings_.shortcuts, this,
+    user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   applyShortcutAccelerators();
   timer_id_ = addTimer(100);
@@ -936,7 +937,8 @@ void IdeWindow::selectTheme() {
   const auto original_colors = user_settings_.colors;
   delTimer(timer_id_);
   ThemeEditorDialog dialog(user_settings_.theme, user_settings_.custom_themes,
-    [this](const std::string& theme) { editor_.setTheme(theme, user_settings_.colors); }, this);
+    [this](const std::string& theme) { editor_.setTheme(theme, user_settings_.colors); }, this,
+    user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted) {
@@ -963,7 +965,8 @@ void IdeWindow::configureEditorColor() {
   delTimer(timer_id_);
   applyShortcutAccelerators(false);
   ColorEditorDialog dialog(theme, original_colors,
-    [this, &theme](const auto& colors) { editor_.setTheme(theme, colors); }, this);
+    [this, &theme](const auto& colors) { editor_.setTheme(theme, colors); }, this,
+    user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   applyShortcutAccelerators();
   timer_id_ = addTimer(100);

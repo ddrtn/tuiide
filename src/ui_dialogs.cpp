@@ -1,5 +1,6 @@
 #include "tuiide/ui_dialogs.hpp"
 #include "tuiide/user_settings.hpp"
+#include "tuiide/ui_localization.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -280,13 +281,22 @@ ConfirmTextDialog::ConfirmTextDialog(std::string title, std::string text,
 }
 
 ShortcutEditorDialog::ShortcutEditorDialog(std::vector<ShortcutEditorCommand> commands,
-    std::map<std::string, std::string> overrides, finalcut::FWidget* parent)
-    : CenteredDialog("Configure shortcuts", parent), commands_(std::move(commands)),
-      overrides_(std::move(overrides)), filter_label_("Search:", this), filter_(this), list_(this),
-      default_label_("Default:", this), current_label_("Current:", this), current_(this),
-      validation_(this), capture_("&Capture", this), clear_("C&lear", this),
-      reset_selected_("Reset &selected", this), reset_all_("Reset &all", this),
-      apply_("A&pply", this), cancel_("Ca&ncel", this) {
+    std::map<std::string, std::string> overrides, finalcut::FWidget* parent,
+    std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Configure shortcuts")), parent),
+      commands_(std::move(commands)), overrides_(std::move(overrides)),
+      language_(std::move(language)),
+      filter_label_(finalcut::FString(localizedUiText(language_, "Search:")), this),
+      filter_(this), list_(this),
+      default_label_(finalcut::FString(localizedUiText(language_, "Default:")), this),
+      current_label_(finalcut::FString(localizedUiText(language_, "Current:")), this),
+      current_(this), validation_(this),
+      capture_(finalcut::FString(localizedUiText(language_, "&Capture")), this),
+      clear_(finalcut::FString(localizedUiText(language_, "C&lear")), this),
+      reset_selected_(finalcut::FString(localizedUiText(language_, "Reset &selected")), this),
+      reset_all_(finalcut::FString(localizedUiText(language_, "Reset &all")), this),
+      apply_(finalcut::FString(localizedUiText(language_, "A&pply")), this),
+      cancel_(finalcut::FString(localizedUiText(language_, "Ca&ncel")), this) {
   setDialogSize({88, 25});
   setModal();
   filter_label_.setGeometry({2, 1}, {9, 1}); filter_.setGeometry({11, 1}, {73, 1});
@@ -327,7 +337,8 @@ void ShortcutEditorDialog::refreshList() {
   const auto previous = selected_;
   visible_.clear(); list_.clear();
   for (std::size_t index = 0; index < commands_.size(); ++index) {
-    auto searchable = commands_[index].title + " " + commands_[index].id;
+    auto searchable = commands_[index].title + " " + commands_[index].id + " "
+      + localizedUiText(language_, commands_[index].title);
     std::transform(searchable.begin(), searchable.end(), searchable.begin(), [](unsigned char character) {
       return static_cast<char>(std::tolower(character));
     });
@@ -335,8 +346,10 @@ void ShortcutEditorDialog::refreshList() {
     visible_.push_back(index);
     const auto found = overrides_.find(commands_[index].id);
     const auto value = found == overrides_.end() ? commands_[index].default_shortcut : found->second;
-    list_.insert(finalcut::FString(commands_[index].title + "  | Default: "
-      + commands_[index].default_shortcut + " | Current: " + (value.empty() ? "None" : value)));
+    list_.insert(finalcut::FString(localizedUiText(language_, commands_[index].title) + "  | "
+      + localizedUiText(language_, "Default: ") + commands_[index].default_shortcut
+      + " | " + localizedUiText(language_, "Current: ")
+      + (value.empty() ? localizedUiText(language_, "None") : value)));
   }
   if (visible_.empty()) { selected_ = 0; validate(); return; }
   const auto found = std::find(visible_.begin(), visible_.end(), previous);
@@ -360,8 +373,10 @@ void ShortcutEditorDialog::selectCurrent() {
   updating_ = true;
   current_.setText(finalcut::FString(value));
   updating_ = false;
-  default_label_.setText(finalcut::FString("Default: " + command->default_shortcut));
-  validation_.setText("Type a supported shortcut, or use Clear to disable this command.");
+  default_label_.setText(finalcut::FString(localizedUiText(language_, "Default: ")
+    + command->default_shortcut));
+  validation_.setText(finalcut::FString(localizedUiText(language_,
+    "Type a supported shortcut, or use Clear to disable this command.")));
   validate();
 }
 
@@ -382,7 +397,8 @@ void ShortcutEditorDialog::updateCurrentValue() {
 
 void ShortcutEditorDialog::capture() {
   capturing_ = true;
-  validation_.setText("Press the desired key now (Escape cancels capture).");
+  validation_.setText(finalcut::FString(localizedUiText(language_,
+    "Press the desired key now (Escape cancels capture).")));
   validation_.redraw();
   setWindowFocusWidget(&current_);
   current_.setFocus();
@@ -392,13 +408,14 @@ auto ShortcutEditorDialog::captureKey(finalcut::FKey key) -> bool {
   if (!capturing_) return false;
   if (key == finalcut::FKey::Escape) {
     capturing_ = false;
-    validation_.setText("Capture cancelled.");
+    validation_.setText(finalcut::FString(localizedUiText(language_, "Capture cancelled.")));
     validation_.redraw();
     return true;
   }
   const auto value = shortcutForKey(key);
   if (value.empty()) {
-    validation_.setText("Unsupported key. Use Ctrl/Alt combinations, Ctrl+F8, or F1-F12.");
+    validation_.setText(finalcut::FString(localizedUiText(language_,
+      "Unsupported key. Use Ctrl/Alt combinations, Ctrl+F8, or F1-F12.")));
     validation_.redraw();
     return true;
   }
@@ -441,10 +458,12 @@ void ShortcutEditorDialog::validate() {
     const auto canonical = canonicalShortcut(value);
     if (canonical.empty()) { error = "Unsupported shortcut: " + value; break; }
     if (const auto reason = reservedShortcutReason(canonical); !reason.empty()) { error = reason; break; }
-    const auto [owner, inserted] = owners.emplace(canonical, command.title);
+    const auto [owner, inserted] = owners.emplace(canonical,
+      localizedUiText(language_, command.title));
     if (!inserted) { error = "Conflict: " + canonical + " is assigned to " + owner->second + " and " + command.title + "."; break; }
   }
-  if (error.empty()) validation_.setText("Ready. Changes are saved only after Apply.");
+  if (error.empty()) validation_.setText(finalcut::FString(localizedUiText(language_,
+    "Ready. Changes are saved only after Apply.")));
   else validation_.setText(finalcut::FString(error));
   apply_.setEnable(error.empty());
   validation_.redraw();
@@ -453,11 +472,16 @@ void ShortcutEditorDialog::validate() {
 
 ThemeEditorDialog::ThemeEditorDialog(std::string selected,
     std::map<std::string, std::string> custom_themes,
-    std::function<void(const std::string&)> preview_handler, finalcut::FWidget* parent)
-    : CenteredDialog("Editor theme", parent), selected_(std::move(selected)),
-      custom_themes_(std::move(custom_themes)), preview_handler_(std::move(preview_handler)),
-      list_(this), kind_(this), preview_(this), copy_("Create &copy", this),
-      reset_("&Reset", this), apply_("&Apply", this), cancel_("Ca&ncel", this) {
+    std::function<void(const std::string&)> preview_handler, finalcut::FWidget* parent,
+    std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Editor theme")), parent),
+      selected_(std::move(selected)), custom_themes_(std::move(custom_themes)),
+      preview_handler_(std::move(preview_handler)), language_(std::move(language)),
+      list_(this), kind_(this), preview_(this),
+      copy_(finalcut::FString(localizedUiText(language_, "Create &copy")), this),
+      reset_(finalcut::FString(localizedUiText(language_, "&Reset")), this),
+      apply_(finalcut::FString(localizedUiText(language_, "&Apply")), this),
+      cancel_(finalcut::FString(localizedUiText(language_, "Ca&ncel")), this) {
   setDialogSize({76, 22});
   setModal();
   list_.setGeometry({2, 1}, {28, 15});
@@ -503,9 +527,11 @@ void ThemeEditorDialog::refresh() {
   std::size_t selected_row = 1;
   for (std::size_t index = 0; index < names_.size(); ++index) {
     const auto custom = custom_themes_.find(names_[index]);
-    const auto suffix = custom == custom_themes_.end() ? "  [built-in]"
-      : "  [copy of " + custom->second + "]";
-    list_.insert(finalcut::FString(names_[index] + suffix));
+    const auto suffix = custom == custom_themes_.end()
+      ? "  [" + localizedUiText(language_, "built-in") + "]"
+      : "  [" + localizedUiText(language_, "copy of ")
+        + localizedUiText(language_, custom->second) + "]";
+    list_.insert(finalcut::FString(localizedUiText(language_, names_[index]) + suffix));
     if (names_[index] == selected_) selected_row = index + 1;
   }
   list_.setCurrentItem(selected_row);
@@ -518,10 +544,12 @@ void ThemeEditorDialog::preview() {
   if (name.empty()) return;
   const auto base = currentBase();
   const auto custom = custom_themes_.contains(name);
-  kind_.setText(finalcut::FString(custom ? "User theme — editable color overrides"
-    : "Built-in theme — read-only"));
+  kind_.setText(finalcut::FString(localizedUiText(language_, custom
+    ? "User theme — editable color overrides" : "Built-in theme — read-only")));
   kind_.redraw();
-  preview_.setText(finalcut::FString("Preview: " + name + "\nBase palette: " + base
+  preview_.setText(finalcut::FString(localizedUiText(language_, "Preview: ")
+    + localizedUiText(language_, name) + "\n" + localizedUiText(language_, "Base palette: ")
+    + localizedUiText(language_, base)
     + "\n\n#include <iostream>\n\nint main() {\n  // UTF-8 source\n  std::cout << \"Hello\";\n  return 0;\n}"));
   preview_.redraw();
   if (preview_handler_) preview_handler_(base);
@@ -530,7 +558,8 @@ void ThemeEditorDialog::preview() {
 void ThemeEditorDialog::createCopy() {
   const auto base = currentBase();
   if (base.empty()) return;
-  PromptDialog prompt("Create theme copy", "Theme name:", this);
+  PromptDialog prompt(localizedUiText(language_, "Create theme copy"),
+    localizedUiText(language_, "Theme name:"), this);
   if (prompt.exec() != ResultCode::Accept) return;
   auto name = prompt.value();
   name.erase(name.begin(), std::find_if(name.begin(), name.end(), [](unsigned char c) {
@@ -541,7 +570,8 @@ void ThemeEditorDialog::createCopy() {
   }).base(), name.end());
   if (name.empty() || name == "Dark" || name == "Light" || name == "High contrast"
       || custom_themes_.contains(name)) {
-    finalcut::FMessageBox::error(this, "Theme name is empty, reserved, or already exists.");
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(language_,
+      "Theme name is empty, reserved, or already exists.")));
     return;
   }
   custom_themes_[name] = base;
@@ -564,8 +594,9 @@ void ThemeEditorDialog::apply() {
 ColorEditorDialog::ColorEditorDialog(std::string theme,
     std::map<std::string, std::string> overrides,
     std::function<void(const std::map<std::string, std::string>&)> preview_handler,
-    finalcut::FWidget* parent)
-    : CenteredDialog("Editor colors", parent), theme_(std::move(theme)),
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Editor colors")), parent),
+      theme_(std::move(theme)),
       overrides_(std::move(overrides)),
       roles_{"foreground", "background", "gutter", "breakpoint", "diagnosticError",
         "diagnosticWarning", "diagnosticNote", "selectionForeground", "selectionBackground",
@@ -575,9 +606,13 @@ ColorEditorDialog::ColorEditorDialog(std::string theme,
       colors_{"Black", "Blue", "Green", "Cyan", "Red", "Magenta", "Brown", "LightGray",
         "DarkGray", "LightBlue", "LightGreen", "LightCyan", "LightRed", "LightMagenta",
         "Yellow", "White"}, preview_handler_(std::move(preview_handler)),
-      terminal_info_(this), roles_list_(this), palette_label_("Palette:", this),
-      palette_list_(this), preview_(this), reset_role_("Reset &role", this),
-      reset_all_("Reset &all", this), apply_("&Apply", this), cancel_("Ca&ncel", this) {
+      language_(std::move(language)), terminal_info_(this), roles_list_(this),
+      palette_label_(finalcut::FString(localizedUiText(language_, "Palette:")), this),
+      palette_list_(this), preview_(this),
+      reset_role_(finalcut::FString(localizedUiText(language_, "Reset &role")), this),
+      reset_all_(finalcut::FString(localizedUiText(language_, "Reset &all")), this),
+      apply_(finalcut::FString(localizedUiText(language_, "&Apply")), this),
+      cancel_(finalcut::FString(localizedUiText(language_, "Ca&ncel")), this) {
   setDialogSize({88, 25});
   setModal();
   if (const auto output = finalcut::FVTerm::getFOutput(); output)
@@ -598,9 +633,11 @@ ColorEditorDialog::ColorEditorDialog(std::string theme,
   reset_all_.addCallback("clicked", [this] { resetAll(); });
   apply_.addCallback("clicked", [this] { apply(); });
   cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
-  terminal_info_.setText(finalcut::FString("Terminal palette: "
-    + std::to_string(terminal_colors_) + " colors | Theme: " + theme_));
-  preview_.setText("Preview: int main() { // comment\n  const char* text = \"UTF-8\"; return 42; }");
+  terminal_info_.setText(finalcut::FString(localizedUiText(language_, "Terminal palette: ")
+    + std::to_string(terminal_colors_) + localizedUiText(language_, " colors | Theme: ")
+    + localizedUiText(language_, theme_)));
+  preview_.setText(finalcut::FString(localizedUiText(language_, "Preview: ")
+    + "int main() { // comment\n  const char* text = \"UTF-8\"; return 42; }"));
   refreshRoles();
   roles_list_.setFocus();
 }
@@ -655,8 +692,11 @@ void ColorEditorDialog::refreshRoles() {
   for (std::size_t index = 0; index < roles_.size(); ++index) {
     const auto custom = overrides_.find(roles_[index]);
     const auto override = custom == overrides_.end() ? "Theme default" : custom->second;
-    roles_list_.insert(finalcut::FString(roles_[index] + " | Effective: "
-      + effectiveColor(roles_[index]) + " | Override: " + override));
+    roles_list_.insert(finalcut::FString(localizedUiText(language_, roles_[index])
+      + localizedUiText(language_, " | Effective: ")
+      + localizedUiText(language_, effectiveColor(roles_[index]))
+      + localizedUiText(language_, " | Override: ")
+      + localizedUiText(language_, override)));
     if (roles_[index] == selected) selected_row = index + 1;
   }
   roles_list_.setCurrentItem(selected_row);
@@ -670,11 +710,12 @@ void ColorEditorDialog::refreshPalette() {
   if (role.empty()) return;
   updating_ = true;
   palette_list_.clear();
-  palette_list_.insert(finalcut::FString("Theme default [" + effectiveColor(role) + "]"));
+  palette_list_.insert(finalcut::FString(localizedUiText(language_, "Theme default") + " ["
+    + localizedUiText(language_, effectiveColor(role)) + "]"));
   std::size_t selected_row = 1;
   const auto configured = overrides_.find(role);
   for (std::size_t index = 0; index < colors_.size(); ++index) {
-    palette_list_.insert(finalcut::FString(colors_[index]));
+    palette_list_.insert(finalcut::FString(localizedUiText(language_, colors_[index])));
     if (configured != overrides_.end() && configured->second == colors_[index])
       selected_row = index + 2;
   }
