@@ -13,7 +13,7 @@ namespace tuiide {
 class BreakpointSettingsDialog final : public CenteredDialog {
  public:
   BreakpointSettingsDialog(const DebugBreakpoint& breakpoint,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   ~BreakpointSettingsDialog() override;
 
   [[nodiscard]] auto apply(DebugBreakpoint& breakpoint,
@@ -28,7 +28,7 @@ class BreakpointSettingsDialog final : public CenteredDialog {
 class CoreDumpDialog final : public CenteredDialog {
  public:
   explicit CoreDumpDialog(std::filesystem::path initial_directory,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   ~CoreDumpDialog() override;
 
   [[nodiscard]] auto paths(std::filesystem::path& executable,

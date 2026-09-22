@@ -1,20 +1,29 @@
 #include "tuiide/debug_dialogs.hpp"
 
 #include "tuiide/document.hpp"
+#include "tuiide/ui_localization.hpp"
 
 #include <stdexcept>
+#include <utility>
 
 namespace tuiide {
 
 struct BreakpointSettingsDialog::Impl {
-  Impl(BreakpointSettingsDialog* dialog, const DebugBreakpoint& breakpoint)
-      : owner(dialog), location(finalcut::FString(breakpoint.file.string() + ":"
-          + std::to_string(breakpoint.line)), owner), enabled("Enabled", owner),
-        condition_label("Condition:", owner), condition(owner),
-        hits_label("Ignore first hits:", owner), hits(owner),
-        log_label("Log message:", owner), log(owner),
-        help("A logpoint prints its message and continues automatically.", owner),
-        save("&Save", owner), cancel("&Cancel", owner) {
+  Impl(BreakpointSettingsDialog* dialog, const DebugBreakpoint& breakpoint,
+      std::string language_value)
+      : owner(dialog), language(std::move(language_value)),
+        location(finalcut::FString(breakpoint.file.string() + ":"
+          + std::to_string(breakpoint.line)), owner),
+        enabled(finalcut::FString(localizedUiText(language, "Enabled")), owner),
+        condition_label(finalcut::FString(localizedUiText(language, "Condition:")), owner),
+        condition(owner),
+        hits_label(finalcut::FString(localizedUiText(language, "Ignore first hits:")), owner),
+        hits(owner),
+        log_label(finalcut::FString(localizedUiText(language, "Log message:")), owner), log(owner),
+        help(finalcut::FString(localizedUiText(language,
+          "A logpoint prints its message and continues automatically.")), owner),
+        save(finalcut::FString(localizedUiText(language, "&Save")), owner),
+        cancel(finalcut::FString(localizedUiText(language, "&Cancel")), owner) {
     location.setGeometry({2, 1}, {53, 1});
     enabled.setGeometry({2, 3}, {15, 1});
     if (breakpoint.enabled) enabled.setChecked();
@@ -51,13 +60,14 @@ struct BreakpointSettingsDialog::Impl {
         throw std::out_of_range("hits");
       breakpoint.hit_count = static_cast<unsigned>(count);
     } catch (...) {
-      error = "Ignore hit count must be an integer from 0 to 1000000000.";
+      error = localizedUiText(language, "Ignore hit count must be an integer from 0 to 1000000000.");
       return false;
     }
     return true;
   }
 
   BreakpointSettingsDialog* owner;
+  std::string language;
   finalcut::FLabel location;
   finalcut::FCheckBox enabled;
   finalcut::FLabel condition_label;
@@ -72,11 +82,11 @@ struct BreakpointSettingsDialog::Impl {
 };
 
 BreakpointSettingsDialog::BreakpointSettingsDialog(const DebugBreakpoint& breakpoint,
-    finalcut::FWidget* parent)
-    : CenteredDialog("Breakpoint properties", parent) {
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Breakpoint properties")), parent) {
   setDialogSize({70, 18});
   setModal();
-  impl_ = std::make_unique<Impl>(this, breakpoint);
+  impl_ = std::make_unique<Impl>(this, breakpoint, std::move(language));
 }
 
 BreakpointSettingsDialog::~BreakpointSettingsDialog() = default;
@@ -87,13 +97,19 @@ auto BreakpointSettingsDialog::apply(DebugBreakpoint& breakpoint,
 }
 
 struct CoreDumpDialog::Impl {
-  Impl(CoreDumpDialog* dialog, std::filesystem::path initial)
-      : owner(dialog), initial_directory(std::move(initial)),
-        executable_label("Executable:", owner), executable(owner),
-        executable_browse("&Browse...", owner), core_label("Core dump:", owner),
-        core(owner), core_browse("B&rowse...", owner),
-        help("Core sessions are read-only: inspect stack, variables, memory and registers.", owner),
-        open("&Open", owner), cancel("&Cancel", owner) {
+  Impl(CoreDumpDialog* dialog, std::filesystem::path initial, std::string language_value)
+      : owner(dialog), language(std::move(language_value)),
+        initial_directory(std::move(initial)),
+        executable_label(finalcut::FString(localizedUiText(language, "Executable:")), owner),
+        executable(owner),
+        executable_browse(finalcut::FString(localizedUiText(language, "&Browse...")), owner),
+        core_label(finalcut::FString(localizedUiText(language, "Core dump:")), owner),
+        core(owner),
+        core_browse(finalcut::FString(localizedUiText(language, "B&rowse...")), owner),
+        help(finalcut::FString(localizedUiText(language,
+          "Core sessions are read-only: inspect stack, variables, memory and registers.")), owner),
+        open(finalcut::FString(localizedUiText(language, "&Open")), owner),
+        cancel(finalcut::FString(localizedUiText(language, "&Cancel")), owner) {
     executable_label.setGeometry({2, 2}, {14, 1});
     executable.setGeometry({16, 2}, {39, 1});
     executable_browse.setGeometry({57, 2}, {10, 1});
@@ -123,17 +139,19 @@ struct CoreDumpDialog::Impl {
     executable_path = pathValue(executable);
     core_path = pathValue(core);
     if (executable_path.empty() || core_path.empty()) {
-      error = "Select both an executable and a core dump.";
+      error = localizedUiText(language, "Select both an executable and a core dump.");
       return false;
     }
     std::error_code status_error;
     if (!std::filesystem::is_regular_file(executable_path, status_error)) {
-      error = "Executable is not a readable regular file: " + executable_path.string();
+      error = localizedUiText(language, "Executable is not a readable regular file: ")
+        + executable_path.string();
       return false;
     }
     status_error.clear();
     if (!std::filesystem::is_regular_file(core_path, status_error)) {
-      error = "Core dump is not a readable regular file: " + core_path.string();
+      error = localizedUiText(language, "Core dump is not a readable regular file: ")
+        + core_path.string();
       return false;
     }
     return true;
@@ -146,6 +164,7 @@ struct CoreDumpDialog::Impl {
   }
 
   CoreDumpDialog* owner;
+  std::string language;
   std::filesystem::path initial_directory;
   finalcut::FLabel executable_label; finalcut::FLineEdit executable;
   finalcut::FButton executable_browse;
@@ -154,11 +173,11 @@ struct CoreDumpDialog::Impl {
 };
 
 CoreDumpDialog::CoreDumpDialog(std::filesystem::path initial_directory,
-    finalcut::FWidget* parent)
-    : CenteredDialog("Open core dump", parent) {
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Open core dump")), parent) {
   setDialogSize({72, 15});
   setModal();
-  impl_ = std::make_unique<Impl>(this, std::move(initial_directory));
+  impl_ = std::make_unique<Impl>(this, std::move(initial_directory), std::move(language));
 }
 
 CoreDumpDialog::~CoreDumpDialog() = default;

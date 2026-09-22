@@ -1699,12 +1699,14 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
   const bool keyboard_menu = openTopMenu(8, "Keyboard shortcuts");
   screen.clear(); send("\r");
   const bool keyboard_dialog = visible("F10 or Alt", 5s);
-  screen.clear(); send("\033"); settle();
+  screen.clear(); send("\033");
+  std::this_thread::sleep_for(600ms); pump();
 
   const bool about_menu = openTopMenu(8, "Keyboard shortcuts");
   screen.clear(); send("\033[A\r");
   const bool about_dialog = visible("C/C++ terminal IDE for Linux/amd64", 5s);
-  screen.clear(); send("\033"); settle();
+  screen.clear(); send("\033");
+  std::this_thread::sleep_for(600ms); pump();
 
   screen.clear(); send("\033OP");
   const bool output_seeded = visible("Symbol information unavailable", 5s);
@@ -2633,11 +2635,8 @@ auto exerciseDebugDialogsPty(const std::filesystem::path& tuiide,
     return dialog;
   };
   const auto openTopMenu = [&](int index, std::string_view marker) {
-    screen.clear(); send("\033[21~");
-    (void)visible("File", 3s); send("\r"); (void)visible("Open Project", 3s);
-    for (int menu = 0; menu < index; ++menu) {
-      send("\033[C"); std::this_thread::sleep_for(40ms); pump();
-    }
+    if (index != 5 && index != 7) return false;
+    screen.clear(); send(index == 5 ? "\033d" : "\033w");
     return visible(marker, 3s);
   };
   const auto debugCommand = [&](char mnemonic) {

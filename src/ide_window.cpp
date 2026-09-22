@@ -1534,7 +1534,7 @@ void IdeWindow::editSelectedBreakpoint() {
     publishEvent(EventSource::Debug, EventSeverity::Warning, "Breakpoint properties unavailable: select a breakpoint in the Breakpoints panel\n"); return;
   }
   auto breakpoint = row->breakpoint;
-  delTimer(timer_id_); BreakpointSettingsDialog dialog(breakpoint, this);
+  delTimer(timer_id_); BreakpointSettingsDialog dialog(breakpoint, this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept; timer_id_ = addTimer(100);
   if (!accepted) return;
   std::string error;
@@ -4061,7 +4061,7 @@ void IdeWindow::openCoreDump() {
     ? build_dir_ : root_;
   if (initial_directory.empty()) initial_directory = std::filesystem::current_path(directory_error);
   delTimer(timer_id_);
-  CoreDumpDialog dialog(initial_directory, this);
+  CoreDumpDialog dialog(initial_directory, this, user_settings_.language);
   const bool accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted) return;
