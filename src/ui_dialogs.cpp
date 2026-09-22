@@ -154,10 +154,11 @@ void ShortcutCaptureEdit::onKeyPress(finalcut::FKeyEvent* event) {
 }
 
 PromptDialog::PromptDialog(const std::string& title, const std::string& label,
-    finalcut::FWidget* parent)
-    : CenteredDialog(finalcut::FString(title), parent),
-      label_(finalcut::FString(label), this), input_(this), ok_("&OK", this),
-      cancel_("&Cancel", this) {
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, title)), parent),
+      label_(finalcut::FString(localizedUiText(language, label)), this), input_(this),
+      ok_(finalcut::FString(localizedUiText(language, "&OK")), this),
+      cancel_(finalcut::FString(localizedUiText(language, "&Cancel")), this) {
   setDialogSize({62, 9});
   setModal();
   label_.setGeometry({2, 2}, {18, 1});
@@ -175,9 +176,10 @@ auto PromptDialog::value() const -> std::string {
 }
 
 SelectionDialog::SelectionDialog(const std::string& title,
-    const std::vector<std::string>& items, finalcut::FWidget* parent)
-    : CenteredDialog(finalcut::FString(title), parent), list_(this),
-      ok_("&OK", this), cancel_("&Cancel", this) {
+    const std::vector<std::string>& items, finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, title)), parent), list_(this),
+      ok_(finalcut::FString(localizedUiText(language, "&OK")), this),
+      cancel_(finalcut::FString(localizedUiText(language, "&Cancel")), this) {
   constexpr std::size_t width = 58;
   constexpr std::size_t height = 16;
   setDialogSize({width, height});
@@ -197,10 +199,13 @@ auto SelectionDialog::selected() const -> std::size_t {
 }
 
 CommandPaletteDialog::CommandPaletteDialog(std::vector<std::string> items,
-    finalcut::FWidget* parent)
-    : CenteredDialog("Command palette", parent), items_(std::move(items)),
-      filter_label_("Search:", this), filter_(this), list_(this), run_("&Run", this),
-      cancel_("&Cancel", this) {
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Command palette")), parent),
+      items_(std::move(items)),
+      filter_label_(finalcut::FString(localizedUiText(language, "Search:")), this),
+      filter_(this), list_(this),
+      run_(finalcut::FString(localizedUiText(language, "&Run")), this),
+      cancel_(finalcut::FString(localizedUiText(language, "&Cancel")), this) {
   setDialogSize({58, 16});
   setModal();
   filter_label_.setGeometry({2, 1}, {9, 1});
@@ -247,9 +252,10 @@ void CommandPaletteDialog::accept() {
   done(ResultCode::Accept);
 }
 
-TextDialog::TextDialog(std::string title, std::string text, finalcut::FWidget* parent)
-    : CenteredDialog(finalcut::FString(std::move(title)), parent), text_(this),
-      close_("&Close", this) {
+TextDialog::TextDialog(std::string title, std::string text, finalcut::FWidget* parent,
+    std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, title)), parent), text_(this),
+      close_(finalcut::FString(localizedUiText(language, "&Close")), this) {
   constexpr std::size_t width = 58;
   constexpr std::size_t height = 16;
   setDialogSize({width, height});
@@ -264,9 +270,10 @@ TextDialog::TextDialog(std::string title, std::string text, finalcut::FWidget* p
 }
 
 ConfirmTextDialog::ConfirmTextDialog(std::string title, std::string text,
-    finalcut::FWidget* parent)
-    : CenteredDialog(finalcut::FString(std::move(title)), parent), text_(this),
-      apply_("&Apply", this), cancel_("&Cancel", this) {
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, title)), parent), text_(this),
+      apply_(finalcut::FString(localizedUiText(language, "&Apply")), this),
+      cancel_(finalcut::FString(localizedUiText(language, "&Cancel")), this) {
   constexpr std::size_t width = 58;
   constexpr std::size_t height = 16;
   setDialogSize({width, height});
@@ -559,7 +566,7 @@ void ThemeEditorDialog::createCopy() {
   const auto base = currentBase();
   if (base.empty()) return;
   PromptDialog prompt(localizedUiText(language_, "Create theme copy"),
-    localizedUiText(language_, "Theme name:"), this);
+    localizedUiText(language_, "Theme name:"), this, language_);
   if (prompt.exec() != ResultCode::Accept) return;
   auto name = prompt.value();
   name.erase(name.begin(), std::find_if(name.begin(), name.end(), [](unsigned char c) {

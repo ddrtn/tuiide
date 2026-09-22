@@ -862,11 +862,11 @@ void IdeWindow::showCommandPalette() {
   std::vector<std::string> items;
   for (const auto& command : ideCommands()) {
     const auto custom = user_settings_.shortcuts.find(std::string(command.id));
-    items.push_back(std::string(command.title) + "  ["
+    items.push_back(localizedUiText(user_settings_.language, command.title) + "  ["
       + (custom == user_settings_.shortcuts.end() ? std::string(command.default_shortcut) : custom->second) + "]");
   }
   delTimer(timer_id_);
-  CommandPaletteDialog dialog(std::move(items), this);
+  CommandPaletteDialog dialog(std::move(items), this, user_settings_.language);
   const auto selected = dialog.exec() == finalcut::FDialog::ResultCode::Accept ? dialog.selected() : 0;
   timer_id_ = addTimer(100);
   if (selected == 0 || selected > ideCommands().size()) return;
@@ -989,7 +989,7 @@ void IdeWindow::configureEditorColor() {
 
 void IdeWindow::showTextDialog(std::string title, std::string text) {
   delTimer(timer_id_);
-  TextDialog dialog(std::move(title), std::move(text), this);
+  TextDialog dialog(std::move(title), std::move(text), this, user_settings_.language);
   (void)dialog.exec();
   timer_id_ = addTimer(100);
 }
@@ -2001,7 +2001,7 @@ void IdeWindow::manageToolchainKits() {
   descriptions.reserve(kits.size());
   for (const auto& kit : kits) descriptions.push_back(describeToolchainKit(kit));
   delTimer(timer_id_);
-  SelectionDialog dialog("Toolchain kits", descriptions, this);
+  SelectionDialog dialog("Toolchain kits", descriptions, this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted || dialog.selected() == 0 || dialog.selected() > kits.size()) return;
@@ -2058,7 +2058,7 @@ void IdeWindow::requestLanguageInsights() {
     "Inlay hints", "Document highlights", "Folding ranges",
     "Selection ranges", "Code lens", "Include hierarchy"};
   delTimer(timer_id_);
-  SelectionDialog dialog("clangd language insights", choices, this);
+  SelectionDialog dialog("clangd language insights", choices, this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted) return;
@@ -2215,7 +2215,7 @@ void IdeWindow::importProject(const std::filesystem::path& directory) {
           << ", headers: " << plan.headers << ")\n\n"
           << "The following CMakeLists.txt will be created:\n\n" << plan.cmake_text;
   delTimer(timer_id_);
-  ConfirmTextDialog preview_dialog("Import preview", preview.str(), this);
+  ConfirmTextDialog preview_dialog("Import preview", preview.str(), this, user_settings_.language);
   const auto confirmed = preview_dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!confirmed) { publishEvent(EventSource::Project, EventSeverity::Warning, "Project import cancelled after preview\n"); return; }
@@ -2839,7 +2839,7 @@ void IdeWindow::replaceAll(bool project) {
     if (closed_count != 0) message << closed_count << " [disk] file(s) will be saved immediately.\n";
     message << "Open files remain unsaved.\n\n" << preview.str();
     delTimer(timer_id_);
-    ConfirmTextDialog dialog("Project replace preview", message.str(), this);
+    ConfirmTextDialog dialog("Project replace preview", message.str(), this, user_settings_.language);
     const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
     timer_id_ = addTimer(100);
     if (!accepted) { publishEvent(EventSource::Editor, EventSeverity::Warning, "Project replace cancelled; no files changed\n"); return; }
@@ -3023,7 +3023,7 @@ void IdeWindow::openSelectedProblem() {
 
 void IdeWindow::filterProblems() {
   delTimer(timer_id_);
-  PromptDialog dialog("Filter Problems", "Text (empty clears):", this);
+  PromptDialog dialog("Filter Problems", "Text (empty clears):", this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted) {
@@ -5176,7 +5176,7 @@ void IdeWindow::onClose(finalcut::FCloseEvent* event) {
 
 auto IdeWindow::prompt(std::string title, std::string label) -> std::string {
   delTimer(timer_id_);
-  PromptDialog dialog(title, label, this);
+  PromptDialog dialog(title, label, this, user_settings_.language);
   const auto result = dialog.exec() == finalcut::FDialog::ResultCode::Accept ? dialog.value() : std::string{};
   timer_id_ = addTimer(100);
   return result;
@@ -5185,7 +5185,7 @@ auto IdeWindow::prompt(std::string title, std::string label) -> std::string {
 auto IdeWindow::choose(std::string title, const std::vector<std::string>& items) -> std::size_t {
   if (items.empty()) return 0;
   delTimer(timer_id_);
-  SelectionDialog dialog(title, items, this);
+  SelectionDialog dialog(title, items, this, user_settings_.language);
   const auto result = dialog.exec() == finalcut::FDialog::ResultCode::Accept ? dialog.selected() : 0;
   timer_id_ = addTimer(100);
   return result;
@@ -5320,7 +5320,7 @@ auto IdeWindow::applyWorkspaceEdit(WorkspaceEdit workspace, std::string title,
   message << "Open files remain unsaved. No changes are made until Apply.\n\n" << preview.str();
 
   delTimer(timer_id_);
-  ConfirmTextDialog dialog(title + " preview", message.str(), this);
+  ConfirmTextDialog dialog(title + " preview", message.str(), this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted) {

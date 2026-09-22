@@ -1476,6 +1476,12 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
   const bool started = visible(std::getenv("TUIIDE_LOCALE_ONLY") != nullptr
     ? "Открытые файлы" : "Open files");
   if (std::getenv("TUIIDE_LOCALE_ONLY") != nullptr) {
+    settle();
+    screen.clear(); send("\033k");
+    const bool palette_title = visible("Палитра команд", 5s);
+    const bool palette_command = visible("Файл: Создать", 5s);
+    const bool palette = palette_title && palette_command;
+    screen.clear(); send("\033"); settle();
     screen.clear(); send("\033f");
     const bool translated_menu = visible("Закрыть остальные", 5s);
     screen.clear(); send("\033");
@@ -1498,10 +1504,11 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     }, 8s);
     if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &locale_status, 0); }
     ::close(master);
-    const bool success = started && translated_menu && language_menu && options
+    const bool success = started && palette && translated_menu && language_menu && options
       && switched && persisted && exited && WIFEXITED(locale_status)
       && WEXITSTATUS(locale_status) == 0;
     if (!success) std::cerr << "Locale PTY: started=" << started
+      << " palette=" << palette_title << '/' << palette_command
       << " menu=" << translated_menu << " language_menu=" << language_menu
       << " options=" << options << " switched=" << switched << " persisted=" << persisted
       << " exited=" << exited << " status=" << locale_status << '\n';

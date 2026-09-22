@@ -43,7 +43,7 @@ class EnterListBox final : public finalcut::FListBox {
 class PromptDialog final : public CenteredDialog {
  public:
   PromptDialog(const std::string& title, const std::string& label,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   [[nodiscard]] auto value() const -> std::string;
 
  private:
@@ -56,7 +56,7 @@ class PromptDialog final : public CenteredDialog {
 class SelectionDialog final : public CenteredDialog {
  public:
   SelectionDialog(const std::string& title, const std::vector<std::string>& items,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   [[nodiscard]] auto selected() const -> std::size_t;
 
  private:
@@ -69,7 +69,7 @@ class SelectionDialog final : public CenteredDialog {
 class CommandPaletteDialog final : public CenteredDialog {
  public:
   CommandPaletteDialog(std::vector<std::string> items,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   [[nodiscard]] auto selected() const -> std::size_t;
 
  private:
@@ -89,7 +89,7 @@ class CommandPaletteDialog final : public CenteredDialog {
 class TextDialog final : public CenteredDialog {
  public:
   TextDialog(std::string title, std::string text,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
 
  private:
   finalcut::FTextView text_;
@@ -99,7 +99,7 @@ class TextDialog final : public CenteredDialog {
 class ConfirmTextDialog final : public CenteredDialog {
  public:
   ConfirmTextDialog(std::string title, std::string text,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
 
  private:
   finalcut::FTextView text_;
