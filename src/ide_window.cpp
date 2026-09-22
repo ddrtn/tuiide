@@ -2401,7 +2401,8 @@ void IdeWindow::createProjectFile() {
   bool created{};
   if (types[selection - 1] == ProjectTemplate::CppClass) {
     delTimer(timer_id_);
-    ClassOptionsDialog dialog(project_settings_.cpp_header_extension, this);
+    ClassOptionsDialog dialog(project_settings_.cpp_header_extension, this,
+      user_settings_.language);
     const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
     auto options = dialog.options();
     timer_id_ = addTimer(100);

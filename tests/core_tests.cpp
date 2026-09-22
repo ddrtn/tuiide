@@ -1966,6 +1966,8 @@ int main() {
       && tuiide::localizedUiText("en", "No build preset") == "No build preset"
       && tuiide::localizedUiText("ru", "Open CMake project") == "Открыть проект CMake"
       && tuiide::localizedUiText("ru", "Directory name:") == "Имя каталога:"
+      && tuiide::localizedUiText("ru", "C++ class options") == "Параметры класса C++"
+      && tuiide::localizedUiText("ru", "Header file:") == "Заголовок:"
       && tuiide::localizedUiText("ru", "&Cancel") == "О&тмена"
       && tuiide::localizedUiText("en", "&Cancel") == "&Cancel"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",

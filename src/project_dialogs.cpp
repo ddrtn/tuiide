@@ -408,18 +408,23 @@ auto ProjectSettingsDialog::settings(ProjectSettings& result, std::string& error
 }
 
 struct ClassOptionsDialog::Impl {
-  Impl(ClassOptionsDialog* dialog, std::string header_extension)
-      : owner(dialog), class_label("Class name:", owner), class_name(owner),
-        header_file_label("Header file:", owner), header_file(owner),
-        source_file_label("Source file:", owner), source_file(owner),
-        namespace_label("Namespace:", owner), namespace_name(owner),
-        base_label("Base class:", owner), base_class(owner),
-        base_header_label("Base header:", owner), base_header(owner),
-        access_label("Inheritance:", owner), access(owner),
-        constructor("Generate constructor", owner), destructor("Generate destructor", owner),
-        virtual_destructor("Virtual destructor", owner), final_class("Final class", owner),
-        copy("Copy operations", owner), move("Move operations", owner),
-        next("&Next", owner), cancel("&Cancel", owner),
+  Impl(ClassOptionsDialog* dialog, std::string header_extension, std::string_view language)
+      : owner(dialog),
+        class_label(finalcut::FString(localizedUiText(language, "Class name:")), owner), class_name(owner),
+        header_file_label(finalcut::FString(localizedUiText(language, "Header file:")), owner), header_file(owner),
+        source_file_label(finalcut::FString(localizedUiText(language, "Source file:")), owner), source_file(owner),
+        namespace_label(finalcut::FString(localizedUiText(language, "Namespace:")), owner), namespace_name(owner),
+        base_label(finalcut::FString(localizedUiText(language, "Base class:")), owner), base_class(owner),
+        base_header_label(finalcut::FString(localizedUiText(language, "Base header:")), owner), base_header(owner),
+        access_label(finalcut::FString(localizedUiText(language, "Inheritance:")), owner), access(owner),
+        constructor(finalcut::FString(localizedUiText(language, "Generate constructor")), owner),
+        destructor(finalcut::FString(localizedUiText(language, "Generate destructor")), owner),
+        virtual_destructor(finalcut::FString(localizedUiText(language, "Virtual destructor")), owner),
+        final_class(finalcut::FString(localizedUiText(language, "Final class")), owner),
+        copy(finalcut::FString(localizedUiText(language, "Copy operations")), owner),
+        move(finalcut::FString(localizedUiText(language, "Move operations")), owner),
+        next(finalcut::FString(localizedUiText(language, "&Proceed")), owner),
+        cancel(finalcut::FString(localizedUiText(language, "&Cancel")), owner),
         header_extension_(header_extension == "h" ? "h" : "hpp") {
     class_label.setGeometry({2, 1}, {14, 1}); class_name.setGeometry({18, 1}, {50, 1});
     header_file_label.setGeometry({2, 3}, {14, 1}); header_file.setGeometry({18, 3}, {50, 1});
@@ -512,11 +517,12 @@ struct ClassOptionsDialog::Impl {
   std::string source_suggestion_;
 };
 
-ClassOptionsDialog::ClassOptionsDialog(std::string header_extension, finalcut::FWidget* parent)
-    : CenteredDialog("C++ class options", parent) {
+ClassOptionsDialog::ClassOptionsDialog(std::string header_extension,
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "C++ class options")), parent) {
   setDialogSize({78, 24});
   setModal();
-  impl_ = std::make_unique<Impl>(this, std::move(header_extension));
+  impl_ = std::make_unique<Impl>(this, std::move(header_extension), language);
 }
 
 ClassOptionsDialog::~ClassOptionsDialog() = default;

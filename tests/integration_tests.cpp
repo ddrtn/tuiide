@@ -3222,6 +3222,7 @@ auto exercisePresetDialogsPty(const std::filesystem::path& tuiide,
 
 auto exerciseClassTemplateDialogPty(const std::filesystem::path& tuiide,
     const std::filesystem::path& workspace) -> bool {
+  const bool russian = std::getenv("TUIIDE_CLASS_TEMPLATE_LOCALE_ONLY") != nullptr;
   const auto project = workspace / "class-template-project";
   std::filesystem::create_directories(project);
   { std::ofstream file(project / "CMakeLists.txt"); file
@@ -3231,6 +3232,12 @@ auto exerciseClassTemplateDialogPty(const std::filesystem::path& tuiide,
   { std::ofstream file(project / ".tuiide-project.json"); file
       << "{\"version\":1,\"buildDirectory\":\"build\",\"buildJobs\":1,"
          "\"cppHeaderExtension\":\"h\"}\n"; }
+  if (russian) {
+    const auto settings = workspace / "class-template-config/tuiide/settings.json";
+    std::filesystem::create_directories(settings.parent_path());
+    std::ofstream file(settings);
+    file << "{\"version\":1,\"language\":\"ru\"}\n";
+  }
 
   int master{-1};
   winsize window{30, 110, 0, 0};
@@ -3260,13 +3267,14 @@ auto exerciseClassTemplateDialogPty(const std::filesystem::path& tuiide,
   const auto visible = [&](std::string_view value, std::chrono::milliseconds timeout = 5s) {
     return waitFor(pump, [&] { return screen.find(value) != std::string::npos; }, timeout);
   };
-  const bool started = visible("Open files");
+  const bool started = visible(russian ? "Открытые файлы" : "Open files");
   const bool focused = send("\005") && visible("main.cpp");
   const bool picker_key = send("\033[2~");
   const bool picker = visible("C++ class");
   const bool class_selected = send("\033[F") && send("\r");
-  const bool options = visible("C++ class options") && visible("NewClass.h")
-    && visible("NewClass.cpp");
+  const bool options = visible(russian ? "Параметры класса C++" : "C++ class options")
+    && visible(russian ? "Имя класса:" : "Class name:")
+    && visible("NewClass.h") && visible("NewClass.cpp");
   const bool class_entered = send("Widget");
   const std::string erase_default(32, '\177');
   const bool header_focus = send("\r");
@@ -3362,7 +3370,8 @@ int main(int argc, char** argv) {
     std::cout << "CMake preset dialog PTY tests passed\n";
     return 0;
   }
-  if (std::getenv("TUIIDE_CLASS_TEMPLATE_ONLY") != nullptr) {
+  if (std::getenv("TUIIDE_CLASS_TEMPLATE_ONLY") != nullptr
+      || std::getenv("TUIIDE_CLASS_TEMPLATE_LOCALE_ONLY") != nullptr) {
     expect(exerciseClassTemplateDialogPty(std::filesystem::absolute(argv[1]), project.path),
       "C++ class dialog exposes editable header and implementation file names");
     std::cout << "C++ class template dialog PTY tests passed\n";

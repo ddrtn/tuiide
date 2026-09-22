@@ -321,6 +321,10 @@ if(BUILD_TESTING)
       $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
     set_tests_properties(tuiide_class_template_dialog_tests PROPERTIES
       ENVIRONMENT TUIIDE_CLASS_TEMPLATE_ONLY=1 TIMEOUT 60 RUN_SERIAL TRUE LABELS integration)
+    add_test(NAME tuiide_class_template_locale_tests COMMAND tuiide_integration_tests
+      $<TARGET_FILE:tuiide> $<TARGET_FILE:tuiide_fake_lsp_server>)
+    set_tests_properties(tuiide_class_template_locale_tests PROPERTIES
+      ENVIRONMENT TUIIDE_CLASS_TEMPLATE_LOCALE_ONLY=1 TIMEOUT 60 RUN_SERIAL TRUE LABELS integration)
   else()
     message(STATUS "Skipping integration test target: clangd, gdb, or libutil not found")
   endif()
