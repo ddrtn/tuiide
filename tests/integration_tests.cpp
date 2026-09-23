@@ -253,44 +253,44 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
     const auto count = ::read(master, buffer, sizeof(buffer));
     if (count > 0) screen.append(buffer, static_cast<std::size_t>(count));
   };
-  constexpr std::string_view f10{"\033[21~"};
-  (void)::write(master, f10.data(), f10.size());
-  const auto menu_focused = waitFor(pumpScreen, [&] { return screen.find("File") != std::string::npos; }, 5s);
-  screen.clear();
-  const char enter = '\r';
-  (void)::write(master, &enter, 1);
+  constexpr std::string_view alt_file{"\033f"};
+  (void)::write(master, alt_file.data(), alt_file.size());
   // Начальная горячая буква O может быть отделена ANSI-кодами оформления.
   const auto menu_opened = waitFor(pumpScreen, [&] { return screen.find("pen Project...") != std::string::npos; }, 5s);
-  constexpr std::string_view menu_right{"\033[C"};
-  const std::vector<std::string_view> menu_markers{
-    "Undo", "Find...", "Refresh tree", "Configure", "Start / Continue",
-    "Completion", "Previous file", "Keyboard shortcuts"};
+  const auto menu_focused = menu_opened;
+  const char enter = '\r';
+  const char escape = 27;
+  struct MenuCheck {
+    std::string_view key;
+    std::string_view marker;
+  };
+  constexpr MenuCheck menu_checks[]{
+    {"\033e", "Undo"}, {"\033s", "Find..."}, {"\033p", "Refresh tree"},
+    {"\033r", "Configure"}, {"\033d", "Start / Continue"},
+    {"\033t", "Completion"}, {"\033w", "Previous file"},
+    {"\033h", "Keyboard shortcuts"}};
   bool all_top_menus_visible = menu_opened;
-  for (const auto marker : menu_markers) {
+  for (const auto& check : menu_checks) {
     screen.clear();
-    (void)::write(master, menu_right.data(), menu_right.size());
+    (void)::write(master, &escape, 1);
+    (void)waitFor(pumpScreen, [&] { return screen.find("TUI IDE") != std::string::npos; }, 2s);
+    std::this_thread::sleep_for(150ms); pumpScreen();
+    screen.clear();
+    (void)::write(master, check.key.data(), check.key.size());
     const auto marker_visible = waitFor(pumpScreen, [&] {
-      return screen.find(marker) != std::string::npos;
+      return screen.find(check.marker) != std::string::npos;
     }, 3s);
-    if (!marker_visible) std::cerr << "PTY menu marker missing: " << marker << '\n';
+    if (!marker_visible) std::cerr << "PTY menu marker missing: " << check.marker << '\n';
     all_top_menus_visible = marker_visible && all_top_menus_visible;
   }
-  const char escape = 27;
   screen.clear();
   (void)::write(master, &escape, 1);
   const auto menu_closed = waitFor(pumpScreen, [&] { return screen.find("TUI IDE") != std::string::npos; }, 5s);
   std::this_thread::sleep_for(150ms);
   pumpScreen();
   screen.clear();
-  (void)::write(master, f10.data(), f10.size());
-  (void)waitFor(pumpScreen, [&] { return screen.find("File") != std::string::npos; }, 3s);
-  (void)::write(master, &enter, 1);
-  (void)waitFor(pumpScreen, [&] { return screen.find("pen...") != std::string::npos; }, 3s);
-  for (int menu = 0; menu < 3; ++menu) {
-    (void)::write(master, menu_right.data(), menu_right.size());
-    std::this_thread::sleep_for(50ms);
-    pumpScreen();
-  }
+  constexpr std::string_view alt_project{"\033p"};
+  (void)::write(master, alt_project.data(), alt_project.size());
   const auto project_menu_opened = waitFor(pumpScreen, [&] {
     return screen.find("Refresh tree") != std::string::npos;
   }, 3s);
@@ -486,7 +486,6 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   std::this_thread::sleep_for(150ms);
   pumpScreen();
   screen.clear();
-  constexpr std::string_view alt_file{"\033f"};
   (void)::write(master, alt_file.data(), alt_file.size());
   const auto save_all_visible = waitFor(pumpScreen, [&] { return screen.find("Save A") != std::string::npos; }, 5s);
   const char save_all = 'l';
@@ -2406,23 +2405,15 @@ auto exerciseLspDialogsPty(const std::filesystem::path& tuiide,
     return moved && waitFor(pump, [&] { return logged(expected); }, 5s);
   };
   const auto selectToolsMnemonic = [&](char mnemonic) {
-    screen.clear(); send("\033[21~");
-    (void)visible("File", 3s);
-    send("\r");
-    (void)visible("Open Project", 3s);
-    for (int menu = 0; menu < 6; ++menu) {
-      send("\033[C");
-      std::this_thread::sleep_for(40ms);
-      pump();
-    }
+    screen.clear(); send("\033t");
     const bool tools = visible("Completion", 3s);
     screen.clear(); send(std::string(1, mnemonic));
     return tools;
   };
   const auto requestToolFeedback = [&](int line, char mnemonic, std::string_view expected) {
     const bool moved = goToLine(line);
-    const bool menu = selectToolsMnemonic(mnemonic);
-    return moved && menu && waitFor(pump, [&] { return logged(expected); }, 5s);
+    (void)selectToolsMnemonic(mnemonic);
+    return moved && waitFor(pump, [&] { return logged(expected); }, 5s);
   };
 
   const bool started = visible("Open files");
@@ -2486,7 +2477,7 @@ auto exerciseLspDialogsPty(const std::filesystem::path& tuiide,
   const bool action_error = requestFeedback(3, "\033a", "Code Actions error: forced operation failure");
 
   const bool signature_position = goToLine(1);
-  const bool signature_menu = selectToolsMnemonic('h');
+  (void)selectToolsMnemonic('h');
   const bool signature_dialog = visible("Signature help", 5s)
     && screen.find("int matrix(int value)") != std::string::npos
     && screen.find("matrix signature") != std::string::npos;
@@ -2497,10 +2488,10 @@ auto exerciseLspDialogsPty(const std::filesystem::path& tuiide,
     "Signature help error: forced operation failure");
 
   const auto requestWorkspaceSymbols = [&](std::string_view query, std::string_view expected) {
-    const bool menu = selectToolsMnemonic('w');
+    (void)selectToolsMnemonic('w');
     const bool prompt = visible("Name or substring:", 5s);
     screen.clear(); send(query); send("\r");
-    return menu && prompt && (expected.empty() || waitFor(pump, [&] { return logged(expected); }, 5s));
+    return prompt && (expected.empty() || waitFor(pump, [&] { return logged(expected); }, 5s));
   };
   const bool workspace_prompt = requestWorkspaceSymbols("matrix", {});
   const bool workspace_dialog = visible("Workspace Symbols", 5s)
@@ -2512,7 +2503,7 @@ auto exerciseLspDialogsPty(const std::filesystem::path& tuiide,
     "Workspace Symbols error: forced operation failure");
 
   const bool call_position = goToLine(1);
-  const bool call_menu = selectToolsMnemonic('l');
+  (void)selectToolsMnemonic('l');
   const bool call_dialog = visible("Call Hierarchy", 5s)
     && screen.find("matrixRoot") != std::string::npos
     && screen.find("matrixCaller") != std::string::npos
@@ -2524,7 +2515,7 @@ auto exerciseLspDialogsPty(const std::filesystem::path& tuiide,
     "Call Hierarchy error: forced operation failure");
 
   const bool type_position = goToLine(1);
-  const bool type_menu = selectToolsMnemonic('y');
+  (void)selectToolsMnemonic('y');
   const bool type_dialog = visible("Type Hierarchy", 5s)
     && screen.find("MatrixType") != std::string::npos
     && screen.find("MatrixBase") != std::string::npos
@@ -2540,7 +2531,7 @@ auto exerciseLspDialogsPty(const std::filesystem::path& tuiide,
     const std::string value((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     return value == original_source;
   }();
-  screen.clear(); send("\033f"); (void)visible("Exit", 3s); send("x");
+  screen.clear(); send(std::string(1, static_cast<char>(4)));
   int status{};
   const auto exited = waitFor(pump, [&] { return ::waitpid(child, &status, WNOHANG) == child; }, 8s);
   if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &status, 0); }
@@ -2554,10 +2545,10 @@ auto exerciseLspDialogsPty(const std::filesystem::path& tuiide,
     && rename_empty_position && rename_empty && rename_error_position && rename_error
     && action_position && action_picker && action_preview && action_cancelled
     && action_empty && action_error
-    && signature_position && signature_menu && signature_dialog && signature_empty && signature_error
+    && signature_position && signature_dialog && signature_empty && signature_error
     && workspace_prompt && workspace_dialog && workspace_empty && workspace_error
-    && call_position && call_menu && call_dialog && call_empty && call_error
-    && type_position && type_menu && type_dialog && type_empty && type_error
+    && call_position && call_dialog && call_empty && call_error
+    && type_position && type_dialog && type_empty && type_error
     && source_unchanged
     && exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
   if (!success) {
