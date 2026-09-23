@@ -2187,7 +2187,7 @@ void IdeWindow::importProject(const std::filesystem::path& directory) {
     suggested_name.insert(suggested_name.begin(), '_');
 
   delTimer(timer_id_);
-  ImportProjectDialog settings_dialog(suggested_name, this);
+  ImportProjectDialog settings_dialog(suggested_name, this, user_settings_.language);
   const auto accepted = settings_dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   auto options = settings_dialog.options();
   timer_id_ = addTimer(100);
@@ -2338,7 +2338,7 @@ void IdeWindow::persistUserSettings() {
 }
 
 void IdeWindow::newProject() {
-  delTimer(timer_id_); NewProjectDialog settings_dialog(this);
+  delTimer(timer_id_); NewProjectDialog settings_dialog(this, user_settings_.language);
   const auto accepted = settings_dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   auto options = settings_dialog.options(); timer_id_ = addTimer(100);
   if (!accepted) return;

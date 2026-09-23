@@ -1968,6 +1968,8 @@ int main() {
       && tuiide::localizedUiText("ru", "Directory name:") == "Имя каталога:"
       && tuiide::localizedUiText("ru", "C++ class options") == "Параметры класса C++"
       && tuiide::localizedUiText("ru", "Header file:") == "Заголовок:"
+      && tuiide::localizedUiText("ru", "New project settings") == "Параметры нового проекта"
+      && tuiide::localizedUiText("ru", "Import source directory") == "Импорт каталога исходников"
       && tuiide::localizedUiText("ru", "&Cancel") == "О&тмена"
       && tuiide::localizedUiText("en", "&Cancel") == "&Cancel"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",

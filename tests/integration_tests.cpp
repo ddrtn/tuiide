@@ -1472,6 +1472,13 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     ? "Открытые файлы" : "Open files");
   if (std::getenv("TUIIDE_LOCALE_ONLY") != nullptr) {
     settle();
+    screen.clear(); send("\033f");
+    const bool new_project_menu = visible("Закрыть остальные", 5s);
+    screen.clear(); send("\r");
+    const bool new_project_dialog = visible("Параметры нового проекта", 5s)
+      && visible("Имя проекта:", 3s);
+    screen.clear(); send("\033");
+    std::this_thread::sleep_for(600ms); pump();
     screen.clear(); send("\033k");
     const bool palette_title = visible("Палитра команд", 5s);
     const bool palette_command = visible("Файл: Создать", 5s);
@@ -1529,12 +1536,14 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     }, 8s);
     if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &locale_status, 0); }
     ::close(master);
-    const bool success = started && palette && new_file && search_dialog && launch_dialog
+    const bool success = started && new_project_menu && new_project_dialog
+      && palette && new_file && search_dialog && launch_dialog
       && configure_presets && build_presets && project_menu && project_directory
       && translated_menu && language_menu && options
       && switched && persisted && exited && WIFEXITED(locale_status)
       && WEXITSTATUS(locale_status) == 0;
     if (!success) std::cerr << "Locale PTY: started=" << started
+      << " new_project=" << new_project_menu << '/' << new_project_dialog
       << " palette=" << palette_title << '/' << palette_command
       << " new_file=" << new_file << " search=" << search_dialog
       << " launch=" << launch_dialog

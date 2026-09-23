@@ -92,7 +92,8 @@ class ClassOptionsDialog final : public CenteredDialog {
 /** Первый экран wizard создания CMake-проекта. */
 class NewProjectDialog final : public CenteredDialog {
  public:
-  explicit NewProjectDialog(finalcut::FWidget* parent = nullptr);
+  explicit NewProjectDialog(finalcut::FWidget* parent = nullptr,
+    std::string language = "en");
   [[nodiscard]] auto options() const -> NewProjectOptions;
 
  private:
@@ -126,7 +127,7 @@ class NewProjectDialog final : public CenteredDialog {
 class ImportProjectDialog final : public CenteredDialog {
  public:
   ImportProjectDialog(std::string suggested_name,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   [[nodiscard]] auto options() const -> ProjectImportOptions;
 
  private:

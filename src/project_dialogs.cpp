@@ -531,14 +531,22 @@ auto ClassOptionsDialog::options() const -> CppClassOptions {
   return impl_->options();
 }
 
-NewProjectDialog::NewProjectDialog(finalcut::FWidget* parent)
-    : CenteredDialog("New project settings", parent), name_label_("Project name:", this), name_(this),
-      language_label_("Language:", this), language_(this), target_label_("Target type:", this), target_(this),
-      standard_label_("Language standard:", this), standard_(this), header_label_("C++ headers:", this), header_(this),
-      generator_label_("Generator:", this), generator_(this), build_type_label_("Build type:", this), build_type_(this),
-      install_label_("Install layout:", this), install_(this), warnings_("Enable compiler warnings", this),
-      readme_("Create README.md", this), gitignore_("Create .gitignore", this), testing_("Enable CTest", this),
-      next_("&Next", this), cancel_("&Cancel", this) {
+NewProjectDialog::NewProjectDialog(finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "New project settings")), parent),
+      name_label_(finalcut::FString(localizedUiText(language, "Project name:")), this), name_(this),
+      language_label_(finalcut::FString(localizedUiText(language, "Language:")), this), language_(this),
+      target_label_(finalcut::FString(localizedUiText(language, "Target type:")), this), target_(this),
+      standard_label_(finalcut::FString(localizedUiText(language, "Language standard:")), this), standard_(this),
+      header_label_(finalcut::FString(localizedUiText(language, "C++ headers:")), this), header_(this),
+      generator_label_(finalcut::FString(localizedUiText(language, "Generator:")), this), generator_(this),
+      build_type_label_(finalcut::FString(localizedUiText(language, "Build type:")), this), build_type_(this),
+      install_label_(finalcut::FString(localizedUiText(language, "Install layout:")), this), install_(this),
+      warnings_(finalcut::FString(localizedUiText(language, "Enable compiler warnings")), this),
+      readme_(finalcut::FString(localizedUiText(language, "Create README.md")), this),
+      gitignore_(finalcut::FString(localizedUiText(language, "Create .gitignore")), this),
+      testing_(finalcut::FString(localizedUiText(language, "Enable CTest")), this),
+      next_(finalcut::FString(localizedUiText(language, "&Next")), this),
+      cancel_(finalcut::FString(localizedUiText(language, "&Cancel")), this) {
   setDialogSize({74, 23});
   setModal();
   name_label_.setGeometry({2, 1}, {14, 1}); name_.setGeometry({17, 1}, {38, 1});
@@ -607,11 +615,15 @@ void NewProjectDialog::updateLanguageFields() {
 }
 
 ImportProjectDialog::ImportProjectDialog(std::string suggested_name,
-    finalcut::FWidget* parent)
-    : CenteredDialog("Import source directory", parent), name_label_("Target name:", this), name_(this),
-      language_label_("Language:", this), language_(this), target_label_("Target type:", this), target_(this),
-      standard_label_("Language standard:", this), standard_(this), warnings_("Enable compiler warnings", this),
-      next_("&Preview", this), cancel_("&Cancel", this) {
+    finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Import source directory")), parent),
+      name_label_(finalcut::FString(localizedUiText(language, "Target name:")), this), name_(this),
+      language_label_(finalcut::FString(localizedUiText(language, "Language:")), this), language_(this),
+      target_label_(finalcut::FString(localizedUiText(language, "Target type:")), this), target_(this),
+      standard_label_(finalcut::FString(localizedUiText(language, "Language standard:")), this), standard_(this),
+      warnings_(finalcut::FString(localizedUiText(language, "Enable compiler warnings")), this),
+      next_(finalcut::FString(localizedUiText(language, "&Preview")), this),
+      cancel_(finalcut::FString(localizedUiText(language, "&Cancel")), this) {
   setDialogSize({70, 16});
   setModal();
   name_label_.setGeometry({2, 1}, {14, 1}); name_.setGeometry({17, 1}, {38, 1});
