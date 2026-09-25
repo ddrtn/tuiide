@@ -420,40 +420,43 @@ void IdeWindow::setupMenus() {
   window_menu_.separator.setSeparator();
   help_menu_.separator.setSeparator();
 
-  const auto bind = [this](finalcut::FMenuItem& item, finalcut::FKey key, std::string message) {
-    item.setStatusBarMessage(finalcut::FString(std::move(message)));
+  const auto status = [this](finalcut::FMenuItem& item, std::string message) {
+    english_status_messages_[&item] = message;
+    item.setStatusBarMessage(finalcut::FString(localizedUiText(user_settings_.language, message)));
+  };
+  const auto bind = [this, &status](finalcut::FMenuItem& item, finalcut::FKey key, std::string message) {
+    status(item, std::move(message));
     item.addCallback("clicked", [this, key] { queueMenuCommand(key); });
   };
   file_menu_.new_project.addCallback("clicked", [this] { deferred_command_ = [this] { newProject(); }; });
-  file_menu_.open_project.setStatusBarMessage("Open a directory containing CMakeLists.txt");
+  status(file_menu_.open_project, "Open a directory containing CMakeLists.txt");
   file_menu_.open_project.addCallback("clicked", [this] { deferred_command_ = [this] { openProject(); }; });
-  file_menu_.recent_projects.setStatusBarMessage("Open a recently used CMake project");
+  status(file_menu_.recent_projects, "Open a recently used CMake project");
   file_menu_.recent_projects.addCallback("clicked", [this] { deferred_command_ = [this] { openRecentProject(); }; });
-  file_menu_.close_project.setStatusBarMessage("Close the current project");
+  status(file_menu_.close_project, "Close the current project");
   file_menu_.close_project.addCallback("clicked", [this] { deferred_command_ = [this] { closeProject(); }; });
   bind(file_menu_.new_file, finalcut::FKey::Ctrl_n, "Create a new source file");
-  file_menu_.new_project_file.setStatusBarMessage("Create a C/C++ file or class and add it to CMake");
+  status(file_menu_.new_project_file, "Create a C/C++ file or class and add it to CMake");
   file_menu_.new_project_file.addCallback("clicked", [this] {
     deferred_command_ = [this] { createProjectFile(); };
   });
   bind(file_menu_.open, finalcut::FKey::Ctrl_o, "Open a C or C++ source file");
-  file_menu_.recent_files.getItem()->setStatusBarMessage(
-    "Open or clear the persistent file history");
+  status(*file_menu_.recent_files.getItem(), "Open or clear the persistent file history");
   bind(file_menu_.save, finalcut::FKey::Ctrl_s, "Save the active source file");
-  file_menu_.save_all.setStatusBarMessage("Save every modified document");
+  status(file_menu_.save_all, "Save every modified document");
   file_menu_.save_all.addCallback("clicked", [this] {
     deferred_command_ = [this] { (void)saveAllDocuments(); };
   });
-  file_menu_.save_as.setStatusBarMessage("Save the active file under another name");
+  status(file_menu_.save_as, "Save the active file under another name");
   file_menu_.save_as.addCallback("clicked", [this] { deferred_command_ = [this] { (void)saveAs(); }; });
   bind(file_menu_.close, finalcut::FKey::Ctrl_w, "Close the active file");
-  file_menu_.close_others.setStatusBarMessage("Close every file except the active one");
+  status(file_menu_.close_others, "Close every file except the active one");
   file_menu_.close_others.addCallback("clicked", [this] {
     deferred_command_ = [this] { closeOtherDocuments(); };
   });
   bind(file_menu_.close_all, finalcut::FKey::Meta_W, "Close every open file");
   bind(file_menu_.reopen_closed, finalcut::FKey::Meta_u, "Reopen the most recently closed saved file");
-  file_menu_.quit.setStatusBarMessage("Exit TUI IDE");
+  status(file_menu_.quit, "Exit TUI IDE");
   file_menu_.quit.addCallback("clicked", [this] { exitIde(); });
 
   bind(edit_menu_.undo, finalcut::FKey::Ctrl_z, "Undo the last edit");
@@ -462,35 +465,35 @@ void IdeWindow::setupMenus() {
   bind(edit_menu_.copy, finalcut::FKey::Ctrl_c, "Copy selection to the system clipboard");
   bind(edit_menu_.paste, finalcut::FKey::Ctrl_v, "Paste from the system clipboard");
   bind(edit_menu_.select_all, finalcut::FKey::Ctrl_a, "Select the entire document");
-  edit_menu_.toggle_comment.setStatusBarMessage("Comment or uncomment the selected lines");
+  status(edit_menu_.toggle_comment, "Comment or uncomment the selected lines");
   edit_menu_.toggle_comment.addCallback("clicked", [this] {
     deferred_command_ = [this] { editor_.toggleComment(); };
   });
-  edit_menu_.duplicate_line.setStatusBarMessage("Duplicate the current line or selected lines");
+  status(edit_menu_.duplicate_line, "Duplicate the current line or selected lines");
   edit_menu_.duplicate_line.addCallback("clicked", [this] {
     deferred_command_ = [this] { editor_.duplicateLine(); };
   });
-  edit_menu_.move_line_up.setStatusBarMessage("Move the current line or selected lines up");
+  status(edit_menu_.move_line_up, "Move the current line or selected lines up");
   edit_menu_.move_line_up.addCallback("clicked", [this] {
     deferred_command_ = [this] { editor_.moveLine(false); };
   });
-  edit_menu_.move_line_down.setStatusBarMessage("Move the current line or selected lines down");
+  status(edit_menu_.move_line_down, "Move the current line or selected lines down");
   edit_menu_.move_line_down.addCallback("clicked", [this] {
     deferred_command_ = [this] { editor_.moveLine(true); };
   });
-  edit_menu_.delete_line.setStatusBarMessage("Delete the current line or selected lines");
+  status(edit_menu_.delete_line, "Delete the current line or selected lines");
   edit_menu_.delete_line.addCallback("clicked", [this] {
     deferred_command_ = [this] { editor_.deleteLine(); };
   });
 
   bind(search_menu_.find, finalcut::FKey::Ctrl_f, "Find text in the active file");
-  search_menu_.find_next.setStatusBarMessage("Find the next match using the current options");
+  status(search_menu_.find_next, "Find the next match using the current options");
   search_menu_.find_next.addCallback("clicked", [this] { deferred_command_ = [this] { findNext(false); }; });
-  search_menu_.find_previous.setStatusBarMessage("Find the previous match using the current options");
+  status(search_menu_.find_previous, "Find the previous match using the current options");
   search_menu_.find_previous.addCallback("clicked", [this] { deferred_command_ = [this] { findNext(true); }; });
-  search_menu_.replace.setStatusBarMessage("Find and replace text in a file or project");
+  status(search_menu_.replace, "Find and replace text in a file or project");
   search_menu_.replace.addCallback("clicked", [this] { deferred_command_ = [this] { find(); }; });
-  search_menu_.project_search.setStatusBarMessage("Search across editable project files");
+  status(search_menu_.project_search, "Search across editable project files");
   search_menu_.project_search.addCallback("clicked", [this] {
     deferred_command_ = [this] { search_project_ = true; find(); };
   });
@@ -519,18 +522,18 @@ void IdeWindow::setupMenus() {
     deferred_command_ = [this] { deleteSelectedProjectDirectory(); };
   });
 
-  run_menu_.configure.setStatusBarMessage("Configure the project with CMake");
+  status(run_menu_.configure, "Configure the project with CMake");
   run_menu_.configure.addCallback("clicked", [this] { deferred_command_ = [this] { configure(); }; });
   bind(run_menu_.build, finalcut::FKey::Ctrl_b,
     "Build the project; configure first when required");
-  run_menu_.rebuild.setStatusBarMessage("Clean and build the project");
+  status(run_menu_.rebuild, "Clean and build the project");
   run_menu_.rebuild.addCallback("clicked", [this] { deferred_command_ = [this] { rebuild(); }; });
-  run_menu_.clean.setStatusBarMessage("Build the CMake clean target");
+  status(run_menu_.clean, "Build the CMake clean target");
   run_menu_.clean.addCallback("clicked", [this] { deferred_command_ = [this] { clean(); }; });
-  run_menu_.cancel_build.setStatusBarMessage("Stop the active CMake operation");
+  status(run_menu_.cancel_build, "Stop the active CMake operation");
   run_menu_.cancel_build.addCallback("clicked", [this] { deferred_command_ = [this] { cancelBuild(); }; });
   bind(run_menu_.run, finalcut::FKey::F6, "Run the selected executable");
-  run_menu_.stop_run.setStatusBarMessage("Terminate the running program and its process group");
+  status(run_menu_.stop_run, "Terminate the running program and its process group");
   run_menu_.stop_run.addCallback("clicked", [this] { deferred_command_ = [this] { stopRun(); }; });
   bind(run_menu_.launch_select, finalcut::FKey::Meta_L,
     "Quickly select the active Run/Debug configuration");
@@ -539,132 +542,131 @@ void IdeWindow::setupMenus() {
   bind(run_menu_.configure_preset, finalcut::FKey::Ctrl_p, "Select a CMake configure preset");
   bind(run_menu_.build_preset, finalcut::FKey::Meta_b, "Select a CMake build preset");
   bind(run_menu_.target, finalcut::FKey::Ctrl_t, "Select an executable CMake target");
-  run_menu_.discover_tests.setStatusBarMessage("Discover tests using CTest JSON output");
+  status(run_menu_.discover_tests, "Discover tests using CTest JSON output");
   run_menu_.discover_tests.addCallback("clicked", [this] {
     deferred_command_ = [this] { discoverTests(); };
   });
-  run_menu_.run_all_tests.setStatusBarMessage("Run all discovered CTest tests");
+  status(run_menu_.run_all_tests, "Run all discovered CTest tests");
   run_menu_.run_all_tests.addCallback("clicked", [this] {
     deferred_command_ = [this] { runAllTests(); };
   });
-  run_menu_.run_selected_test.setStatusBarMessage("Run the test selected in the Tests panel");
+  status(run_menu_.run_selected_test, "Run the test selected in the Tests panel");
   run_menu_.run_selected_test.addCallback("clicked", [this] {
     deferred_command_ = [this] { runSelectedTest(); };
   });
-  run_menu_.rerun_failed_tests.setStatusBarMessage("Rerun tests from CTest's failed-test log");
+  status(run_menu_.rerun_failed_tests, "Rerun tests from CTest's failed-test log");
   run_menu_.rerun_failed_tests.addCallback("clicked", [this] {
     deferred_command_ = [this] { rerunFailedTests(); };
   });
-  run_menu_.test_preset.setStatusBarMessage("Select and run a CMake test preset");
+  status(run_menu_.test_preset, "Select and run a CMake test preset");
   run_menu_.test_preset.addCallback("clicked", [this] {
     deferred_command_ = [this] { selectCTestPreset(); };
   });
-  run_menu_.stop_tests.setStatusBarMessage("Stop the active CTest process");
+  status(run_menu_.stop_tests, "Stop the active CTest process");
   run_menu_.stop_tests.addCallback("clicked", [this] {
     deferred_command_ = [this] { stopTests(); };
   });
 
   bind(debug_menu_.start, finalcut::FKey::F5, "Start or continue debugging");
   bind(debug_menu_.pause, finalcut::FKey::F17, "Pause the debuggee");
-  debug_menu_.stop.setStatusBarMessage("Stop the debug session and terminate GDB");
+  status(debug_menu_.stop, "Stop the debug session and terminate GDB");
   debug_menu_.stop.addCallback("clicked", [this] { deferred_command_ = [this] { debugStop(); }; });
-  debug_menu_.restart.setStatusBarMessage("Restart the selected executable under GDB");
+  status(debug_menu_.restart, "Restart the selected executable under GDB");
   debug_menu_.restart.addCallback("clicked", [this] { deferred_command_ = [this] { debugRestart(); }; });
-  debug_menu_.attach.setStatusBarMessage("Attach GDB to a running Linux process");
+  status(debug_menu_.attach, "Attach GDB to a running Linux process");
   debug_menu_.attach.addCallback("clicked", [this] { deferred_command_ = [this] { attachToProcess(); }; });
-  debug_menu_.core_dump.setStatusBarMessage("Open an executable and core dump for read-only inspection");
+  status(debug_menu_.core_dump, "Open an executable and core dump for read-only inspection");
   debug_menu_.core_dump.addCallback("clicked", [this] { deferred_command_ = [this] { openCoreDump(); }; });
   bind(debug_menu_.breakpoint, finalcut::FKey::F9, "Toggle breakpoint on the current line");
-  debug_menu_.breakpoint_properties.setStatusBarMessage("Edit condition, ignored hits, or logpoint message");
+  status(debug_menu_.breakpoint_properties, "Edit condition, ignored hits, or logpoint message");
   debug_menu_.breakpoint_properties.addCallback("clicked", [this] { deferred_command_ = [this] { editSelectedBreakpoint(); }; });
-  debug_menu_.breakpoint_enable.setStatusBarMessage("Enable or disable the selected breakpoint");
+  status(debug_menu_.breakpoint_enable, "Enable or disable the selected breakpoint");
   debug_menu_.breakpoint_enable.addCallback("clicked", [this] { deferred_command_ = [this] { toggleSelectedBreakpoint(); }; });
-  debug_menu_.breakpoint_remove.setStatusBarMessage("Remove the selected breakpoint");
+  status(debug_menu_.breakpoint_remove, "Remove the selected breakpoint");
   debug_menu_.breakpoint_remove.addCallback("clicked", [this] { deferred_command_ = [this] { removeSelectedBreakpoint(); }; });
-  debug_menu_.breakpoint_clear.setStatusBarMessage("Remove every project breakpoint");
+  status(debug_menu_.breakpoint_clear, "Remove every project breakpoint");
   debug_menu_.breakpoint_clear.addCallback("clicked", [this] { deferred_command_ = [this] { clearBreakpoints(); }; });
   bind(debug_menu_.next, finalcut::FKey::F8, "Step over the current source line");
   bind(debug_menu_.step, finalcut::FKey::F7, "Step into the current call");
   bind(debug_menu_.finish, finalcut::FKey::F56, "Finish the current stack frame");
   bind(debug_menu_.watch, finalcut::FKey::Meta_U, "Add a GDB watch expression");
-  debug_menu_.evaluate.setStatusBarMessage("Evaluate a C/C++ expression in the selected stack frame");
+  status(debug_menu_.evaluate, "Evaluate a C/C++ expression in the selected stack frame");
   debug_menu_.evaluate.addCallback("clicked", [this] { deferred_command_ = [this] { evaluateExpression(); }; });
-  debug_menu_.set_variable.setStatusBarMessage("Change a variable in the selected stack frame");
+  status(debug_menu_.set_variable, "Change a variable in the selected stack frame");
   debug_menu_.set_variable.addCallback("clicked", [this] { deferred_command_ = [this] { editVariableValue(); }; });
-  debug_menu_.disassembly.setStatusBarMessage("Disassemble machine instructions near an address or $pc");
+  status(debug_menu_.disassembly, "Disassemble machine instructions near an address or $pc");
   debug_menu_.disassembly.addCallback("clicked", [this] { deferred_command_ = [this] { showDisassembly(); }; });
-  debug_menu_.memory.setStatusBarMessage("Read a bounded memory range as hex and ASCII");
+  status(debug_menu_.memory, "Read a bounded memory range as hex and ASCII");
   debug_menu_.memory.addCallback("clicked", [this] { deferred_command_ = [this] { showMemory(); }; });
   bind(debug_menu_.registers, finalcut::FKey::Ctrl_r, "Show or hide amd64 registers");
-  debug_menu_.signals.setStatusBarMessage("Inspect signal policies, configure handling, or send a signal and continue");
+  status(debug_menu_.signals, "Inspect signal policies, configure handling, or send a signal and continue");
   debug_menu_.signals.addCallback("clicked", [this] { deferred_command_ = [this] { manageSignals(); }; });
 
   bind(tools_menu_.completion, finalcut::FKey::Ctrl_space, "Request clangd completion");
-  tools_menu_.signature.setStatusBarMessage("Show clangd function signature help");
+  status(tools_menu_.signature, "Show clangd function signature help");
   tools_menu_.signature.addCallback("clicked", [this] {
     deferred_command_ = [this] { requestSignatureHelp(); };
   });
   bind(tools_menu_.hover, finalcut::FKey::F1, "Show clangd symbol information");
   bind(tools_menu_.rename, finalcut::FKey::F2, "Rename a symbol across the workspace");
   bind(tools_menu_.code_actions, finalcut::FKey::Meta_a, "Show clangd quick fixes and refactorings");
-  tools_menu_.organize_includes.setStatusBarMessage("Sort and remove unused includes with clangd");
+  status(tools_menu_.organize_includes, "Sort and remove unused includes with clangd");
   tools_menu_.organize_includes.addCallback("clicked", [this] {
     deferred_command_ = [this] { requestCodeActions(true); };
   });
-  tools_menu_.switch_source_header.setStatusBarMessage("Switch between matching C/C++ header and source files");
+  status(tools_menu_.switch_source_header, "Switch between matching C/C++ header and source files");
   tools_menu_.switch_source_header.addCallback("clicked", [this] {
     deferred_command_ = [this] { switchSourceHeader(); };
   });
-  tools_menu_.workspace_symbols.setStatusBarMessage("Search symbols across the clangd workspace index");
+  status(tools_menu_.workspace_symbols, "Search symbols across the clangd workspace index");
   tools_menu_.workspace_symbols.addCallback("clicked", [this] {
     deferred_command_ = [this] { requestWorkspaceSymbols(); };
   });
-  tools_menu_.call_hierarchy.setStatusBarMessage("Show incoming and outgoing calls for the symbol at the cursor");
+  status(tools_menu_.call_hierarchy, "Show incoming and outgoing calls for the symbol at the cursor");
   tools_menu_.call_hierarchy.addCallback("clicked", [this] {
     deferred_command_ = [this] { requestHierarchy(false); };
   });
-  tools_menu_.type_hierarchy.setStatusBarMessage("Show supertypes and subtypes for the type at the cursor");
+  status(tools_menu_.type_hierarchy, "Show supertypes and subtypes for the type at the cursor");
   tools_menu_.type_hierarchy.addCallback("clicked", [this] {
     deferred_command_ = [this] { requestHierarchy(true); };
   });
   tools_menu_.separator_lsp.setSeparator();
-  tools_menu_.format_document.setStatusBarMessage("Format the active C/C++ document with clang-format");
+  status(tools_menu_.format_document, "Format the active C/C++ document with clang-format");
   tools_menu_.format_document.addCallback("clicked", [this] {
     deferred_command_ = [this] { formatDocument(false); };
   });
-  tools_menu_.format_selection.setStatusBarMessage("Format selected C/C++ lines with clang-format");
+  status(tools_menu_.format_selection, "Format selected C/C++ lines with clang-format");
   tools_menu_.format_selection.addCallback("clicked", [this] {
     deferred_command_ = [this] { formatDocument(true); };
   });
-  tools_menu_.toolchain_kits.setStatusBarMessage("Detect and select a C/C++ toolchain kit");
+  status(tools_menu_.toolchain_kits, "Detect and select a C/C++ toolchain kit");
   tools_menu_.toolchain_kits.addCallback("clicked", [this] {
     deferred_command_ = [this] { manageToolchainKits(); };
   });
-  tools_menu_.language_insights.setStatusBarMessage("Request clangd inlay hints, folding, code lens, and include hierarchy");
+  status(tools_menu_.language_insights, "Request clangd inlay hints, folding, code lens, and include hierarchy");
   tools_menu_.language_insights.addCallback("clicked", [this] {
     deferred_command_ = [this] { requestLanguageInsights(); };
   });
-  tools_menu_.run_analysis.setStatusBarMessage(
-    "Run static checks, sanitizers, coverage, Valgrind, or perf");
+  status(tools_menu_.run_analysis, "Run static checks, sanitizers, coverage, Valgrind, or perf");
   tools_menu_.run_analysis.addCallback("clicked", [this] {
     deferred_command_ = [this] { runAnalysis(); };
   });
-  tools_menu_.stop_analysis.setStatusBarMessage("Stop the active static-analysis process");
+  status(tools_menu_.stop_analysis, "Stop the active static-analysis process");
   tools_menu_.stop_analysis.addCallback("clicked", [this] {
     deferred_command_ = [this] { stopAnalysis(); };
   });
   bind(tools_menu_.command_palette, finalcut::FKey::Meta_k, "Search and execute an IDE command");
-  tools_menu_.configure_shortcut.setStatusBarMessage("Configure a user-wide command shortcut");
+  status(tools_menu_.configure_shortcut, "Configure a user-wide command shortcut");
   tools_menu_.configure_shortcut.addCallback("clicked", [this] {
     deferred_command_ = [this] { configureShortcut(); };
   });
-  tools_menu_.shortcut_conflicts.setStatusBarMessage("Show effective shortcuts and conflicts");
+  status(tools_menu_.shortcut_conflicts, "Show effective shortcuts and conflicts");
   tools_menu_.shortcut_conflicts.addCallback("clicked", [this] {
     deferred_command_ = [this] { showShortcutConflicts(); };
   });
-  tools_menu_.theme.setStatusBarMessage("Select an accessible editor color theme");
+  status(tools_menu_.theme, "Select an accessible editor color theme");
   tools_menu_.theme.addCallback("clicked", [this] { deferred_command_ = [this] { selectTheme(); }; });
-  tools_menu_.colors.setStatusBarMessage("Override a syntax or diagnostic color role");
+  status(tools_menu_.colors, "Override a syntax or diagnostic color role");
   tools_menu_.colors.addCallback("clicked", [this] { deferred_command_ = [this] { configureEditorColor(); }; });
   tools_menu_.language_english.addCallback("clicked", [this] {
     deferred_command_ = [this] { setUiLanguage("en"); };
@@ -672,7 +674,7 @@ void IdeWindow::setupMenus() {
   tools_menu_.language_russian.addCallback("clicked", [this] {
     deferred_command_ = [this] { setUiLanguage("ru"); };
   });
-  tools_menu_.project_settings.setStatusBarMessage("Configure CMake, compilers, environment, and clangd");
+  status(tools_menu_.project_settings, "Configure CMake, compilers, environment, and clangd");
   tools_menu_.project_settings.addCallback("clicked", [this] {
     deferred_command_ = [this] { projectSettings(); };
   });
@@ -704,11 +706,11 @@ void IdeWindow::setupMenus() {
   togglePanel(window_menu_.breakpoints, 4);
   togglePanel(window_menu_.tests, 5);
   togglePanel(window_menu_.git, 6);
-  window_menu_.clear_lower.setStatusBarMessage("Clear Output, Problems, Build, Terminal, or Analysis content");
+  status(window_menu_.clear_lower, "Clear Output, Problems, Build, Terminal, or Analysis content");
   window_menu_.clear_lower.addCallback("clicked", [this] { deferred_command_ = [this] { clearLowerPanel(); }; });
-  window_menu_.copy_lower.setStatusBarMessage("Copy all text from the active lower panel");
+  status(window_menu_.copy_lower, "Copy all text from the active lower panel");
   window_menu_.copy_lower.addCallback("clicked", [this] { deferred_command_ = [this] { copyLowerPanel(); }; });
-  window_menu_.filter_problems.setStatusBarMessage("Filter diagnostics by file, severity, or message");
+  status(window_menu_.filter_problems, "Filter diagnostics by file, severity, or message");
   window_menu_.filter_problems.addCallback("clicked", [this] { deferred_command_ = [this] { filterProblems(); }; });
   window_menu_.separator3.setSeparator();
   window_menu_.sidebar_narrower.addCallback("clicked", [this] { deferred_command_ = [this] { resizeSidebar(-2); }; });
@@ -717,9 +719,9 @@ void IdeWindow::setupMenus() {
   window_menu_.lower_taller.addCallback("clicked", [this] { deferred_command_ = [this] { resizeLowerPanel(1); }; });
   window_menu_.reset_panels.addCallback("clicked", [this] { deferred_command_ = [this] { resetPanelSizes(); }; });
 
-  help_menu_.keyboard.setStatusBarMessage("Show the keyboard reference");
+  status(help_menu_.keyboard, "Show the keyboard reference");
   help_menu_.keyboard.addCallback("clicked", [this] { deferred_command_ = [this] { showKeyboardHelp(); }; });
-  help_menu_.about.setStatusBarMessage("About TUI IDE");
+  status(help_menu_.about, "About TUI IDE");
   help_menu_.about.addCallback("clicked", [this] { deferred_command_ = [this] { showAbout(); }; });
 }
 
@@ -738,6 +740,10 @@ void IdeWindow::applyUiLanguage() {
   };
   for (auto* menu : menus)
     for (auto* item : menu->getItemList()) translate(item);
+  for (auto& [item, message] : english_status_messages_) {
+    if (item != nullptr)
+      item->setStatusBarMessage(finalcut::FString(localizedUiText(user_settings_.language, message)));
+  }
 
   constexpr std::array<std::string_view, 7> sidebar_titles{
     "Open files", "Project", "Outline", "Debug", "Breakpoints", "Tests", "Git"};
@@ -754,6 +760,7 @@ void IdeWindow::applyUiLanguage() {
   tools_menu_.language_russian.unsetChecked();
   if (user_settings_.language == "ru") tools_menu_.language_russian.setChecked();
   else tools_menu_.language_english.setChecked();
+  refreshRecentFilesMenu();
   menu_bar_.redraw();
 }
 
@@ -2275,15 +2282,16 @@ void IdeWindow::refreshRecentFilesMenu() {
       recent_file_items_.push_back(std::move(item));
     }
     auto empty = std::make_unique<finalcut::FMenuItem>(
-      finalcut::FString{"(History is empty)"}, &file_menu_.recent_files);
+      finalcut::FString{localizedUiText(user_settings_.language, "(History is empty)")}, &file_menu_.recent_files);
     empty->setDisable();
     recent_file_items_.push_back(std::move(empty));
     auto separator = std::make_unique<finalcut::FMenuItem>(&file_menu_.recent_files);
     separator->setSeparator();
     recent_file_items_.push_back(std::move(separator));
     auto clear = std::make_unique<finalcut::FMenuItem>(
-      finalcut::FString{"&Clear history"}, &file_menu_.recent_files);
-    clear->setStatusBarMessage("Remove all entries from Recent Files");
+      finalcut::FString{localizedUiText(user_settings_.language, "&Clear history")}, &file_menu_.recent_files);
+    clear->setStatusBarMessage(finalcut::FString(localizedUiText(user_settings_.language,
+      "Remove all entries from Recent Files")));
     clear->addCallback("clicked", [this] {
       deferred_command_ = [this] { clearRecentFiles(); };
     });
@@ -2299,7 +2307,7 @@ void IdeWindow::refreshRecentFilesMenu() {
     }
     const auto& path = user_settings_.recent_files[index];
     item.setText(finalcut::FString{std::to_string(index + 1) + "  " + escapeMenuLabel(path)});
-    item.setStatusBarMessage(finalcut::FString{"Open " + path.string()});
+    item.setStatusBarMessage(finalcut::FString{localizedUiText(user_settings_.language, "Open ") + path.string()});
     item.setEnable(true);
     item.show();
   }

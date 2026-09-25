@@ -1983,6 +1983,16 @@ int main() {
         == "Удалить пустой каталог с диска?\n"
       && tuiide::localizedUiText("ru", "Directory path must be inside the project root.")
         == "Путь каталога должен находиться внутри проекта."
+      && tuiide::localizedUiText("ru", "Open a directory containing CMakeLists.txt")
+        == "Открыть каталог с CMakeLists.txt"
+      && tuiide::localizedUiText("ru", "Remove all entries from Recent Files")
+        == "Удалить все записи из недавних файлов"
+      && tuiide::localizedUiText("ru", "Build the project; configure first when required")
+        == "Собрать проект; при необходимости сначала настроить"
+      && tuiide::localizedUiText("ru", "Show clangd function signature help")
+        == "Показать подсказку сигнатуры clangd"
+      && tuiide::localizedUiText("en", "Show the keyboard reference")
+        == "Show the keyboard reference"
       && tuiide::keyboardHelpText("ru").find("Ctrl+B Сборка") != std::string_view::npos
       && tuiide::keyboardHelpText("en").find("Ctrl+B Build") != std::string_view::npos
       && tuiide::localizedUiText("ru", "About TUI IDE") == "О TUI IDE"

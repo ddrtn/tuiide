@@ -312,6 +312,7 @@ class IdeWindow final : public finalcut::FDialog {
   std::filesystem::path user_settings_file_;
   UserSettings user_settings_;
   std::map<finalcut::FMenuItem*, std::string> english_menu_labels_;
+  std::map<finalcut::FMenuItem*, std::string> english_status_messages_;
   ProjectSettings& project_settings_;
   std::vector<std::filesystem::path> recent_projects_;
   std::vector<std::filesystem::path> file_paths_;
