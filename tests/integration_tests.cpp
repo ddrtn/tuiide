@@ -250,8 +250,22 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   screen.clear();
   const auto pumpScreen = [&] {
     char buffer[4096];
-    const auto count = ::read(master, buffer, sizeof(buffer));
-    if (count > 0) screen.append(buffer, static_cast<std::size_t>(count));
+    while (true) {
+      const auto count = ::read(master, buffer, sizeof(buffer));
+      if (count <= 0) break;
+      screen.append(buffer, static_cast<std::size_t>(count));
+      if (count < static_cast<ssize_t>(sizeof(buffer))) break;
+    }
+  };
+  const auto drainScreen = [&] {
+    std::string ignored;
+    char buffer[4096];
+    while (true) {
+      const auto count = ::read(master, buffer, sizeof(buffer));
+      if (count <= 0) break;
+      ignored.append(buffer, static_cast<std::size_t>(count));
+      if (count < static_cast<ssize_t>(sizeof(buffer))) break;
+    }
   };
   constexpr std::string_view alt_file{"\033f"};
   (void)::write(master, alt_file.data(), alt_file.size());
@@ -536,6 +550,7 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
   constexpr std::string_view delete_key{"\033[3~"};
   const auto focusLastProjectEntry = [&] {
     screen.clear();
+    drainScreen();
     (void)::write(master, &focus_project, 1);
     const auto visible = waitFor(pumpScreen, [&] { return screen.find("main.cpp") != std::string::npos; }, 3s);
     (void)::write(master, end_key.data(), end_key.size());
@@ -689,8 +704,12 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
     return screen.find("zz_pty_generated.h") != std::string::npos
       && screen.find("1 file(s)") != std::string::npos;
   }, 3s);
-  const char modify_header = ' '; (void)::write(master, &modify_header, 1);
-  std::this_thread::sleep_for(300ms); pumpScreen();
+  constexpr std::string_view dirty_marker{"// pty dirty marker\n"};
+  screen.clear();
+  (void)::write(master, dirty_marker.data(), dirty_marker.size());
+  const auto dirty_marker_visible = waitFor(pumpScreen, [&] {
+    return screen.find("pty dirty marker") != std::string::npos;
+  }, 3s);
   (void)focusLastProjectEntry();
   screen.clear(); (void)::write(master, delete_key.data(), delete_key.size());
   const auto remove_modified_picker = waitFor(pumpScreen, [&] {
@@ -878,6 +897,7 @@ auto exercisePty(const std::filesystem::path& tuiide, const std::filesystem::pat
               << " template_created=" << template_created << " duplicate_safe=" << duplicate_safe
               << " remove_cancel_picker=" << remove_cancel_picker << " remove_cancel=" << remove_cancelled
               << " generated_opened=" << generated_opened
+              << " dirty_marker=" << dirty_marker_visible
               << " modified_picker=" << remove_modified_picker
               << " modified_error=" << remove_modified_error
               << " unsaved_prompt=" << unsaved_header_prompt
