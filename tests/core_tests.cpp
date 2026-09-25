@@ -1970,6 +1970,9 @@ int main() {
       && tuiide::localizedUiText("ru", "Header file:") == "Заголовок:"
       && tuiide::localizedUiText("ru", "New project settings") == "Параметры нового проекта"
       && tuiide::localizedUiText("ru", "Import source directory") == "Импорт каталога исходников"
+      && tuiide::localizedUiText("ru", "Project Settings") == "Настройки проекта"
+      && tuiide::localizedUiText("ru", "Parallel jobs must be between 1 and 1024.")
+        == "Число потоков должно быть от 1 до 1024."
       && tuiide::localizedUiText("ru", "&Cancel") == "О&тмена"
       && tuiide::localizedUiText("en", "&Cancel") == "&Cancel"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",

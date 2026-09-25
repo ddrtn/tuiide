@@ -1953,7 +1953,7 @@ void IdeWindow::projectSettings() {
     return;
   }
   delTimer(timer_id_);
-  ProjectSettingsDialog dialog(root_, project_settings_, this);
+  ProjectSettingsDialog dialog(root_, project_settings_, this, user_settings_.language);
   const auto accepted = dialog.exec() == finalcut::FDialog::ResultCode::Accept;
   timer_id_ = addTimer(100);
   if (!accepted) return;

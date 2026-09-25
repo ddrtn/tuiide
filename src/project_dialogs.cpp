@@ -227,23 +227,28 @@ void ProjectDirectoryDialog::createDirectory() {
 
 struct ProjectSettingsDialog::Impl {
   Impl(ProjectSettingsDialog* dialog, std::filesystem::path project_root,
-      const ProjectSettings& settings)
+      const ProjectSettings& settings, std::string language)
       : owner(dialog), root(std::move(project_root)), original(settings),
-        source_label("Source directory:", owner), source(owner),
-        build_label("Build directory:", owner), build(owner), browse("&Browse...", owner),
-        generator_label("Generator:", owner), generator(owner),
-        toolchain_label("Toolchain file:", owner), toolchain(owner),
-        c_compiler_label("C compiler:", owner), c_compiler(owner),
-        cpp_compiler_label("C++ compiler:", owner), cpp_compiler(owner),
-        debugger_label("Debugger:", owner), debugger(owner),
-        adapter_label("DAP adapter:", owner), adapter(owner),
-        c_standard_label("C standard:", owner), c_standard(owner),
-        cpp_standard_label("C++ standard:", owner), cpp_standard(owner),
-        build_type_label("Build type:", owner), build_type(owner), jobs_label("Jobs:", owner),
-        jobs(owner), tab_width_label("Tab width:", owner), tab_width(owner),
-        use_spaces("Insert spaces", owner), environment_label("Environment:", owner),
+        language(std::move(language)),
+        source_label(finalcut::FString(localizedUiText(this->language, "Source directory:")), owner), source(owner),
+        build_label(finalcut::FString(localizedUiText(this->language, "Build directory:")), owner), build(owner),
+        browse(finalcut::FString(localizedUiText(this->language, "B&rowse...")), owner),
+        generator_label(finalcut::FString(localizedUiText(this->language, "Generator:")), owner), generator(owner),
+        toolchain_label(finalcut::FString(localizedUiText(this->language, "Toolchain file:")), owner), toolchain(owner),
+        c_compiler_label(finalcut::FString(localizedUiText(this->language, "C compiler:")), owner), c_compiler(owner),
+        cpp_compiler_label(finalcut::FString(localizedUiText(this->language, "C++ compiler:")), owner), cpp_compiler(owner),
+        debugger_label(finalcut::FString(localizedUiText(this->language, "Debugger:")), owner), debugger(owner),
+        adapter_label(finalcut::FString(localizedUiText(this->language, "DAP adapter:")), owner), adapter(owner),
+        c_standard_label(finalcut::FString(localizedUiText(this->language, "C standard:")), owner), c_standard(owner),
+        cpp_standard_label(finalcut::FString(localizedUiText(this->language, "C++ standard:")), owner), cpp_standard(owner),
+        build_type_label(finalcut::FString(localizedUiText(this->language, "Build type:")), owner), build_type(owner),
+        jobs_label(finalcut::FString(localizedUiText(this->language, "Jobs:")), owner),
+        jobs(owner), tab_width_label(finalcut::FString(localizedUiText(this->language, "Tab width:")), owner), tab_width(owner),
+        use_spaces(finalcut::FString(localizedUiText(this->language, "Insert spaces")), owner),
+        environment_label(finalcut::FString(localizedUiText(this->language, "Environment:")), owner),
         environment(owner), clangd_label("clangd arguments:", owner), clangd(owner),
-        environment_help(owner), save("&Save", owner), cancel("&Cancel", owner) {
+        environment_help(owner), save(finalcut::FString(localizedUiText(this->language, "&Save")), owner),
+        cancel(finalcut::FString(localizedUiText(this->language, "&Cancel")), owner) {
     source.setText(finalcut::FString(root.string())); source.setReadOnly();
     build.setText(finalcut::FString(settings.build_directory.string()));
     generator.setText(finalcut::FString(settings.generator));
@@ -261,11 +266,13 @@ struct ProjectSettingsDialog::Impl {
     clangd.setText(finalcut::FString(formatArgumentList(settings.clangd_arguments)));
     tab_width.setText(finalcut::FString(std::to_string(settings.tab_width)));
     if (settings.use_spaces) use_spaces.setChecked(); else use_spaces.unsetChecked();
-    environment_help.setText("Use NAME=value; OTHER=value");
+    clangd_label.setText(finalcut::FString(localizedUiText(this->language, "clangd arguments:")));
+    environment_help.setText(finalcut::FString(localizedUiText(this->language,
+      "Use NAME=value; OTHER=value")));
     browse.addCallback("clicked", [this] {
       const auto current = std::filesystem::path(build.getText().trim().toString());
       ProjectDirectoryDialog dialog("Select build directory",
-        current.empty() ? root.parent_path() : current, owner);
+        current.empty() ? root.parent_path() : current, owner, this->language);
       if (dialog.exec() == finalcut::FDialog::ResultCode::Accept)
         build.setText(finalcut::FString(dialog.selectedPath().string()));
     });
@@ -294,7 +301,7 @@ struct ProjectSettingsDialog::Impl {
       if (parsed != text.size() || value == 0 || value > 1024) throw std::out_of_range("jobs");
       result.build_jobs = static_cast<unsigned>(value);
     } catch (const std::exception&) {
-      error = "Parallel jobs must be between 1 and 1024.";
+      error = localizedUiText(language, "Parallel jobs must be between 1 and 1024.");
       return false;
     }
     try {
@@ -304,14 +311,20 @@ struct ProjectSettingsDialog::Impl {
       if (parsed != text.size() || value == 0 || value > 16) throw std::out_of_range("tab width");
       result.tab_width = static_cast<unsigned>(value);
     } catch (const std::exception&) {
-      error = "Tab width must be between 1 and 16.";
+      error = localizedUiText(language, "Tab width must be between 1 and 16.");
       return false;
     }
     result.use_spaces = use_spaces.isChecked();
-    if (!parseEnvironmentSettings(environment.getText().trim().toString(), result.environment, error))
+    if (!parseEnvironmentSettings(environment.getText().trim().toString(), result.environment, error)) {
+      error = localizedUiText(language, error);
       return false;
-    return parseArgumentList(clangd.getText().trim().toString(), result.clangd_arguments, error)
-      && validateProjectSettings(root, result, error);
+    }
+    if (!parseArgumentList(clangd.getText().trim().toString(), result.clangd_arguments, error)
+        || !validateProjectSettings(root, result, error)) {
+      error = localizedUiText(language, error);
+      return false;
+    }
+    return true;
   }
 
   void layoutControls() {
@@ -373,6 +386,7 @@ struct ProjectSettingsDialog::Impl {
   ProjectSettingsDialog* owner;
   std::filesystem::path root;
   ProjectSettings original;
+  std::string language;
   finalcut::FLabel source_label; finalcut::FLineEdit source;
   finalcut::FLabel build_label; finalcut::FLineEdit build; finalcut::FButton browse;
   finalcut::FLabel generator_label; finalcut::FLineEdit generator;
@@ -393,11 +407,11 @@ struct ProjectSettingsDialog::Impl {
 };
 
 ProjectSettingsDialog::ProjectSettingsDialog(std::filesystem::path root,
-    const ProjectSettings& settings, finalcut::FWidget* parent)
-    : CenteredDialog("Project Settings", parent) {
+    const ProjectSettings& settings, finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "Project Settings")), parent) {
   setDialogSize({78, 26});
   setModal();
-  impl_ = std::make_unique<Impl>(this, std::move(root), settings);
+  impl_ = std::make_unique<Impl>(this, std::move(root), settings, std::move(language));
   setResponsiveLayout([this] { impl_->layoutControls(); });
 }
 

@@ -1520,6 +1520,13 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     (void)visible("Открытые фай", 3s);
     settle();
     screen.clear(); send("\033t");
+    const bool settings_menu = visible("Язык интерфейса", 5s);
+    screen.clear(); send("\033[A"); settle(); send("\r");
+    const bool project_settings = visible("Настройки проекта", 5s)
+      && visible("Каталог сборки:", 3s);
+    screen.clear(); send("\033");
+    std::this_thread::sleep_for(600ms); pump();
+    screen.clear(); send("\033t");
     const bool language_menu = visible("Язык интерфейса", 5s);
     screen.clear(); send("\r");
     const bool options = visible("English", 3s);
@@ -1539,7 +1546,8 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     const bool success = started && new_project_menu && new_project_dialog
       && palette && new_file && search_dialog && launch_dialog
       && configure_presets && build_presets && project_menu && project_directory
-      && translated_menu && language_menu && options
+      && translated_menu && settings_menu && project_settings
+      && language_menu && options
       && switched && persisted && exited && WIFEXITED(locale_status)
       && WEXITSTATUS(locale_status) == 0;
     if (!success) std::cerr << "Locale PTY: started=" << started
@@ -1549,7 +1557,8 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       << " launch=" << launch_dialog
       << " presets=" << configure_presets << '/' << build_presets
       << " project_directory=" << project_menu << '/' << project_directory
-      << " menu=" << translated_menu << " language_menu=" << language_menu
+      << " menu=" << translated_menu << " settings=" << settings_menu << '/' << project_settings
+      << " language_menu=" << language_menu
       << " options=" << options << " switched=" << switched << " persisted=" << persisted
       << " exited=" << exited << " status=" << locale_status << '\n';
     return success;

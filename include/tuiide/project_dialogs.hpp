@@ -67,7 +67,7 @@ class ProjectDirectoryDialog final : public CenteredDialog {
 class ProjectSettingsDialog final : public CenteredDialog {
  public:
   ProjectSettingsDialog(std::filesystem::path root, const ProjectSettings& settings,
-    finalcut::FWidget* parent = nullptr);
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
   ~ProjectSettingsDialog() override;
   [[nodiscard]] auto settings(ProjectSettings& result, std::string& error) const -> bool;
 
