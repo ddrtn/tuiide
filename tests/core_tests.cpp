@@ -1983,6 +1983,9 @@ int main() {
         == "Удалить пустой каталог с диска?\n"
       && tuiide::localizedUiText("ru", "Directory path must be inside the project root.")
         == "Путь каталога должен находиться внутри проекта."
+      && tuiide::keyboardHelpText("ru").find("Ctrl+B Сборка") != std::string_view::npos
+      && tuiide::keyboardHelpText("en").find("Ctrl+B Build") != std::string_view::npos
+      && tuiide::localizedUiText("ru", "About TUI IDE") == "О TUI IDE"
       && tuiide::localizedUiText("ru", "&Cancel") == "О&тмена"
       && tuiide::localizedUiText("en", "&Cancel") == "&Cancel"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",

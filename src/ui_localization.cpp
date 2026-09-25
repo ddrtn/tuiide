@@ -293,6 +293,9 @@ auto localizedUiText(std::string_view language, std::string_view english) -> std
       "Активная конфигурация запуска не найдена."},
     {"Command palette", "Палитра команд"},
     {"Keyboard shortcuts", "Горячие клавиши"},
+    {"About TUI IDE", "О TUI IDE"},
+    {"TUI IDE 0.1\nC/C++ terminal IDE for Linux/amd64\nFinal Cut + clangd + CMake + GDB/MI",
+      "TUI IDE 0.1\nТерминальная IDE для C/C++ на Linux/amd64\nFinal Cut + clangd + CMake + GDB/MI"},
     {"Toolchain kits", "Наборы инструментов"},
     {"clangd language insights", "Сведения о языке от clangd"},
     {"Import preview", "Предпросмотр импорта"},
@@ -463,6 +466,50 @@ auto localizedUiText(std::string_view language, std::string_view english) -> std
   };
   const auto translation = russian.find(english);
   return std::string(translation == russian.end() ? english : translation->second);
+}
+
+auto keyboardHelpText(std::string_view language) -> std::string_view {
+  constexpr std::string_view english =
+    "F10 or Alt+F/E/S/R/P/D/T/W/H  Menu; underlines local, shortcuts global\n"
+    "Ctrl+N/O/S/W  Files\n"
+    "F1/F2/F3/F4  Info/Rename/Definition/References\n"
+    "F5/F6        Debug/Run   Ctrl+B Build\n"
+    "F7/F8        Step into/over   Alt+F8 Step out\n"
+    "F9           Breakpoint   Ctrl+F8 Next diagnostic\n"
+    "Alt+PgUp/Dn  Previous/next sidebar tab\n"
+    "Alt+Shift+PgUp/Dn  Previous/next lower tab\n"
+    "Ctrl+F       Find/Replace text or project\n"
+    "Ctrl+P, Alt+B, Ctrl+T  Configure/Build preset/Target\n"
+    "Alt+L / Alt+Shift+L  Manage / select Run/Debug configuration\n"
+    "Alt+Shift+U  Add a GDB watch expression\n"
+    "Ctrl+L       Redraw screen (reserved by Final Cut)\n"
+    "Alt+K        Search the command palette\n"
+    "Alt+A        clangd Code Actions / Quick Fixes\n"
+    "Ctrl+E       Focus Project explorer\n"
+    "Insert       Add file/class template in Project\n"
+    "Delete       Remove selected Project file\n"
+    "Window menu  Open files/Project/Debug panel";
+  constexpr std::string_view russian =
+    "F10 или Alt+F/E/S/R/P/D/T/W/H  Меню\n"
+    "Ctrl+N/O/S/W  Файлы\n"
+    "F1/F2/F3/F4  Сведения/Имя/Определение/Ссылки\n"
+    "F5/F6        Отладка/Запуск   Ctrl+B Сборка\n"
+    "F7/F8        Шаг внутрь/через   Alt+F8 Шаг наружу\n"
+    "F9           Точка останова   Ctrl+F8 Диагностика\n"
+    "Alt+PgUp/Dn  Вкладки боковой панели\n"
+    "Alt+Shift+PgUp/Dn  Вкладки нижней панели\n"
+    "Ctrl+F       Поиск/замена в файле или проекте\n"
+    "Ctrl+P, Alt+B, Ctrl+T  Пресеты/Цель CMake\n"
+    "Alt+L / Alt+Shift+L  Управление/выбор запуска\n"
+    "Alt+Shift+U  Добавить выражение наблюдения\n"
+    "Ctrl+L       Перерисовать экран (Final Cut)\n"
+    "Alt+K        Палитра команд\n"
+    "Alt+A        Действия с кодом clangd\n"
+    "Ctrl+E       Фокус на дереве проекта\n"
+    "Insert       Добавить файл или класс в проект\n"
+    "Delete       Удалить выбранный файл проекта\n"
+    "Меню Окно    Панели файлов, проекта и отладки";
+  return language == "ru" ? russian : english;
 }
 
 }  // namespace tuiide

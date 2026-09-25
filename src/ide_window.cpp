@@ -830,32 +830,15 @@ void IdeWindow::queueMenuCommand(finalcut::FKey key) {
 }
 
 void IdeWindow::showAbout() {
-  finalcut::FMessageBox::info(this, "About TUI IDE",
-    "TUI IDE 0.1\nC/C++ terminal IDE for Linux/amd64\nFinal Cut + clangd + CMake + GDB/MI");
+  finalcut::FMessageBox::info(this,
+    finalcut::FString(localizedUiText(user_settings_.language, "About TUI IDE")),
+    finalcut::FString(localizedUiText(user_settings_.language,
+      "TUI IDE 0.1\nC/C++ terminal IDE for Linux/amd64\nFinal Cut + clangd + CMake + GDB/MI")));
 }
 
 void IdeWindow::showKeyboardHelp() {
   // Прокрутка и адаптивный размер сохраняют начало справки на низком терминале.
-  showTextDialog("Keyboard shortcuts",
-    "F10 or Alt+F/E/S/R/P/D/T/W/H  Menu; underlines local, shortcuts global\n"
-    "Ctrl+N/O/S/W  Files\n"
-    "F1/F2/F3/F4  Info/Rename/Definition/References\n"
-    "F5/F6        Debug/Run   Ctrl+B Build\n"
-    "F7/F8        Step into/over   Alt+F8 Step out\n"
-    "F9           Breakpoint   Ctrl+F8 Next diagnostic\n"
-    "Alt+PgUp/Dn  Previous/next sidebar tab\n"
-    "Alt+Shift+PgUp/Dn  Previous/next lower tab\n"
-    "Ctrl+F       Find/Replace text or project\n"
-    "Ctrl+P, Alt+B, Ctrl+T  Configure/Build preset/Target\n"
-    "Alt+L / Alt+Shift+L  Manage / select Run/Debug configuration\n"
-    "Alt+Shift+U  Add a GDB watch expression\n"
-    "Ctrl+L       Redraw screen (reserved by Final Cut)\n"
-    "Alt+K        Search the command palette\n"
-    "Alt+A        clangd Code Actions / Quick Fixes\n"
-    "Ctrl+E       Focus Project explorer\n"
-    "Insert       Add file/class template in Project\n"
-    "Delete       Remove selected Project file\n"
-    "Window menu  Open files/Project/Debug panel");
+  showTextDialog("Keyboard shortcuts", std::string(keyboardHelpText(user_settings_.language)));
 }
 
 void IdeWindow::showCommandPalette() {

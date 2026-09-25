@@ -1538,6 +1538,16 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       && visible("Каталог сборки:", 3s);
     screen.clear(); send("\033");
     std::this_thread::sleep_for(600ms); pump();
+    screen.clear(); send("\033h");
+    const bool help_menu = visible("Горячие клавиши", 5s);
+    screen.clear(); send("\r");
+    const bool keyboard_help = visible("Ctrl+B Сборка", 5s);
+    screen.clear(); send("\033"); settle();
+    screen.clear(); send("\033h");
+    const bool about_menu = visible("Горячие клавиши", 5s);
+    screen.clear(); send("\033[A"); settle(); send("\r");
+    const bool about_help = visible("Терминальная IDE для C/C++", 5s);
+    screen.clear(); send("\033"); settle();
     screen.clear(); send("\033t");
     const bool language_menu = visible("Язык интерфейса", 5s);
     screen.clear(); send("\r");
@@ -1562,6 +1572,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       && search_dialog && launch_dialog
       && configure_presets && build_presets && project_menu && project_directory
       && translated_menu && settings_menu && project_settings
+      && help_menu && keyboard_help && about_menu && about_help
       && language_menu && options
       && switched && persisted && exited && WIFEXITED(locale_status)
       && WEXITSTATUS(locale_status) == 0;
@@ -1574,6 +1585,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       << " presets=" << configure_presets << '/' << build_presets
       << " project_directory=" << project_menu << '/' << project_directory
       << " menu=" << translated_menu << " settings=" << settings_menu << '/' << project_settings
+      << " help=" << help_menu << '/' << keyboard_help << '/' << about_menu << '/' << about_help
       << " language_menu=" << language_menu
       << " options=" << options << " switched=" << switched << " persisted=" << persisted
       << " exited=" << exited << " status=" << locale_status << '\n';
@@ -3295,7 +3307,7 @@ auto exerciseClassTemplateDialogPty(const std::filesystem::path& tuiide,
   const bool started = visible(russian ? "Открытые файлы" : "Open files");
   const bool focused = send("\005") && visible("main.cpp");
   const bool picker_key = send("\033[2~");
-  const bool picker = visible("C++ class");
+  const bool picker = visible(russian ? "Класс C++" : "C++ class");
   const bool class_selected = send("\033[F") && send("\r");
   const bool options = visible(russian ? "Параметры класса C++" : "C++ class options")
     && visible(russian ? "Имя класса:" : "Class name:")
