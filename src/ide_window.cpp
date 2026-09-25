@@ -1394,13 +1394,17 @@ void IdeWindow::removeSelectedProjectFile() {
   const auto path = normalizePath(entry->second);
   std::error_code status_error;
   if (!std::filesystem::is_regular_file(path, status_error)) {
-    finalcut::FMessageBox::info(this, "Project", "Select a file to remove. Directories are not removed.");
+    finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(user_settings_.language, "Project")),
+      finalcut::FString(localizedUiText(user_settings_.language,
+        "Select a file to remove. Directories are not removed.")));
     return;
   }
   std::error_code relative_error;
   const auto relative = std::filesystem::relative(path, root_, relative_error);
   if (relative_error || relative.empty() || *relative.begin() == "..") {
-    finalcut::FMessageBox::error(this, "The selected file is outside the project root.");
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+      "The selected file is outside the project root.")));
     return;
   }
 
@@ -1414,12 +1418,15 @@ void IdeWindow::removeSelectedProjectFile() {
     return document->path() == path;
   });
   if (delete_from_disk && open_document != documents_.end() && (*open_document)->modified()) {
-    finalcut::FMessageBox::error(this, "Save or close the modified file before deleting it.");
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+      "Save or close the modified file before deleting it.")));
     return;
   }
   if (delete_from_disk) {
-    const auto answer = finalcut::FMessageBox::info(this, "Delete file",
-      finalcut::FString("Permanently delete from disk?\n" + relative.generic_string()),
+    const auto answer = finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(user_settings_.language, "Delete file")),
+      finalcut::FString(localizedUiText(user_settings_.language,
+        "Permanently delete from disk?\n") + relative.generic_string()),
       finalcut::FMessageBox::ButtonType::Yes, finalcut::FMessageBox::ButtonType::No,
       finalcut::FMessageBox::ButtonType::Reject);
     if (answer != finalcut::FMessageBox::ButtonType::Yes) return;
@@ -2367,12 +2374,17 @@ void IdeWindow::newProject() {
 }
 
 void IdeWindow::createProjectFile() {
-  if (root_.empty()) { finalcut::FMessageBox::error(this, "Open or create a project first."); return; }
+  if (root_.empty()) {
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+      "Open or create a project first.")));
+    return;
+  }
   const auto changed_cmake = std::find_if(documents_.begin(), documents_.end(), [](const auto& open_document) {
     return isCMakePath(open_document->path()) && open_document->modified();
   });
   if (changed_cmake != documents_.end()) {
-    finalcut::FMessageBox::error(this, "Save modified CMake files before adding a project file.");
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+      "Save modified CMake files before adding a project file.")));
     return;
   }
   const std::vector<ProjectTemplate> types{
@@ -5189,8 +5201,12 @@ auto IdeWindow::prompt(std::string title, std::string label) -> std::string {
 
 auto IdeWindow::choose(std::string title, const std::vector<std::string>& items) -> std::size_t {
   if (items.empty()) return 0;
+  std::vector<std::string> labels;
+  labels.reserve(items.size());
+  for (const auto& item : items)
+    labels.push_back(localizedUiText(user_settings_.language, item));
   delTimer(timer_id_);
-  SelectionDialog dialog(title, items, this, user_settings_.language);
+  SelectionDialog dialog(title, labels, this, user_settings_.language);
   const auto result = dialog.exec() == finalcut::FDialog::ResultCode::Accept ? dialog.selected() : 0;
   timer_id_ = addTimer(100);
   return result;

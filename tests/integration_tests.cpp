@@ -1487,6 +1487,12 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     std::this_thread::sleep_for(600ms); pump();
     screen.clear(); send("\016");
     const bool new_file = visible("1 файлов", 5s);
+    screen.clear(); send("\005"); settle(); send("\033[2~");
+    const bool project_template = visible("Новый файл проекта", 5s)
+      && visible("Заголовок C (.h)", 3s)
+      && visible("Класс C++ (.hpp + .cpp)", 3s);
+    screen.clear(); send("\033");
+    std::this_thread::sleep_for(600ms); pump();
     screen.clear(); send("\006");
     const bool search_dialog = visible("Поиск и замена", 5s)
       && visible("Учитывать регистр", 5s);
@@ -1531,7 +1537,9 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     screen.clear(); send("\r");
     const bool options = visible("English", 3s);
     screen.clear(); send("\r");
-    const bool switched = visible("Open files", 5s);
+    settle(); screen.clear(); send("\033f");
+    const bool switched = visible("New Project", 5s);
+    screen.clear(); send("\033"); settle();
     std::ifstream saved_settings(settings_file);
     const std::string saved_text((std::istreambuf_iterator<char>(saved_settings)),
       std::istreambuf_iterator<char>());
@@ -1544,7 +1552,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &locale_status, 0); }
     ::close(master);
     const bool success = started && new_project_menu && new_project_dialog
-      && palette && new_file && search_dialog && launch_dialog
+      && palette && new_file && project_template && search_dialog && launch_dialog
       && configure_presets && build_presets && project_menu && project_directory
       && translated_menu && settings_menu && project_settings
       && language_menu && options
@@ -1554,7 +1562,7 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       << " new_project=" << new_project_menu << '/' << new_project_dialog
       << " palette=" << palette_title << '/' << palette_command
       << " new_file=" << new_file << " search=" << search_dialog
-      << " launch=" << launch_dialog
+      << " template=" << project_template << " launch=" << launch_dialog
       << " presets=" << configure_presets << '/' << build_presets
       << " project_directory=" << project_menu << '/' << project_directory
       << " menu=" << translated_menu << " settings=" << settings_menu << '/' << project_settings

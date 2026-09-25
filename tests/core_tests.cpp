@@ -1973,6 +1973,12 @@ int main() {
       && tuiide::localizedUiText("ru", "Project Settings") == "Настройки проекта"
       && tuiide::localizedUiText("ru", "Parallel jobs must be between 1 and 1024.")
         == "Число потоков должно быть от 1 до 1024."
+      && tuiide::localizedUiText("ru", "C++ class (.hpp + .cpp)")
+        == "Класс C++ (.hpp + .cpp)"
+      && tuiide::localizedUiText("ru", "Remove from CMake project and delete from disk")
+        == "Удалить из проекта CMake и с диска"
+      && tuiide::localizedUiText("en", "Remove from CMake project only")
+        == "Remove from CMake project only"
       && tuiide::localizedUiText("ru", "&Cancel") == "О&тмена"
       && tuiide::localizedUiText("en", "&Cancel") == "&Cancel"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",
