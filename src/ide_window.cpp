@@ -1306,7 +1306,9 @@ void IdeWindow::createProjectDirectory() {
   if (name.empty()) return;
   std::string error;
   if (!tuiide::createProjectDirectory(root_, base / name, error)) {
-    finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
+    finalcut::FMessageBox::error(this,
+      finalcut::FString(localizedUiText(user_settings_.language, error)));
+    return;
   }
   refreshFiles(); publishEvent(EventSource::Project, EventSeverity::Success, "Project directory created: " + (base / name).string() + "\n");
 }
@@ -1315,18 +1317,26 @@ void IdeWindow::deleteSelectedProjectDirectory() {
   const auto* item = files_.getCurrentItem();
   const auto entry = item ? project_item_paths_.find(item) : project_item_paths_.end();
   if (entry == project_item_paths_.end() || normalizePath(entry->second) == root_) {
-    finalcut::FMessageBox::info(this, "Project", "Select an empty project subdirectory."); return;
+    finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(user_settings_.language, "Project")),
+      finalcut::FString(localizedUiText(user_settings_.language,
+        "Select an empty project subdirectory.")));
+    return;
   }
   std::error_code relative_error;
   const auto relative = std::filesystem::relative(entry->second, root_, relative_error);
-  const auto answer = finalcut::FMessageBox::info(this, "Delete directory",
-    finalcut::FString("Delete empty directory from disk?\n" + relative.generic_string()),
+  const auto answer = finalcut::FMessageBox::info(this,
+    finalcut::FString(localizedUiText(user_settings_.language, "Delete directory")),
+    finalcut::FString(localizedUiText(user_settings_.language,
+      "Delete empty directory from disk?\n") + relative.generic_string()),
     finalcut::FMessageBox::ButtonType::Yes, finalcut::FMessageBox::ButtonType::No,
     finalcut::FMessageBox::ButtonType::Reject);
   if (answer != finalcut::FMessageBox::ButtonType::Yes) return;
   std::string error;
   if (!tuiide::deleteEmptyProjectDirectory(root_, entry->second, error)) {
-    finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
+    finalcut::FMessageBox::error(this,
+      finalcut::FString(localizedUiText(user_settings_.language, error)));
+    return;
   }
   refreshFiles(); publishEvent(EventSource::Project, EventSeverity::Success, "Deleted empty project directory: " + relative.generic_string() + "\n");
 }
@@ -1335,14 +1345,20 @@ void IdeWindow::renameSelectedProjectEntry() {
   const auto* item = files_.getCurrentItem();
   const auto entry = item ? project_item_paths_.find(item) : project_item_paths_.end();
   if (entry == project_item_paths_.end() || normalizePath(entry->second) == root_) {
-    finalcut::FMessageBox::info(this, "Project", "Select a project file or subdirectory to rename."); return;
+    finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(user_settings_.language, "Project")),
+      finalcut::FString(localizedUiText(user_settings_.language,
+        "Select a project file or subdirectory to rename.")));
+    return;
   }
   const auto source = normalizePath(entry->second);
   const auto modified_cmake = std::find_if(documents_.begin(), documents_.end(), [](const auto& document) {
     return isCMakePath(document->path()) && document->modified();
   });
   if (modified_cmake != documents_.end()) {
-    finalcut::FMessageBox::error(this, "Save modified CMake files before Rename / Move."); return;
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+      "Save modified CMake files before Rename / Move.")));
+    return;
   }
   std::error_code relative_error;
   const auto old_relative = std::filesystem::relative(source, root_, relative_error);
@@ -1362,7 +1378,9 @@ void IdeWindow::renameSelectedProjectEntry() {
   CMakeSourceRename cmake_result;
   if (!moveProjectEntryWithCMake(root_, source, destination, cmake_result, error)) {
     for (auto* open : affected) if (isCppSource(open->path())) lsp_.open(*open);
-    finalcut::FMessageBox::error(this, finalcut::FString(error)); return;
+    finalcut::FMessageBox::error(this,
+      finalcut::FString(localizedUiText(user_settings_.language, error)));
+    return;
   }
   for (auto* open : affected) {
     std::error_code document_error;

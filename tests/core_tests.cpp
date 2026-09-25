@@ -1979,6 +1979,10 @@ int main() {
         == "Удалить из проекта CMake и с диска"
       && tuiide::localizedUiText("en", "Remove from CMake project only")
         == "Remove from CMake project only"
+      && tuiide::localizedUiText("ru", "Delete empty directory from disk?\n")
+        == "Удалить пустой каталог с диска?\n"
+      && tuiide::localizedUiText("ru", "Directory path must be inside the project root.")
+        == "Путь каталога должен находиться внутри проекта."
       && tuiide::localizedUiText("ru", "&Cancel") == "О&тмена"
       && tuiide::localizedUiText("en", "&Cancel") == "&Cancel"
       && tuiide::localizedUiText("ru", "not translated") == "not translated",

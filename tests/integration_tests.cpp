@@ -1493,6 +1493,12 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       && visible("Класс C++ (.hpp + .cpp)", 3s);
     screen.clear(); send("\033");
     std::this_thread::sleep_for(600ms); pump();
+    screen.clear(); send("\033n");
+    const bool new_directory = visible("Новый каталог проекта", 5s)
+      && visible("Имя или путь:", 3s);
+    screen.clear(); send("../locale-outside\r");
+    const bool directory_error = visible("Путь каталога должен находиться внутри проекта.", 5s);
+    screen.clear(); send("\r"); settle();
     screen.clear(); send("\006");
     const bool search_dialog = visible("Поиск и замена", 5s)
       && visible("Учитывать регистр", 5s);
@@ -1552,7 +1558,8 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
     if (!exited) { ::kill(child, SIGKILL); (void)::waitpid(child, &locale_status, 0); }
     ::close(master);
     const bool success = started && new_project_menu && new_project_dialog
-      && palette && new_file && project_template && search_dialog && launch_dialog
+      && palette && new_file && project_template && new_directory && directory_error
+      && search_dialog && launch_dialog
       && configure_presets && build_presets && project_menu && project_directory
       && translated_menu && settings_menu && project_settings
       && language_menu && options
@@ -1562,7 +1569,8 @@ auto exerciseWindowHelpPty(const std::filesystem::path& tuiide,
       << " new_project=" << new_project_menu << '/' << new_project_dialog
       << " palette=" << palette_title << '/' << palette_command
       << " new_file=" << new_file << " search=" << search_dialog
-      << " template=" << project_template << " launch=" << launch_dialog
+      << " template=" << project_template << " directory=" << new_directory << '/'
+      << directory_error << " launch=" << launch_dialog
       << " presets=" << configure_presets << '/' << build_presets
       << " project_directory=" << project_menu << '/' << project_directory
       << " menu=" << translated_menu << " settings=" << settings_menu << '/' << project_settings
