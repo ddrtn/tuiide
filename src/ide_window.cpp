@@ -1582,8 +1582,10 @@ void IdeWindow::removeSelectedBreakpoint() {
 
 void IdeWindow::clearBreakpoints() {
   if (gdb_.breakpoints().empty()) { publishEvent(EventSource::Debug, EventSeverity::Warning, "Remove all breakpoints unavailable: no breakpoints exist\n"); return; }
-  const auto answer = finalcut::FMessageBox::info(this, "Remove all breakpoints",
-    "Remove every breakpoint in this project?", finalcut::FMessageBox::ButtonType::Yes,
+  const auto answer = finalcut::FMessageBox::info(this,
+    finalcut::FString(localizedUiText(user_settings_.language, "Remove all breakpoints")),
+    finalcut::FString(localizedUiText(user_settings_.language, "Remove every breakpoint in this project?")),
+    finalcut::FMessageBox::ButtonType::Yes,
     finalcut::FMessageBox::ButtonType::No, finalcut::FMessageBox::ButtonType::Reject);
   if (answer != finalcut::FMessageBox::ButtonType::Yes) return;
   gdb_.clearBreakpoints(); debug_state_dirty_ = true; saveDebugState();
@@ -1674,7 +1676,8 @@ void IdeWindow::editVariableValue() {
   }
   if (expression.empty()) expression = prompt("Set variable value", "Expression:");
   if (expression.empty()) return;
-  const auto value = prompt("Set variable value", "New value for " + expression + ":");
+  const auto value = prompt("Set variable value",
+    localizedUiText(user_settings_.language, "New value for ") + expression + ":");
   if (value.empty()) return;
   if (!gdb_.assign(expression, value)) publishEvent(EventSource::Debug, EventSeverity::Warning, "Set variable failed: debugger is unavailable\n");
   else publishEvent(EventSource::Debug, EventSeverity::Information, "Assigning " + expression + " = " + value + "\n");
@@ -1708,14 +1711,15 @@ void IdeWindow::manageSignals() {
   const auto signal = action == 3 && selected == 1 ? std::string("0") : signals[selected - 1];
   if (action == 3) {
     // signal продолжает процесс и может завершить его: обязательно подтверждение.
-    const auto confirmation = choose("Send " + signal + " and resume? May terminate program",
+    const auto confirmation = choose(localizedUiText(user_settings_.language, "Send ")
+      + signal + localizedUiText(user_settings_.language, " and resume? May terminate program"),
       {"Cancel", "Send and continue"});
     if (confirmation != 2) return;
     if (gdb_.sendSignal(signal))
       publishEvent(EventSource::Debug, EventSeverity::Information, "Sending " + signal + " and continuing\n");
     return;
   }
-  const auto policy = choose("Handling of " + signal, {
+  const auto policy = choose(localizedUiText(user_settings_.language, "Handling of ") + signal, {
     "Stop, print, pass", "Stop, print, suppress", "No stop, print, pass",
     "No stop, print, suppress", "No stop, silent, pass", "No stop, silent, suppress"});
   if (!policy) return;

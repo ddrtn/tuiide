@@ -1991,6 +1991,12 @@ int main() {
         == "Собрать проект; при необходимости сначала настроить"
       && tuiide::localizedUiText("ru", "Show clangd function signature help")
         == "Показать подсказку сигнатуры clangd"
+      && tuiide::localizedUiText("ru", "Remove every breakpoint in this project?")
+        == "Удалить все точки останова в этом проекте?"
+      && tuiide::localizedUiText("ru", "Send signal and continue")
+        == "Отправить сигнал и продолжить"
+      && tuiide::localizedUiText("ru", "No stop, silent, suppress")
+        == "Не останавливать, тихо, подавить"
       && tuiide::localizedUiText("en", "Show the keyboard reference")
         == "Show the keyboard reference"
       && tuiide::keyboardHelpText("ru").find("Ctrl+B Сборка") != std::string_view::npos
