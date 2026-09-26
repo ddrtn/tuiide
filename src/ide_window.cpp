@@ -987,9 +987,10 @@ void IdeWindow::showTextDialog(std::string title, std::string text) {
 void IdeWindow::refreshGitPanel() {
   const auto selected = git_files_.currentItem();
   git_files_.clear();
-  if (root_.empty()) git_files_.insert("No project");
+  if (root_.empty()) git_files_.insert(localizedUiText(user_settings_.language, "No project"));
   else if (git_files_state_.empty())
-    git_files_.insert(finalcut::FString(git_panel_message_.empty() ? "Working tree clean" : git_panel_message_));
+    git_files_.insert(finalcut::FString(git_panel_message_.empty()
+      ? localizedUiText(user_settings_.language, "Working tree clean") : git_panel_message_));
   else for (const auto& file : git_files_state_) {
     const auto relative = file.path.lexically_relative(root_);
     git_files_.insert(finalcut::FString(file.code + " " + relative.string()));
@@ -1009,11 +1010,12 @@ void IdeWindow::diffSelectedGitFile() {
   if (selected == 0 || selected > git_files_state_.size()) return;
   const auto& file = git_files_state_[selected - 1];
   if (file.untracked()) {
-    showNotification("Stage untracked file to view its diff", NotificationKind::Information);
+    showNotification(localizedUiText(user_settings_.language, "Stage untracked file to view its diff"),
+      NotificationKind::Information);
     return;
   }
   if (!git_session_.startDiff(file.path, file.staged()))
-    showNotification("Git is busy", NotificationKind::Warning);
+    showNotification(localizedUiText(user_settings_.language, "Git is busy"), NotificationKind::Warning);
 }
 
 void IdeWindow::stageSelectedGitFile() {
@@ -1022,13 +1024,15 @@ void IdeWindow::stageSelectedGitFile() {
   const auto& file = git_files_state_[selected - 1];
   for (const auto& open : documents_) {
     if (open->path() == file.path && open->modified()) {
-      showNotification("Save the modified file before staging", NotificationKind::Warning);
+      showNotification(localizedUiText(user_settings_.language, "Save the modified file before staging"),
+        NotificationKind::Warning);
       return;
     }
   }
   const bool started = file.staged() ? git_session_.startUnstage(file.path, file.code[0] == 'A')
                                      : git_session_.startStage(file.path);
-  if (!started) showNotification("Git is busy", NotificationKind::Warning);
+  if (!started) showNotification(localizedUiText(user_settings_.language, "Git is busy"),
+    NotificationKind::Warning);
 }
 
 void IdeWindow::historySelectedGitFile() {
@@ -1037,7 +1041,7 @@ void IdeWindow::historySelectedGitFile() {
     ? git_files_state_[selected - 1].path : document_ ? document_->path() : std::filesystem::path{};
   if (path.empty()) return;
   if (!git_session_.startHistory(path))
-    showNotification("Git is busy", NotificationKind::Warning);
+    showNotification(localizedUiText(user_settings_.language, "Git is busy"), NotificationKind::Warning);
 }
 
 void IdeWindow::showContextMenu(finalcut::FMenu& menu, finalcut::FPoint position) {
@@ -1186,8 +1190,9 @@ void IdeWindow::resizeSidebar(int delta) {
   const auto changed = static_cast<long long>(current) + delta;
   const auto resized = std::clamp<std::size_t>(changed < 0 ? 0 : static_cast<std::size_t>(changed), 18, width - 28);
   if (resized == current) {
-    showNotification(delta < 0 ? "Sidebar is already at minimum width"
-                               : "Sidebar is already at maximum width", NotificationKind::Information);
+    showNotification(localizedUiText(user_settings_.language,
+      delta < 0 ? "Sidebar is already at minimum width" : "Sidebar is already at maximum width"),
+      NotificationKind::Information);
     return;
   }
   sidebar_width_ = resized;
@@ -1200,8 +1205,9 @@ void IdeWindow::resizeLowerPanel(int delta) {
   const auto changed = static_cast<long long>(current) + delta;
   const auto resized = std::clamp<std::size_t>(changed < 0 ? 0 : static_cast<std::size_t>(changed), 4, height - 9);
   if (resized == current) {
-    showNotification(delta < 0 ? "Lower panel is already at minimum height"
-                               : "Lower panel is already at maximum height", NotificationKind::Information);
+    showNotification(localizedUiText(user_settings_.language,
+      delta < 0 ? "Lower panel is already at minimum height" : "Lower panel is already at maximum height"),
+      NotificationKind::Information);
     return;
   }
   lower_panel_height_ = resized;
@@ -1211,6 +1217,8 @@ void IdeWindow::resizeLowerPanel(int delta) {
 void IdeWindow::resetPanelSizes() {
   sidebar_width_ = 0; lower_panel_height_ = 0;
   debug_state_dirty_ = true; saveDebugState(); layout(); redraw();
+  showNotification(localizedUiText(user_settings_.language, "Panel sizes reset to automatic defaults"),
+    NotificationKind::Information);
   publishEvent(EventSource::System, EventSeverity::Information, "Panel sizes reset to automatic defaults\n");
 }
 

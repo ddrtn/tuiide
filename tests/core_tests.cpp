@@ -1997,6 +1997,10 @@ int main() {
         == "Отправить сигнал и продолжить"
       && tuiide::localizedUiText("ru", "No stop, silent, suppress")
         == "Не останавливать, тихо, подавить"
+      && tuiide::localizedUiText("ru", "Working tree clean") == "Рабочее дерево чистое"
+      && tuiide::localizedUiText("ru", "Git is busy") == "Git занят"
+      && tuiide::localizedUiText("ru", "Panel sizes reset to automatic defaults")
+        == "Размеры панелей сброшены к автоматическим"
       && tuiide::localizedUiText("en", "Show the keyboard reference")
         == "Show the keyboard reference"
       && tuiide::keyboardHelpText("ru").find("Ctrl+B Сборка") != std::string_view::npos
