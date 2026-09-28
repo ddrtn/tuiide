@@ -1533,7 +1533,8 @@ void IdeWindow::refreshBreakpointsPanel() {
   const auto current = breakpoints_.currentItem();
   if (!debug_ui_.updateBreakpoints(gdb_.breakpoints(), gdb_.running(), root_)) return;
   breakpoints_.clear();
-  if (debug_ui_.breakpointRows().empty()) breakpoints_.insert("No breakpoints");
+  if (debug_ui_.breakpointRows().empty())
+    breakpoints_.insert(localizedUiText(user_settings_.language, "No breakpoints"));
   for (const auto& row : debug_ui_.breakpointRows()) breakpoints_.insert(finalcut::FString(row.label));
   if (!debug_ui_.breakpointRows().empty())
     breakpoints_.setCurrentItem(std::clamp<std::size_t>(current, 1, debug_ui_.breakpointRows().size()));
@@ -1622,18 +1623,22 @@ void IdeWindow::refreshOutline(std::optional<LspDocumentSymbols> response) {
         if (!symbol.detail.empty() && symbol.detail != symbol.name) label += " — " + symbol.detail;
         outline_.insert(finalcut::FString(label)); outline_positions_.push_back(symbol.position);
       }
-      if (outline_positions_.empty()) outline_.insert("No symbols in this document");
+      if (outline_positions_.empty())
+        outline_.insert(localizedUiText(user_settings_.language, "No symbols in this document"));
       sidebar_tabs_.redrawCurrentPage();
     }
   }
   const auto decision = lsp_ui_.updateOutline(active, lsp_.ready(), maintenance_ticks_);
   if (decision == OutlineDecision::Clear) {
     outline_.clear();
-    outline_.insert(active ? "Waiting for outline..." : "Open a C/C++ file for outline");
+    outline_.insert(localizedUiText(user_settings_.language,
+      active ? "Waiting for outline..." : "Open a C/C++ file for outline"));
     outline_positions_.clear();
     sidebar_tabs_.redrawCurrentPage();
   } else if (decision == OutlineDecision::Request && document_) {
-    outline_.clear(); outline_.insert("Loading outline..."); outline_positions_.clear();
+    outline_.clear();
+    outline_.insert(localizedUiText(user_settings_.language, "Loading outline..."));
+    outline_positions_.clear();
     sidebar_tabs_.redrawCurrentPage();
     lsp_.requestDocumentSymbols(*document_);
   }
@@ -1905,7 +1910,9 @@ void IdeWindow::unloadProject() {
   search_query_.clear(); search_replacement_.clear(); search_options_ = {}; search_project_ = false;
   problems_filter_.clear(); problems_signature_.clear(); problems_text_.clear(); problem_rows_.clear();
   problems_.clear(); problems_.insert(localizedUiText(user_settings_.language, "No problems"));
-  outline_.clear(); outline_.insert("Open a C/C++ file for outline"); outline_positions_.clear();
+  outline_.clear();
+  outline_.insert(localizedUiText(user_settings_.language, "Open a C/C++ file for outline"));
+  outline_positions_.clear();
   refreshTestsPanel();
   event_log_.clear(); output_.clear(); build_output_.clear(); console_.clear(); analysis_output_.clear();
   applyShortcutAccelerators();
@@ -2034,7 +2041,8 @@ void IdeWindow::manageToolchainKits() {
   if (!accepted || dialog.selected() == 0 || dialog.selected() > kits.size()) return;
   const auto& kit = kits[dialog.selected() - 1];
   if (!kit.valid) {
-    finalcut::FMessageBox::error(this, "The selected kit failed its version checks.");
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+      "The selected kit failed its version checks.")));
     return;
   }
   auto updated = project_settings_;
@@ -2122,7 +2130,8 @@ void IdeWindow::launchSettings() {
   auto updated = project_settings_;
   updated.launch_configurations = dialog.configurations();
   if (!selectLaunchConfiguration(updated, dialog.selectedName())) {
-    finalcut::FMessageBox::error(this, "The selected launch configuration is unavailable.");
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+      "The selected launch configuration is unavailable.")));
     return;
   }
   if (!saveProjectSettings(root_, updated, error)) {
@@ -2343,7 +2352,8 @@ void IdeWindow::openRecentFile(const std::filesystem::path& path) {
     refreshRecentFilesMenu();
     publishEvent(EventSource::Editor, EventSeverity::Warning,
       "Recent Files removed an unavailable path: " + path.string() + "\n");
-    showNotification("Recent file is no longer available", NotificationKind::Warning);
+    showNotification(localizedUiText(user_settings_.language, "Recent file is no longer available"),
+      NotificationKind::Warning);
     return;
   }
   openFile(path);
@@ -2355,7 +2365,8 @@ void IdeWindow::clearRecentFiles() {
   refreshRecentFilesMenu();
   publishEvent(EventSource::Editor, EventSeverity::Information,
     "Recent Files history cleared\n");
-  showNotification("Recent Files history cleared", NotificationKind::Success);
+  showNotification(localizedUiText(user_settings_.language, "Recent Files history cleared"),
+    NotificationKind::Success);
 }
 
 void IdeWindow::persistUserSettings() {
@@ -2590,7 +2601,9 @@ void IdeWindow::exitIde() {
 void IdeWindow::closeActiveDocument(bool remember) {
   if (!document_ || active_document_ >= documents_.size()) return;
   if (document_->modified()) {
-    const auto answer = finalcut::FMessageBox::info(this, "Unsaved changes", "Save this document before closing?",
+    const auto answer = finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(user_settings_.language, "Unsaved changes")),
+      finalcut::FString(localizedUiText(user_settings_.language, "Save this document before closing?")),
       finalcut::FMessageBox::ButtonType::Yes, finalcut::FMessageBox::ButtonType::No, finalcut::FMessageBox::ButtonType::Cancel);
     if (answer == finalcut::FMessageBox::ButtonType::Cancel) return;
     if (answer == finalcut::FMessageBox::ButtonType::Yes) {
@@ -3501,7 +3514,8 @@ void IdeWindow::discoverTests() {
       "CTest discovery: " + ctest_session_.lastError() + "\n");
     return;
   }
-  tests_.clear(); tests_.insert("[~] Discovering tests...");
+  tests_.clear();
+  tests_.insert(localizedUiText(user_settings_.language, "[~] Discovering tests..."));
   sidebar_tabs_.setCurrentIndex(5, true);
   menu_state_.reset();
   publishEvent(EventSource::Test, EventSeverity::Information,
@@ -3615,7 +3629,8 @@ void IdeWindow::refreshTestsPanel() {
   const auto selected = tests_.currentItem();
   tests_.clear();
   if (ctest_session_.tests().empty()) {
-    tests_.insert(root_.empty() ? "No project" : "Tests not discovered");
+    tests_.insert(localizedUiText(user_settings_.language,
+      root_.empty() ? "No project" : "Tests not discovered"));
   } else {
     for (const auto& test : ctest_session_.tests()) {
       std::string label{ctestStatusLabel(test.status)};
@@ -5128,20 +5143,23 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
     if (!ctest_poll.error.empty()) {
       publishEvent(EventSource::Test, EventSeverity::Error,
         "CTest discovery failed: " + ctest_poll.error + "\n");
-      showNotification("CTest discovery failed", NotificationKind::Error);
+      showNotification(localizedUiText(user_settings_.language, "CTest discovery failed"),
+        NotificationKind::Error);
     } else if (ctest_operation == CTestOperation::Discover) {
       const auto count = ctest_session_.tests().size();
       publishEvent(EventSource::Test,
         *ctest_poll.completion == 0 ? EventSeverity::Success : EventSeverity::Error,
         "CTest discovery finished with exit code " + std::to_string(*ctest_poll.completion)
           + ": " + std::to_string(count) + " test(s)\n");
-      showNotification("CTest: discovered " + std::to_string(count) + " test(s)",
+      showNotification(localizedUiText(user_settings_.language, "CTest: discovered ")
+          + std::to_string(count) + localizedUiText(user_settings_.language, " test(s)"),
         *ctest_poll.completion == 0 ? NotificationKind::Success : NotificationKind::Error);
     } else {
       const auto code = *ctest_poll.completion;
       publishEvent(EventSource::Test, code == 0 ? EventSeverity::Success : EventSeverity::Error,
         "CTest finished with exit code " + std::to_string(code) + "\n");
-      showNotification(code == 0 ? "CTest completed successfully" : "CTest failed",
+      showNotification(localizedUiText(user_settings_.language,
+          code == 0 ? "CTest completed successfully" : "CTest failed"),
         code == 0 ? NotificationKind::Success : NotificationKind::Error);
     }
   }
@@ -5201,7 +5219,9 @@ void IdeWindow::onKeyPress(finalcut::FKeyEvent* event) {
 void IdeWindow::onClose(finalcut::FCloseEvent* event) {
   const bool has_changes = std::any_of(documents_.begin(), documents_.end(), [](const auto& document) { return document->modified(); });
   if (has_changes) {
-    const auto answer = finalcut::FMessageBox::info(this, "Unsaved changes", "Save all changed documents before closing?",
+    const auto answer = finalcut::FMessageBox::info(this,
+      finalcut::FString(localizedUiText(user_settings_.language, "Unsaved changes")),
+      finalcut::FString(localizedUiText(user_settings_.language, "Save all changed documents before closing?")),
       finalcut::FMessageBox::ButtonType::Yes, finalcut::FMessageBox::ButtonType::No, finalcut::FMessageBox::ButtonType::Cancel);
     if (answer == finalcut::FMessageBox::ButtonType::Cancel) { event->ignore(); return; }
     if (answer == finalcut::FMessageBox::ButtonType::Yes) {

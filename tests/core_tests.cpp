@@ -2001,6 +2001,17 @@ int main() {
       && tuiide::localizedUiText("ru", "Git is busy") == "Git занят"
       && tuiide::localizedUiText("ru", "Panel sizes reset to automatic defaults")
         == "Размеры панелей сброшены к автоматическим"
+      && tuiide::localizedUiText("ru", "No breakpoints") == "Точек останова нет"
+      && tuiide::localizedUiText("ru", "Open a C/C++ file for outline")
+        == "Откройте файл C/C++ для структуры"
+      && tuiide::localizedUiText("ru", "CTest completed successfully")
+        == "CTest завершился успешно"
+      && tuiide::localizedUiText("ru", "Recent Files history cleared")
+        == "История недавних файлов очищена"
+      && tuiide::localizedUiText("ru", "Save all changed documents before closing?")
+        == "Сохранить все изменённые документы перед закрытием?"
+      && tuiide::localizedUiText("ru", "The selected launch configuration is unavailable.")
+        == "Выбранная конфигурация запуска недоступна."
       && tuiide::localizedUiText("en", "Show the keyboard reference")
         == "Show the keyboard reference"
       && tuiide::keyboardHelpText("ru").find("Ctrl+B Сборка") != std::string_view::npos
