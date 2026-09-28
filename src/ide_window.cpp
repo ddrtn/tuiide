@@ -1708,7 +1708,8 @@ void IdeWindow::manageSignals() {
   if (gdb_.backend() != DebugBackend::GdbMi || !gdb_.running()
       || gdb_.mode() == DebugSessionMode::Core
       || !gdb_.active() || !gdb_.stopped()) return;
-  const auto action = choose("Signals", {"Inspect policies (Output)", "Configure handling", "Send signal and continue"});
+  const auto action = choose("Signals", {"Inspect policies (Output)", "Configure handling",
+    "Send signal and continue"});
   if (!action) return;
   if (action == 1) {
     if (gdb_.inspectSignals()) lower_tabs_.setCurrentIndex(0, true);
@@ -2163,7 +2164,8 @@ void IdeWindow::selectLaunchProfile() {
   for (const auto& item : current.launch_configurations) {
     const auto detail = !item.configuration.executable.empty()
       ? item.configuration.executable.string()
-      : !item.configuration.target.empty() ? item.configuration.target : "current CMake target";
+      : !item.configuration.target.empty() ? item.configuration.target
+        : localizedUiText(user_settings_.language, "current CMake target");
     labels.push_back(item.name + " — " + detail);
   }
   const auto selection = choose("Select Run/Debug configuration", labels);
@@ -2977,7 +2979,9 @@ void IdeWindow::showProjectSearch() {
     }
   }
   if (results.empty()) { publishEvent(EventSource::Editor, EventSeverity::Warning, "Project search: no matches for " + search_query_ + "\n"); return; }
-  const auto selection = choose("Project search — " + std::to_string(results.size()) + " result(s)", labels);
+  const auto selection = choose(localizedUiText(user_settings_.language, "Project search — ")
+    + std::to_string(results.size()) + localizedUiText(user_settings_.language, " result(s)"),
+    labels);
   if (selection == 0 || selection > results.size()) return;
   const auto result = results[selection - 1];
   openFile(result.path);
@@ -3215,7 +3219,9 @@ void IdeWindow::restoreRecovery() {
   }
   if (recovery.empty()) { clearRecovery(recovery_file_); return; }
   const auto selection = choose("Crash recovery", {
-    "Restore " + std::to_string(recovery.size()) + " autosaved document(s)",
+    localizedUiText(user_settings_.language, "Restore ")
+      + std::to_string(recovery.size())
+      + localizedUiText(user_settings_.language, " autosaved document(s)"),
     "Discard recovery data"
   });
   if (selection == 0) return;
@@ -3686,14 +3692,16 @@ void IdeWindow::runAnalysis() {
       "Analysis unavailable while another build, test, run, debug, or analysis operation is active\n");
     return;
   }
+  const auto unavailable = localizedUiText(user_settings_.language, "  [unavailable]");
   const std::vector<std::string> tools{
-    "clang-tidy" + std::string(external_tools_.clang_tidy ? "" : "  [unavailable]"),
-    "cppcheck" + std::string(external_tools_.cppcheck ? "" : "  [unavailable]"),
-    "include-what-you-use" + std::string(external_tools_.include_what_you_use ? "" : "  [unavailable]"),
+    "clang-tidy" + std::string(external_tools_.clang_tidy ? "" : unavailable),
+    "cppcheck" + std::string(external_tools_.cppcheck ? "" : unavailable),
+    "include-what-you-use" + std::string(external_tools_.include_what_you_use ? "" : unavailable),
     "AddressSanitizer + UndefinedBehaviorSanitizer",
-    "Coverage (gcovr)" + std::string(external_tools_.gcovr ? "" : "  [unavailable]"),
-    "Valgrind Memcheck" + std::string(external_tools_.valgrind ? "" : "  [unavailable]"),
-    "CPU profile (perf)" + std::string(external_tools_.perf ? "" : "  [unavailable]")};
+    "Coverage (gcovr)" + std::string(external_tools_.gcovr ? "" : unavailable),
+    "Valgrind Memcheck" + std::string(external_tools_.valgrind ? "" : unavailable),
+    localizedUiText(user_settings_.language, "CPU profile (perf)")
+      + std::string(external_tools_.perf ? "" : unavailable)};
   const auto tool_selection = choose("Analysis and profiling tool", tools);
   if (tool_selection == 0 || tool_selection > tools.size()) return;
   const auto tool = static_cast<AnalysisTool>(tool_selection - 1);

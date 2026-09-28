@@ -2021,6 +2021,12 @@ int main() {
       && tuiide::localizedUiText("ru", "Sidebar: ") == "Боковая панель: "
       && tuiide::localizedUiText("ru", "Coverage report failed")
         == "Отчёт о покрытии завершился с ошибкой"
+      && tuiide::localizedUiText("ru", "Discard recovery data")
+        == "Удалить данные восстановления"
+      && tuiide::localizedUiText("ru", "  [unavailable]") == "  [недоступно]"
+      && tuiide::localizedUiText("ru", "Selected CMake target")
+        == "Выбранная цель CMake"
+      && tuiide::localizedUiText("ru", "Project search — ") == "Поиск по проекту — "
       && tuiide::localizedUiText("en", "Show the keyboard reference")
         == "Show the keyboard reference"
       && tuiide::keyboardHelpText("ru").find("Ctrl+B Сборка") != std::string_view::npos
