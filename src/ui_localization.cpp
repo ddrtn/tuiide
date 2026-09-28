@@ -233,6 +233,8 @@ auto localizedUiText(std::string_view language, std::string_view english) -> std
     {"About TUI IDE", "О TUI IDE"},
     {"No matching problems", "Подходящих проблем нет"},
     {"Working tree clean", "Рабочее дерево чистое"},
+    {"Loading Git status...", "Загрузка статуса Git..."},
+    {"Git unavailable or not a repository", "Git недоступен или это не репозиторий"},
     {"Stage untracked file to view its diff", "Добавьте неотслеживаемый файл в индекс, чтобы увидеть diff"},
     {"Git is busy", "Git занят"},
     {"Save the modified file before staging", "Сохраните изменённый файл перед добавлением в индекс"},

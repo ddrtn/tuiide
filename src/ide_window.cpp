@@ -378,11 +378,11 @@ IdeWindow::IdeWindow(std::filesystem::path initial_root, std::filesystem::path l
   recent_projects_ = loadRecentProjects(project_history_file_, history_error);
   if (!history_error.empty()) publishEvent(EventSource::System, EventSeverity::Error, "Recent projects: " + history_error + "\n");
   if (initial_root.empty()) {
-    setText("TUI IDE — No project");
+    updateWindowTitle();
     publishEvent(EventSource::System, EventSeverity::Information, "Welcome to TUI IDE. Use File > Open Project or File > New Project to begin.\n");
     refreshFiles(); refreshDebugPanel(); refreshBreakpointsPanel(); refreshTestsPanel(); updateStatus();
   } else if (!loadProject(std::move(initial_root))) {
-    setText("TUI IDE — No project");
+    updateWindowTitle();
     refreshFiles(); refreshDebugPanel(); refreshBreakpointsPanel(); refreshTestsPanel(); updateStatus();
   }
   layout();
@@ -760,6 +760,7 @@ void IdeWindow::applyUiLanguage() {
   tools_menu_.language_russian.unsetChecked();
   if (user_settings_.language == "ru") tools_menu_.language_russian.setChecked();
   else tools_menu_.language_english.setChecked();
+  updateWindowTitle();
   refreshRecentFilesMenu();
   menu_bar_.redraw();
 }
@@ -779,6 +780,14 @@ void IdeWindow::setUiLanguage(std::string language) {
   problems_signature_.clear();
   refreshProblemsPanel();
   updateStatus();
+}
+
+void IdeWindow::updateWindowTitle() {
+  if (root_.empty()) {
+    setText("TUI IDE — " + localizedUiText(user_settings_.language, "No project"));
+    return;
+  }
+  setText("TUI IDE — C/C++ — " + root_.filename().string());
 }
 
 void IdeWindow::applyShortcutAccelerators(bool enabled) {
@@ -989,8 +998,8 @@ void IdeWindow::refreshGitPanel() {
   git_files_.clear();
   if (root_.empty()) git_files_.insert(localizedUiText(user_settings_.language, "No project"));
   else if (git_files_state_.empty())
-    git_files_.insert(finalcut::FString(git_panel_message_.empty()
-      ? localizedUiText(user_settings_.language, "Working tree clean") : git_panel_message_));
+    git_files_.insert(finalcut::FString(localizedUiText(user_settings_.language,
+      git_panel_message_.empty() ? "Working tree clean" : git_panel_message_)));
   else for (const auto& file : git_files_state_) {
     const auto relative = file.path.lexically_relative(root_);
     git_files_.insert(finalcut::FString(file.code + " " + relative.string()));
@@ -1924,7 +1933,7 @@ void IdeWindow::unloadProject() {
   lsp_ui_.reset();
   diagnostic_index_ = 0;
   refreshFiles(); refreshTabs(); refreshDebugPanel(); refreshBreakpointsPanel();
-  setText("TUI IDE — No project"); updateStatus();
+  updateWindowTitle(); updateStatus();
   if (had_project) {
     const bool clean = documents_.empty() && !document_
       && !lsp_.running() && lsp_.diagnostics().empty() && lsp_.semanticTokens().empty()
@@ -1960,7 +1969,7 @@ auto IdeWindow::loadProject(std::filesystem::path root, std::filesystem::path bu
   applyShortcutAccelerators();
   editor_.setIndentation(project_settings_.tab_width, project_settings_.use_spaces);
   editor_.setTheme(effectiveEditorTheme(user_settings_), user_settings_.colors);
-  setText("TUI IDE — C/C++ — " + root_.filename().string());
+  updateWindowTitle();
   lsp_ui_.reset();
   configureDebugger();
   loadDebugState();

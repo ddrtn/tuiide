@@ -294,6 +294,7 @@ class IdeWindow final : public finalcut::FDialog {
   void updateMenuState();
   void applyUiLanguage();
   void setUiLanguage(std::string language);
+  void updateWindowTitle();
   void updateStatus();
   auto handleCommand(finalcut::FKey key) -> bool;
   auto prompt(std::string title, std::string label) -> std::string;

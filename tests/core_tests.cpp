@@ -2003,6 +2003,9 @@ int main() {
       && tuiide::localizedUiText("ru", "No stop, silent, suppress")
         == "Не останавливать, тихо, подавить"
       && tuiide::localizedUiText("ru", "Working tree clean") == "Рабочее дерево чистое"
+      && tuiide::localizedUiText("ru", "Loading Git status...") == "Загрузка статуса Git..."
+      && tuiide::localizedUiText("ru", "Git unavailable or not a repository")
+        == "Git недоступен или это не репозиторий"
       && tuiide::localizedUiText("ru", "Git is busy") == "Git занят"
       && tuiide::localizedUiText("ru", "Panel sizes reset to automatic defaults")
         == "Размеры панелей сброшены к автоматическим"
