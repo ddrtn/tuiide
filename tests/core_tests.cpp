@@ -2027,6 +2027,12 @@ int main() {
       && tuiide::localizedUiText("ru", "Selected CMake target")
         == "Выбранная цель CMake"
       && tuiide::localizedUiText("ru", "Project search — ") == "Поиск по проекту — "
+      && tuiide::localizedUiText("ru", "Build directory must differ from the project directory.")
+        == "Каталог сборки должен отличаться от каталога проекта."
+      && tuiide::localizedUiText("ru", "Cannot resolve project path.")
+        == "Не удалось определить путь файла проекта."
+      && tuiide::localizedUiText("ru", "This file is already open in another editor.")
+        == "Этот файл уже открыт в другом редакторе."
       && tuiide::localizedUiText("en", "Show the keyboard reference")
         == "Show the keyboard reference"
       && tuiide::keyboardHelpText("ru").find("Ctrl+B Сборка") != std::string_view::npos

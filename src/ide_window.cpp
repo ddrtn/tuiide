@@ -1424,7 +1424,8 @@ void IdeWindow::removeSelectedProjectFile() {
     return;
   }
 
-  const auto selection = choose("Remove " + relative.generic_string(), {
+  const auto selection = choose(localizedUiText(user_settings_.language, "Remove ")
+    + relative.generic_string(), {
     "Remove from CMake project only",
     "Remove from CMake project and delete from disk"
   });
@@ -1456,8 +1457,8 @@ void IdeWindow::removeSelectedProjectFile() {
   }
   if (delete_from_disk) {
     if (!std::filesystem::remove(path, status_error) || status_error) {
-      finalcut::FMessageBox::error(this, finalcut::FString("Cannot delete " + path.string()
-        + ": " + status_error.message()));
+      finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+        "Cannot delete ") + path.string() + ": " + status_error.message()));
       return;
     }
     if (open_document != documents_.end()) {
@@ -2197,8 +2198,10 @@ void IdeWindow::openProject() {
     const auto directory = normalizePath(selected);
     if (std::filesystem::is_directory(directory, type_error)
         && !std::filesystem::exists(directory / "CMakeLists.txt", type_error)) {
-      const auto answer = finalcut::FMessageBox::info(this, "Import source directory",
-        "CMakeLists.txt was not found. Import the existing C/C++ sources and create one?",
+      const auto answer = finalcut::FMessageBox::info(this,
+        finalcut::FString(localizedUiText(user_settings_.language, "Import source directory")),
+        finalcut::FString(localizedUiText(user_settings_.language,
+          "CMakeLists.txt was not found. Import the existing C/C++ sources and create one?")),
         finalcut::FMessageBox::ButtonType::Yes, finalcut::FMessageBox::ButtonType::No,
         finalcut::FMessageBox::ButtonType::Reject);
       if (answer == finalcut::FMessageBox::ButtonType::Yes) importProject(directory);
@@ -2396,7 +2399,9 @@ void IdeWindow::newProject() {
   options.build_directory = build_dialog.selectedPath(); timer_id_ = addTimer(100);
   if (!build_accepted) return;
   if (normalizePath(options.project_directory) == normalizePath(options.build_directory)) {
-    finalcut::FMessageBox::error(this, "Build directory must differ from the project directory."); return;
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+      "Build directory must differ from the project directory.")));
+    return;
   }
   if (!closeAllDocuments()) return;
   std::string error;
@@ -2470,9 +2475,17 @@ void IdeWindow::createProjectFile() {
     if (!source) return;
     std::error_code relative_error;
     options.header_path = std::filesystem::relative(*header, root_, relative_error);
-    if (relative_error) { finalcut::FMessageBox::error(this, "Cannot resolve header path."); return; }
+    if (relative_error) {
+      finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+        "Cannot resolve header path.")));
+      return;
+    }
     options.source_path = std::filesystem::relative(*source, root_, relative_error);
-    if (relative_error) { finalcut::FMessageBox::error(this, "Cannot resolve source path."); return; }
+    if (relative_error) {
+      finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+        "Cannot resolve source path.")));
+      return;
+    }
     created = createCppClassTemplate(root_, options, preferred_target, result, error);
   } else {
     static const std::vector<std::string> suggestions{"new_header.h", "new_header.hpp", "new_source.c", "new_source.cpp"};
@@ -2480,7 +2493,11 @@ void IdeWindow::createProjectFile() {
     if (!selected_path) return;
     std::error_code relative_error;
     const auto relative = std::filesystem::relative(*selected_path, root_, relative_error);
-    if (relative_error) { finalcut::FMessageBox::error(this, "Cannot resolve project path."); return; }
+    if (relative_error) {
+      finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+        "Cannot resolve project path.")));
+      return;
+    }
     created = createProjectTemplate(root_, types[selection - 1], relative, preferred_target, result, error);
   }
   if (!created) {
@@ -2736,7 +2753,8 @@ auto IdeWindow::saveAs() -> bool {
     return open_document.get() != document_ && open_document->path() == target;
   });
   if (duplicate != documents_.end()) {
-    finalcut::FMessageBox::error(this, "This file is already open in another editor.");
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
+      "This file is already open in another editor.")));
     return false;
   }
   std::string error;
