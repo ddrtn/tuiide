@@ -1934,7 +1934,8 @@ void IdeWindow::unloadProject() {
       && cmake_session_.buildPresets().empty() && !project_session_.open();
     publishEvent(EventSource::System, clean ? EventSeverity::Success : EventSeverity::Error,
       clean ? "Previous project state cleared\n" : "Project state cleanup incomplete\n");
-    showNotification(clean ? "Previous project state cleared" : "Project state cleanup incomplete",
+    showNotification(localizedUiText(user_settings_.language,
+      clean ? "Previous project state cleared" : "Project state cleanup incomplete"),
       clean ? NotificationKind::Success : NotificationKind::Error);
   }
 }
@@ -3103,7 +3104,7 @@ void IdeWindow::clearLowerPanel() {
   }
   const std::string message = panel == 0 ? "Output cleared" : panel == 1 ? "Problems cleared"
     : panel == 2 ? "Build output cleared" : panel == 3 ? "Terminal cleared" : "Analysis output cleared";
-  showNotification(message, NotificationKind::Information);
+  showNotification(localizedUiText(user_settings_.language, message), NotificationKind::Information);
   publishEvent(EventSource::System, EventSeverity::Information, message + "\n");
 }
 
@@ -3319,7 +3320,8 @@ auto IdeWindow::startConfigureStage() -> bool {
   std::string query_error;
   if (!createCMakeFileApiQuery(build_dir_, query_error)) publishEvent(EventSource::Build, EventSeverity::Error, "CMake model: " + query_error + "\n");
   build_session_.enterStage(BuildStage::Configure);
-  showNotification("CMake configure started", NotificationKind::Information);
+  showNotification(localizedUiText(user_settings_.language, "CMake configure started"),
+    NotificationKind::Information);
   std::string command_error;
   auto command = BuildCommandService::configure(root_, build_dir_, project_settings_,
     cmake_session_.configurePreset(), cmake_session_.configurePresets(), command_error);
@@ -3341,7 +3343,8 @@ auto IdeWindow::startConfigureStage() -> bool {
 
 auto IdeWindow::startBuildStage(bool clean_stage) -> bool {
   build_session_.enterStage(clean_stage ? BuildStage::Clean : BuildStage::Build);
-  showNotification(clean_stage ? "CMake clean started" : "Build started", NotificationKind::Information);
+  showNotification(localizedUiText(user_settings_.language,
+    clean_stage ? "CMake clean started" : "Build started"), NotificationKind::Information);
   const auto jobs = std::to_string(std::max(1U, project_settings_.build_jobs));
   const CMakeTarget* build_target{};
   if (!clean_stage && build_session_.continuation() != BuildContinuation::None
@@ -3374,8 +3377,12 @@ void IdeWindow::finishBuildOperation(int exit_code, std::string_view failed_stag
   publishEvent(EventSource::Build, EventSeverity::Information, summary.str(), EventChannel::Build);
   publishEvent(EventSource::Build,
     exit_code == 0 ? EventSeverity::Success : EventSeverity::Error, summary.str());
-  showNotification(result.operation + (exit_code == 0 ? " completed successfully" : " failed (exit "
-      + std::to_string(exit_code) + ")"), exit_code == 0 ? NotificationKind::Success : NotificationKind::Error,
+  showNotification(localizedUiText(user_settings_.language, result.operation)
+      + localizedUiText(user_settings_.language,
+        exit_code == 0 ? " completed successfully" : " failed (exit ")
+      + (exit_code == 0 ? std::string{} : std::to_string(exit_code)
+        + localizedUiText(user_settings_.language, ")")),
+      exit_code == 0 ? NotificationKind::Success : NotificationKind::Error,
       std::chrono::milliseconds{6000});
   if (exit_code == 0 && result.continuation != BuildContinuation::None) {
     deferred_command_ = result.continuation == BuildContinuation::Run
@@ -3395,7 +3402,8 @@ void IdeWindow::cancelBuild() {
     << " after " << result.elapsed << " s\n";
   publishEvent(EventSource::Build, EventSeverity::Information, message.str(), EventChannel::Build);
   publishEvent(EventSource::Build, EventSeverity::Warning, message.str());
-  showNotification("CMake operation cancelled", NotificationKind::Warning);
+  showNotification(localizedUiText(user_settings_.language, "CMake operation cancelled"),
+    NotificationKind::Warning);
   updateStatus();
 }
 
@@ -3970,8 +3978,10 @@ void IdeWindow::startRun() {
       launch.working_directory, environment, console_.columns(), console_.rows())) {
     console_.setControlEnabled(false);
     publishEvent(EventSource::Run, EventSeverity::Error, "Run failed: cannot start " + launch.executable.string() + "\n");
-    showNotification("Program failed to start", NotificationKind::Error);
-  } else showNotification("Program started", NotificationKind::Information);
+    showNotification(localizedUiText(user_settings_.language, "Program failed to start"),
+      NotificationKind::Error);
+  } else showNotification(localizedUiText(user_settings_.language, "Program started"),
+      NotificationKind::Information);
 }
 
 void IdeWindow::stopRun() {
@@ -3979,7 +3989,8 @@ void IdeWindow::stopRun() {
   run_session_.stop();
   console_.setControlEnabled(false);
   publishEvent(EventSource::Run, EventSeverity::Information, "Run terminated by user\n");
-  showNotification("Program terminated by user", NotificationKind::Warning); updateStatus();
+  showNotification(localizedUiText(user_settings_.language, "Program terminated by user"),
+    NotificationKind::Warning); updateStatus();
 }
 
 void IdeWindow::debugRun() {
@@ -4088,7 +4099,8 @@ void IdeWindow::attachToProcess() {
   lower_tabs_.setCurrentIndex(0, true);
   publishEvent(EventSource::Debug, EventSeverity::Information,
     "GDB: attaching to process " + std::to_string(process.pid) + " (" + process.command + ")\n");
-  showNotification("Attaching to process " + std::to_string(process.pid), NotificationKind::Information);
+  showNotification(localizedUiText(user_settings_.language, "Attaching to process ")
+    + std::to_string(process.pid), NotificationKind::Information);
   updateStatus();
 }
 
@@ -4136,7 +4148,8 @@ void IdeWindow::openCoreDump() {
   publishEvent(EventSource::Debug, EventSeverity::Information,
     "GDB: opening core dump " + core_file.string() + " with " + executable.string()
       + " (read-only)\n");
-  showNotification("Opening core dump in read-only mode", NotificationKind::Information);
+  showNotification(localizedUiText(user_settings_.language,
+    "Opening core dump in read-only mode"), NotificationKind::Information);
   updateStatus();
 }
 
@@ -4164,7 +4177,8 @@ void IdeWindow::startDebug() {
     std::string(gdb_.backend() == DebugBackend::GdbMi ? "GDB: " : "LLDB/DAP: ")
       + launch.executable.string() + "\n");
   gdb_.run();
-  showNotification("Debug session started", NotificationKind::Information);
+  showNotification(localizedUiText(user_settings_.language, "Debug session started"),
+    NotificationKind::Information);
 }
 
 void IdeWindow::debugStop() {
@@ -4181,7 +4195,8 @@ void IdeWindow::debugStop() {
     attached ? (detached ? "Debug session detached; target process left running\n"
                          : "GDB stopped without a confirmed target detach; verify the target process\n")
              : (core_dump ? "Core dump closed\n" : "Debug session stopped\n"));
-  showNotification("Debug session stopped", NotificationKind::Warning);
+  showNotification(localizedUiText(user_settings_.language, "Debug session stopped"),
+    NotificationKind::Warning);
 }
 
 void IdeWindow::debugRestart() {
@@ -4222,7 +4237,8 @@ void IdeWindow::debugRestart() {
   run_session_.activateDebugConsole(); console_.setControlEnabled(true); lower_tabs_.setCurrentIndex(3, true); console_.focusInput();
   publishEvent(EventSource::Debug, EventSeverity::Information, "GDB restarted: " + launch.executable.string() + "\n");
   gdb_.run();
-  showNotification("Debug session restarted", NotificationKind::Information);
+  showNotification(localizedUiText(user_settings_.language, "Debug session restarted"),
+    NotificationKind::Information);
   updateStatus();
 }
 
@@ -4303,7 +4319,8 @@ void IdeWindow::restartLanguageServer() {
   for (const auto& open_document : documents_)
     if (isCppSource(open_document->path())) lsp_.open(*open_document);
   lsp_.setActiveDocument(document_);
-  showNotification("clangd: indexing " + build_dir_.filename().string(), NotificationKind::Information);
+  showNotification(localizedUiText(user_settings_.language, "clangd: indexing ")
+    + build_dir_.filename().string(), NotificationKind::Information);
 }
 
 void IdeWindow::updateMenuState() {
@@ -4598,25 +4615,29 @@ auto IdeWindow::handleCommand(finalcut::FKey key) -> bool {
     case finalcut::FKey::Ctrl_page_down: switchDocument(1); return true;
     case finalcut::FKey::Meta_page_up:
       sidebar_tabs_.selectRelative(-1, true);
-      showNotification("Sidebar: " + sidebar_tabs_.currentTitle());
+      showNotification(localizedUiText(user_settings_.language, "Sidebar: ")
+        + sidebar_tabs_.currentTitle());
       publishEvent(EventSource::System, EventSeverity::Information,
         "Sidebar tab: " + sidebar_tabs_.currentTitle() + "\n");
       return true;
     case finalcut::FKey::Meta_page_down:
       sidebar_tabs_.selectRelative(1, true);
-      showNotification("Sidebar: " + sidebar_tabs_.currentTitle());
+      showNotification(localizedUiText(user_settings_.language, "Sidebar: ")
+        + sidebar_tabs_.currentTitle());
       publishEvent(EventSource::System, EventSeverity::Information,
         "Sidebar tab: " + sidebar_tabs_.currentTitle() + "\n");
       return true;
     case finalcut::FKey::Shift_Meta_page_up:
       lower_tabs_.selectRelative(-1, true);
-      showNotification("Lower panel: " + lower_tabs_.currentTitle());
+      showNotification(localizedUiText(user_settings_.language, "Lower panel: ")
+        + lower_tabs_.currentTitle());
       publishEvent(EventSource::System, EventSeverity::Information,
         "Lower panel tab: " + lower_tabs_.currentTitle() + "\n");
       return true;
     case finalcut::FKey::Shift_Meta_page_down:
       lower_tabs_.selectRelative(1, true);
-      showNotification("Lower panel: " + lower_tabs_.currentTitle());
+      showNotification(localizedUiText(user_settings_.language, "Lower panel: ")
+        + lower_tabs_.currentTitle());
       publishEvent(EventSource::System, EventSeverity::Information,
         "Lower panel tab: " + lower_tabs_.currentTitle() + "\n");
       return true;
@@ -4810,7 +4831,8 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
       } else {
         publishEvent(EventSource::Project, EventSeverity::Error,
           "Git command failed: " + git_update->output + "\n");
-        showNotification("Git command failed", NotificationKind::Error);
+        showNotification(localizedUiText(user_settings_.language, "Git command failed"),
+          NotificationKind::Error);
       }
     } else if (git_update->operation == GitOperation::Status) {
       git_files_state_ = std::move(git_update->files); git_panel_message_.clear(); refreshGitPanel();
@@ -4832,7 +4854,8 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
   const auto lsp_changes = lsp_ui_.observe(lsp_.ready(), lsp_.diagnosticsRevision(),
     lsp_.semanticTokensRevision());
   if (lsp_changes.became_ready)
-    showNotification("clangd indexing is ready", NotificationKind::Success);
+    showNotification(localizedUiText(user_settings_.language, "clangd indexing is ready"),
+      NotificationKind::Success);
   const auto active_lsp_document = document_ ? std::optional<LspDocumentIdentity>{
     {document_->path(), document_->version()}} : std::nullopt;
   auto lsp_events = LspUiController::route(lsp_ui_.collect(lsp_), active_lsp_document);
@@ -5112,7 +5135,8 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
       analysis_output_.setText(finalcut::FString(analysis_text_));
       publishEvent(EventSource::Analysis, error.empty() ? EventSeverity::Success : EventSeverity::Error,
         error.empty() ? summary + "\n" : "Coverage report error: " + error + "\n");
-      showNotification(error.empty() ? "Coverage report completed" : "Coverage report failed",
+      showNotification(localizedUiText(user_settings_.language,
+          error.empty() ? "Coverage report completed" : "Coverage report failed"),
         error.empty() ? NotificationKind::Success : NotificationKind::Error);
     } else if (analysis_stage == AnalysisStage::PerfRecord && code == 0) {
       if (!startPerfReport()) {
@@ -5126,7 +5150,8 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
       publishEvent(EventSource::Analysis,
         code == 0 ? EventSeverity::Success : EventSeverity::Error,
         label + " finished with exit code " + std::to_string(code) + "\n");
-      showNotification(label + (code == 0 ? " completed" : " failed"),
+      showNotification(localizedUiText(user_settings_.language, label)
+          + localizedUiText(user_settings_.language, code == 0 ? " completed" : " failed"),
         code == 0 ? NotificationKind::Success : NotificationKind::Error);
     }
     menu_state_.reset();
@@ -5176,7 +5201,8 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
     lower_tabs_.setCurrentIndex(0);
     publishEvent(EventSource::Run, code == 0 ? EventSeverity::Success : EventSeverity::Error,
       "Run finished with exit code " + std::to_string(code) + "\n");
-    showNotification("Program finished (exit " + std::to_string(code) + ")",
+    showNotification(localizedUiText(user_settings_.language, "Program finished (exit ")
+        + std::to_string(code) + localizedUiText(user_settings_.language, ")"),
       code == 0 ? NotificationKind::Success : NotificationKind::Error);
     editor_.setFocus(); finalcut::FWidget::setFocusWidget(&editor_);
   }
@@ -5185,8 +5211,10 @@ void IdeWindow::onTimer(finalcut::FTimerEvent* event) {
   const bool debug_active = gdb_.active();
   if (debug_ui_.observeActive(debug_active, gdb_.exited())) {
     if (gdb_.mode() == DebugSessionMode::Core)
-      showNotification("Core dump could not be loaded", NotificationKind::Error);
-    else showNotification("Debuggee finished", NotificationKind::Success);
+      showNotification(localizedUiText(user_settings_.language,
+        "Core dump could not be loaded"), NotificationKind::Error);
+    else showNotification(localizedUiText(user_settings_.language, "Debuggee finished"),
+      NotificationKind::Success);
   }
   for (auto& line : gdb_.takeOutput())
     publishEvent(EventSource::Debug, EventSeverity::Information, std::move(line) + "\n");

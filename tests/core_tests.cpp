@@ -2012,6 +2012,15 @@ int main() {
         == "Сохранить все изменённые документы перед закрытием?"
       && tuiide::localizedUiText("ru", "The selected launch configuration is unavailable.")
         == "Выбранная конфигурация запуска недоступна."
+      && tuiide::localizedUiText("ru", "CMake configure started")
+        == "Настройка CMake запущена"
+      && tuiide::localizedUiText("ru", "Build") == "Сборка"
+      && tuiide::localizedUiText("ru", "Program started") == "Программа запущена"
+      && tuiide::localizedUiText("ru", "Debug session restarted")
+        == "Сеанс отладки перезапущен"
+      && tuiide::localizedUiText("ru", "Sidebar: ") == "Боковая панель: "
+      && tuiide::localizedUiText("ru", "Coverage report failed")
+        == "Отчёт о покрытии завершился с ошибкой"
       && tuiide::localizedUiText("en", "Show the keyboard reference")
         == "Show the keyboard reference"
       && tuiide::keyboardHelpText("ru").find("Ctrl+B Сборка") != std::string_view::npos
