@@ -121,6 +121,7 @@ class NewProjectDialog final : public CenteredDialog {
   finalcut::FCheckBox testing_;
   finalcut::FButton next_;
   finalcut::FButton cancel_;
+  std::string ui_language_;
 };
 
 /** Собирает параметры преобразования существующего дерева исходников в CMake-проект. */
@@ -142,6 +143,7 @@ class ImportProjectDialog final : public CenteredDialog {
   finalcut::FCheckBox warnings_;
   finalcut::FButton next_;
   finalcut::FButton cancel_;
+  std::string ui_language_;
 };
 
 }  // namespace tuiide

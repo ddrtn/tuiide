@@ -560,26 +560,32 @@ NewProjectDialog::NewProjectDialog(finalcut::FWidget* parent, std::string langua
       gitignore_(finalcut::FString(localizedUiText(language, "Create .gitignore")), this),
       testing_(finalcut::FString(localizedUiText(language, "Enable CTest")), this),
       next_(finalcut::FString(localizedUiText(language, "&Next")), this),
-      cancel_(finalcut::FString(localizedUiText(language, "&Cancel")), this) {
+      cancel_(finalcut::FString(localizedUiText(language, "&Cancel")), this),
+      ui_language_(std::move(language)) {
   setDialogSize({74, 23});
   setModal();
   name_label_.setGeometry({2, 1}, {14, 1}); name_.setGeometry({17, 1}, {38, 1});
   language_label_.setGeometry({2, 3}, {10, 1}); language_.setGeometry({12, 3}, {13, 1});
   language_.insert("C++"); language_.insert("C"); language_.setCurrentItem(1); language_.unsetEditable();
   target_label_.setGeometry({27, 3}, {12, 1}); target_.setGeometry({39, 3}, {16, 1});
-  target_.insert("Executable"); target_.insert("Static library"); target_.insert("Shared library");
+  target_.insert(localizedUiText(ui_language_, "Executable"));
+  target_.insert(localizedUiText(ui_language_, "Static library"));
+  target_.insert(localizedUiText(ui_language_, "Shared library"));
   target_.setCurrentItem(1); target_.unsetEditable();
   standard_label_.setGeometry({2, 5}, {14, 1}); standard_.setGeometry({17, 5}, {8, 1});
   header_label_.setGeometry({27, 5}, {13, 1}); header_.setGeometry({41, 5}, {14, 1});
   header_.insert("hpp"); header_.insert("h"); header_.setCurrentItem(1); header_.unsetEditable();
   generator_label_.setGeometry({2, 7}, {12, 1}); generator_.setGeometry({14, 7}, {18, 1});
-  generator_.insert("Default"); generator_.insert("Ninja"); generator_.insert("Unix Makefiles");
+  generator_.insert(localizedUiText(ui_language_, "Default"));
+  generator_.insert("Ninja"); generator_.insert("Unix Makefiles");
   generator_.setCurrentItem(1); generator_.unsetEditable();
   build_type_label_.setGeometry({33, 7}, {11, 1}); build_type_.setGeometry({44, 7}, {11, 1});
   build_type_.insert("Debug"); build_type_.insert("Release"); build_type_.insert("RelWithDebInfo");
   build_type_.insert("MinSizeRel"); build_type_.setCurrentItem(1); build_type_.unsetEditable();
   install_label_.setGeometry({2, 9}, {14, 1}); install_.setGeometry({17, 9}, {18, 1});
-  install_.insert("None"); install_.insert("GNU standard"); install_.setCurrentItem(1); install_.unsetEditable();
+  install_.insert(localizedUiText(ui_language_, "None"));
+  install_.insert(localizedUiText(ui_language_, "GNU standard"));
+  install_.setCurrentItem(1); install_.unsetEditable();
   warnings_.setGeometry({2, 10}, {27, 1}); readme_.setGeometry({30, 10}, {24, 1});
   gitignore_.setGeometry({2, 11}, {27, 1}); testing_.setGeometry({30, 11}, {24, 1});
   warnings_.setChecked(); readme_.setChecked(); gitignore_.setChecked();
@@ -596,14 +602,16 @@ auto NewProjectDialog::options() const -> NewProjectOptions {
   result.name = name_.getText().trim().toString();
   result.language = language_.getText() == "C" ? ProjectLanguage::C : ProjectLanguage::Cpp;
   const auto target = target_.getText().toString();
-  result.target_type = target == "Static library" ? ProjectTargetType::StaticLibrary
-    : (target == "Shared library" ? ProjectTargetType::SharedLibrary : ProjectTargetType::Executable);
+  result.target_type = target == localizedUiText(ui_language_, "Static library")
+    ? ProjectTargetType::StaticLibrary
+    : (target == localizedUiText(ui_language_, "Shared library")
+        ? ProjectTargetType::SharedLibrary : ProjectTargetType::Executable);
   result.language_standard = standard_.getText().toString();
   result.cpp_header_extension = header_.getText().toString();
   const auto generator = generator_.getText().toString();
-  result.generator = generator == "Default" ? std::string{} : generator;
+  result.generator = generator == localizedUiText(ui_language_, "Default") ? std::string{} : generator;
   result.build_type = build_type_.getText().toString();
-  result.install_layout = install_.getText() == "GNU standard"
+  result.install_layout = install_.getText() == localizedUiText(ui_language_, "GNU standard")
     ? ProjectInstallLayout::Gnu : ProjectInstallLayout::None;
   result.warnings = warnings_.isChecked();
   result.create_readme = readme_.isChecked();
@@ -637,7 +645,8 @@ ImportProjectDialog::ImportProjectDialog(std::string suggested_name,
       standard_label_(finalcut::FString(localizedUiText(language, "Language standard:")), this), standard_(this),
       warnings_(finalcut::FString(localizedUiText(language, "Enable compiler warnings")), this),
       next_(finalcut::FString(localizedUiText(language, "&Preview")), this),
-      cancel_(finalcut::FString(localizedUiText(language, "&Cancel")), this) {
+      cancel_(finalcut::FString(localizedUiText(language, "&Cancel")), this),
+      ui_language_(std::move(language)) {
   setDialogSize({70, 16});
   setModal();
   name_label_.setGeometry({2, 1}, {14, 1}); name_.setGeometry({17, 1}, {38, 1});
@@ -645,7 +654,9 @@ ImportProjectDialog::ImportProjectDialog(std::string suggested_name,
   language_label_.setGeometry({2, 3}, {10, 1}); language_.setGeometry({12, 3}, {13, 1});
   language_.insert("C++"); language_.insert("C"); language_.setCurrentItem(1); language_.unsetEditable();
   target_label_.setGeometry({27, 3}, {12, 1}); target_.setGeometry({39, 3}, {16, 1});
-  target_.insert("Executable"); target_.insert("Static library"); target_.insert("Shared library");
+  target_.insert(localizedUiText(ui_language_, "Executable"));
+  target_.insert(localizedUiText(ui_language_, "Static library"));
+  target_.insert(localizedUiText(ui_language_, "Shared library"));
   target_.setCurrentItem(1); target_.unsetEditable();
   standard_label_.setGeometry({2, 5}, {18, 1}); standard_.setGeometry({21, 5}, {10, 1}); standard_.setText("20");
   warnings_.setGeometry({2, 7}, {28, 1}); warnings_.setChecked();
@@ -660,8 +671,10 @@ auto ImportProjectDialog::options() const -> ProjectImportOptions {
   result.target_name = name_.getText().trim().toString();
   result.language = language_.getText() == "C" ? ProjectLanguage::C : ProjectLanguage::Cpp;
   const auto target = target_.getText().toString();
-  result.target_type = target == "Static library" ? ProjectTargetType::StaticLibrary
-    : (target == "Shared library" ? ProjectTargetType::SharedLibrary : ProjectTargetType::Executable);
+  result.target_type = target == localizedUiText(ui_language_, "Static library")
+    ? ProjectTargetType::StaticLibrary
+    : (target == localizedUiText(ui_language_, "Shared library")
+        ? ProjectTargetType::SharedLibrary : ProjectTargetType::Executable);
   result.language_standard = standard_.getText().trim().toString();
   if (result.language == ProjectLanguage::C && result.language_standard == "20")
     result.language_standard = "17";
