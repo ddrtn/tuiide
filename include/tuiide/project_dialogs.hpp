@@ -63,6 +63,30 @@ class ProjectDirectoryDialog final : public CenteredDialog {
   finalcut::FButton cancel_;
 };
 
+/** Общий экран путей нового проекта; навигатор каталогов открывается по запросу. */
+class NewProjectDirectoriesDialog final : public CenteredDialog {
+ public:
+  NewProjectDirectoriesDialog(std::filesystem::path start, std::string project_name,
+    finalcut::FWidget* parent = nullptr, std::string language = "en");
+  [[nodiscard]] auto projectDirectory() const -> std::filesystem::path;
+  [[nodiscard]] auto buildDirectory() const -> std::filesystem::path;
+
+ private:
+  void browse(finalcut::FLineEdit& field, const std::string& title);
+  void acceptPaths();
+
+  std::filesystem::path start_;
+  std::string language_;
+  finalcut::FLabel project_label_;
+  finalcut::FLineEdit project_;
+  finalcut::FButton project_browse_;
+  finalcut::FLabel build_label_;
+  finalcut::FLineEdit build_;
+  finalcut::FButton build_browse_;
+  finalcut::FButton create_;
+  finalcut::FButton cancel_;
+};
+
 /** UI-обёртка валидируемых ProjectSettings с адаптивной раскладкой. */
 class ProjectSettingsDialog final : public CenteredDialog {
  public:

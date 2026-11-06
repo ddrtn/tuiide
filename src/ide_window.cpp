@@ -2397,21 +2397,13 @@ void IdeWindow::newProject() {
   auto options = settings_dialog.options(); timer_id_ = addTimer(100);
   if (!accepted) return;
   const auto start = root_.empty() ? std::filesystem::current_path() : root_.parent_path();
-  delTimer(timer_id_); ProjectDirectoryDialog project_dialog("Select empty project directory", start,
-    this, user_settings_.language);
-  const auto project_accepted = project_dialog.exec() == finalcut::FDialog::ResultCode::Accept;
-  options.project_directory = project_dialog.selectedPath(); timer_id_ = addTimer(100);
-  if (!project_accepted) return;
-  delTimer(timer_id_); ProjectDirectoryDialog build_dialog("Select build directory",
-    options.project_directory.parent_path(), this, user_settings_.language);
-  const auto build_accepted = build_dialog.exec() == finalcut::FDialog::ResultCode::Accept;
-  options.build_directory = build_dialog.selectedPath(); timer_id_ = addTimer(100);
-  if (!build_accepted) return;
-  if (normalizePath(options.project_directory) == normalizePath(options.build_directory)) {
-    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(user_settings_.language,
-      "Build directory must differ from the project directory.")));
-    return;
-  }
+  delTimer(timer_id_);
+  NewProjectDirectoriesDialog directories_dialog(start, options.name, this, user_settings_.language);
+  const auto paths_accepted = directories_dialog.exec() == finalcut::FDialog::ResultCode::Accept;
+  options.project_directory = directories_dialog.projectDirectory();
+  options.build_directory = directories_dialog.buildDirectory();
+  timer_id_ = addTimer(100);
+  if (!paths_accepted) return;
   if (!closeAllDocuments()) return;
   std::string error;
   if (!createNewProject(options, error)) { finalcut::FMessageBox::error(this, finalcut::FString(error)); return; }

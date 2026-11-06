@@ -1291,7 +1291,10 @@ auto exerciseProjectDialogsPty(const std::filesystem::path& tuiide,
 
     const bool error_opened = openWizard();
     send("wizard_app"); send("\033n");
-    const bool error_picker = visible("Select empty project directory", 5s);
+    const bool combined_paths = visible("New project directories", 5s)
+      && visible("Project directory:", 3s) && visible("Build directory:", 3s);
+    screen.clear(); send("\033b");
+    const bool error_picker = combined_paths && visible("Select empty project directory", 5s);
     screen.clear(); send("\033d");
     const bool error_prompt = visible("Directory name:", 3s);
     screen.clear(); send("../outside"); send("\r");
@@ -1349,12 +1352,28 @@ auto exerciseProjectDialogsPty(const std::filesystem::path& tuiide,
     normal_screen.clear(); normalSend("p");
     const bool normal_opened = normalVisible("New project settings", 5s);
     normalSend("wizard_app"); normalSend("\033n");
+    const bool paths_opened = normalVisible("New project directories", 5s)
+      && normalVisible("Project directory:", 3s) && normalVisible("Build directory:", 3s);
+    // Отмена общего экрана не создаёт проект; повторное открытие восстанавливает defaults.
+    normal_screen.clear(); normalSend("\033");
+    const bool paths_cancelled = normalVisible("No project", 3s)
+      && !std::filesystem::exists(generated_project);
+    normal_screen.clear(); normalSend("\033f");
+    (void)normalVisible("New Project", 3s); normalSend("p");
+    (void)normalVisible("New project settings", 5s);
+    normalSend("wizard_app"); normalSend("\033n");
+    (void)normalVisible("New project directories", 5s);
+    normal_screen.clear(); normalSend("\033b");
     const bool project_picker = normalVisible("Select empty project directory", 5s);
     const bool project_directory = normalCreateDirectory("wizard-project", generated_project.string());
     normal_screen.clear(); normalSend("\033s");
+    const bool project_selected = normalVisible("New project directories", 5s);
+    normal_screen.clear(); normalSend("\033r");
     const bool build_picker = normalVisible("Select build directory", 5s);
     const bool build_directory = normalCreateDirectory("wizard-build", generated_build.string());
     normal_screen.clear(); normalSend("\033s");
+    const bool build_selected = normalVisible("New project directories", 5s);
+    normal_screen.clear(); normalSend("\033c");
     const bool opened = waitFor(normalPump, [&] {
       return std::filesystem::is_regular_file(generated_build / "CMakeCache.txt");
     }, 20s);
@@ -1373,11 +1392,14 @@ auto exerciseProjectDialogsPty(const std::filesystem::path& tuiide,
     if (!exited) { ::kill(normal_child, SIGKILL); (void)::waitpid(normal_child, &status, 0); }
     ::close(normal_master);
     const bool success = normal_started && normal_file_menu && normal_opened && project_picker
+      && paths_opened && paths_cancelled && project_selected && build_selected
       && project_directory && build_picker && build_directory && opened && generated
       && build_saved && exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
     if (!success) {
       std::cerr << "New project PTY: normal_started=" << normal_started
         << " file_menu=" << normal_file_menu << " normal_opened=" << normal_opened
+        << " combined_paths=" << paths_opened << " cancelled=" << paths_cancelled
+        << " selected=" << project_selected << '/' << build_selected
         << " project_picker=" << project_picker << " project_directory=" << project_directory
         << " build_picker=" << build_picker << " build_directory=" << build_directory
         << " opened=" << opened << " generated=" << generated

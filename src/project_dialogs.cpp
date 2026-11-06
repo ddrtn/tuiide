@@ -225,6 +225,80 @@ void ProjectDirectoryDialog::createDirectory() {
   populate();
 }
 
+NewProjectDirectoriesDialog::NewProjectDirectoriesDialog(std::filesystem::path start,
+    std::string project_name, finalcut::FWidget* parent, std::string language)
+    : CenteredDialog(finalcut::FString(localizedUiText(language, "New project directories")), parent),
+      start_(normalizePath(start)), language_(std::move(language)),
+      project_label_(finalcut::FString(localizedUiText(language_, "Project directory:")), this),
+      project_(this),
+      project_browse_(finalcut::FString(localizedUiText(language_, "&Browse directory...")), this),
+      build_label_(finalcut::FString(localizedUiText(language_, "Build directory:")), this),
+      build_(this),
+      build_browse_(finalcut::FString(localizedUiText(language_, "B&rowse...")), this),
+      create_(finalcut::FString(localizedUiText(language_, "&Create")), this),
+      cancel_(finalcut::FString(localizedUiText(language_, "&Cancel")), this) {
+  setDialogSize({78, 13});
+  setModal();
+  project_label_.setGeometry({2, 1}, {70, 1});
+  project_.setGeometry({2, 2}, {51, 1});
+  project_browse_.setGeometry({55, 2}, {20, 1});
+  build_label_.setGeometry({2, 4}, {70, 1});
+  build_.setGeometry({2, 5}, {51, 1});
+  build_browse_.setGeometry({55, 5}, {20, 1});
+  create_.setGeometry({43, 9}, {14, 1});
+  cancel_.setGeometry({59, 9}, {15, 1});
+  project_.setText(finalcut::FString((start_ / project_name).string()));
+  build_.setText(finalcut::FString((start_ / (project_name + "-build")).string()));
+  project_browse_.addCallback("clicked", [this] {
+    browse(project_, "Select empty project directory");
+  });
+  build_browse_.addCallback("clicked", [this] { browse(build_, "Select build directory"); });
+  create_.addCallback("clicked", [this] { acceptPaths(); });
+  cancel_.addCallback("clicked", [this] { done(ResultCode::Reject); });
+  project_.setFocus();
+}
+
+auto NewProjectDirectoriesDialog::projectDirectory() const -> std::filesystem::path {
+  const std::filesystem::path path(project_.getText().toString());
+  return normalizePath(path.is_absolute() ? path : start_ / path);
+}
+
+auto NewProjectDirectoriesDialog::buildDirectory() const -> std::filesystem::path {
+  const std::filesystem::path path(build_.getText().toString());
+  return normalizePath(path.is_absolute() ? path : start_ / path);
+}
+
+void NewProjectDirectoriesDialog::browse(finalcut::FLineEdit& field, const std::string& title) {
+  std::filesystem::path path(field.getText().toString());
+  if (!path.is_absolute()) path = start_ / path;
+  // Для ещё не созданного пути навигатор начинает с ближайшего существующего родителя.
+  std::error_code error;
+  while (!path.empty() && !std::filesystem::is_directory(path, error)) {
+    const auto parent = path.parent_path();
+    if (parent == path) break;
+    path = parent;
+    error.clear();
+  }
+  ProjectDirectoryDialog dialog(title, path.empty() ? start_ : path, this, language_);
+  if (dialog.exec() == ResultCode::Accept)
+    field.setText(finalcut::FString(dialog.selectedPath().string()));
+  field.redraw();
+}
+
+void NewProjectDirectoriesDialog::acceptPaths() {
+  if (project_.getText().isEmpty() || build_.getText().isEmpty()) {
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(language_,
+      "Project and build directories are required.")));
+    return;
+  }
+  if (projectDirectory() == buildDirectory()) {
+    finalcut::FMessageBox::error(this, finalcut::FString(localizedUiText(language_,
+      "Build directory must differ from the project directory.")));
+    return;
+  }
+  done(ResultCode::Accept);
+}
+
 struct ProjectSettingsDialog::Impl {
   Impl(ProjectSettingsDialog* dialog, std::filesystem::path project_root,
       const ProjectSettings& settings, std::string language)
